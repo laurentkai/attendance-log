@@ -1,0 +1,102 @@
+const crypto = require('node:crypto');
+const express = require('express');
+const { escapeHtml, renderPage } = require('./ui');
+
+const router = express.Router();
+
+function secureEqual(firstValue, secondValue) {
+  const firstHash = crypto.createHash('sha256').update(firstValue).digest();
+  const secondHash = crypto.createHash('sha256').update(secondValue).digest();
+  return crypto.timingSafeEqual(firstHash, secondHash);
+}
+
+function renderLogin(error = '') {
+  const errorMessage = error
+    ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
+    : '';
+
+  return renderPage('Connexion', `
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Administration</p>
+        <h1>Connexion</h1>
+      </div>
+    </header>
+    ${errorMessage}
+    <form class="form-card" method="post" action="/login">
+      <label for="username">Identifiant</label>
+      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+
+      <label for="password">Mot de passe</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+      <button class="button" type="submit">Se connecter</button>
+    </form>`, { authenticated: false });
+}
+
+function regenerateSession(request) {
+  return new Promise((resolve, reject) => {
+    request.session.regenerate((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+function saveSession(request) {
+  return new Promise((resolve, reject) => {
+    request.session.save((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+router.get('/login', (request, response) => {
+  if (request.session.authenticated) {
+    response.redirect(303, '/');
+    return;
+  }
+
+  response.send(renderLogin());
+});
+
+router.post('/login', async (request, response) => {
+  const username = typeof request.body.username === 'string' ? request.body.username : '';
+  const password = typeof request.body.password === 'string' ? request.body.password : '';
+  const validCredentials = secureEqual(username, process.env.ADMIN_USERNAME)
+    && secureEqual(password, process.env.ADMIN_PASSWORD);
+
+  if (!validCredentials) {
+    response.status(401).send(renderLogin('Identifiant ou mot de passe incorrect.'));
+    return;
+  }
+
+  try {
+    await regenerateSession(request);
+    request.session.authenticated = true;
+    await saveSession(request);
+    response.redirect(303, '/');
+  } catch (error) {
+    console.error('Unable to create admin session:', error);
+    response.status(500).send(renderLogin('Impossible de se connecter pour le moment.'));
+  }
+});
+
+router.post('/logout', requireAuthentication, (request, response) => {
+  request.session.destroy((error) => {
+    if (error) {
+      console.error('Unable to destroy admin session:', error);
+      response.status(500).send(renderLogin('Impossible de se déconnecter pour le moment.'));
+      return;
+    }
+
+    response.clearCookie('attendance_log_session');
+    response.redirect(303, '/login');
+  });
+});
+
+function requireAuthentication(request, response, next) {
+  if (request.session.authenticated) {
+    next();
+    return;
+  }
+
+  response.redirect(303, '/login');
+}
+
+module.exports = { router, requireAuthentication };

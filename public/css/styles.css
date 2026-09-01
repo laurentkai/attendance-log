@@ -48,9 +48,48 @@ a {
   margin-bottom: 1.5rem;
 }
 
-.back-link {
-  display: inline-block;
-  margin-bottom: 0.25rem;
+.admin-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: -0.25rem 0 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #d1d5db;
+}
+
+.admin-nav form {
+  margin: 0 0 0 auto;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  color: #075985;
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #6b7280;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.context-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.page-section + .page-section {
+  margin-top: 2rem;
 }
 
 .button {
@@ -82,7 +121,9 @@ a {
 .message,
 .empty-state,
 .form-card,
-.class-card {
+.class-card,
+.student-card,
+.summary-card {
   padding: 1rem;
   border-radius: 0.6rem;
 }
@@ -114,6 +155,21 @@ a {
   border: 1px solid #d1d5db;
 }
 
+.student-card {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid #d1d5db;
+}
+
+.student-card p {
+  margin: 0.35rem 0;
+}
+
+.student-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
 .class-description {
   margin: 0;
   white-space: pre-wrap;
@@ -140,12 +196,116 @@ a {
   background: #f9fafb;
 }
 
+fieldset {
+  margin: 0.5rem 0;
+  padding: 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+}
+
+legend,
+.field-label {
+  font-weight: 650;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.checkbox-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.checkbox-option {
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-weight: 400;
+}
+
+.checkbox-option input {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+}
+
+.checkbox-option small {
+  display: block;
+  margin-top: 0.15rem;
+  color: #6b7280;
+  font-weight: 400;
+}
+
+.filter-links {
+  margin: -0.75rem 0 1.25rem;
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.dashboard-card {
+  min-height: 5rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+  border: 1px solid #bae6fd;
+  border-radius: 0.6rem;
+  background: #f0f9ff;
+  text-decoration: none;
+}
+
+.dashboard-card span {
+  color: #374151;
+}
+
+.summary-card {
+  margin-bottom: 1rem;
+  background: #f0fdf4;
+}
+
+.summary-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0;
+}
+
+.summary-list div {
+  padding: 0.75rem;
+  background: #fff;
+  border-radius: 0.5rem;
+}
+
+.summary-list dt {
+  color: #4b5563;
+}
+
+.summary-list dd {
+  margin: 0.25rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.help-text {
+  margin-top: -0.35rem;
+  color: #4b5563;
+  font-size: 0.9rem;
+}
+
 label {
   font-weight: 650;
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   padding: 0.75rem;
   box-sizing: border-box;
@@ -160,8 +320,10 @@ textarea {
 
 input:focus,
 textarea:focus,
+select:focus,
 .button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+.link-button:focus-visible {
   outline: 0.2rem solid #f59e0b;
   outline-offset: 0.15rem;
 }
@@ -176,10 +338,28 @@ a:focus-visible {
     flex-direction: column;
   }
 
+  .admin-nav {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-nav form {
+    margin-left: 0;
+  }
+
+  .context-actions,
+  .context-actions .button {
+    width: 100%;
+  }
+
   .card-actions .button,
   .card-actions form,
   .card-actions form .button,
   .form-actions .button {
     width: 100%;
+  }
+
+  .summary-list {
+    grid-template-columns: 1fr;
   }
 }

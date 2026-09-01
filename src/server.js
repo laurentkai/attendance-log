@@ -2,8 +2,14 @@ require('dotenv').config({ quiet: true });
 
 const path = require('node:path');
 const express = require('express');
+const session = require('express-session');
+const connectPgSimple = require('connect-pg-simple');
 const { pool, verifyDatabaseConnection } = require('./db/client');
+const { router: authRouter, requireAuthentication } = require('./auth');
 const classesRouter = require('./classes');
+const studentImportRouter = require('./student-import');
+const studentsRouter = require('./students');
+const { renderPage } = require('./ui');
 
 const app = express();
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -12,14 +18,22 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535');
 }
 
+for (const variableName of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'SESSION_SECRET']) {
+  if (!process.env[variableName]) {
+    throw new Error(`${variableName} is required`);
+  }
+}
+
+if (process.env.SESSION_SECRET.length < 32) {
+  throw new Error('SESSION_SECRET must contain at least 32 characters');
+}
+
 app.disable('x-powered-by');
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
-app.use('/classes', classesRouter);
-
-app.get('/', (_request, response) => {
-  response.sendFile(path.join(__dirname, '..', 'views', 'index.html'));
-});
 
 app.get('/health', async (_request, response) => {
   try {
@@ -28,6 +42,42 @@ app.get('/health', async (_request, response) => {
   } catch (_error) {
     response.status(503).json({ status: 'error', database: 'unavailable' });
   }
+});
+
+const PostgreSqlSessionStore = connectPgSimple(session);
+app.use(session({
+  name: 'attendance_log_session',
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  store: new PostgreSqlSessionStore({ pool, tableName: 'user_sessions' }),
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 8 * 60 * 60 * 1000,
+  },
+}));
+
+app.use(authRouter);
+app.use(requireAuthentication);
+app.use('/classes', classesRouter);
+app.use('/students/import', studentImportRouter);
+app.use('/students', studentsRouter);
+
+app.get('/', (_request, response) => {
+  response.send(renderPage('Administration', `
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Attendance Log</p>
+        <h1>Administration</h1>
+      </div>
+    </header>
+    <div class="dashboard-grid">
+      <a class="dashboard-card" href="/classes"><strong>Classes</strong><span>Gérer les classes</span></a>
+      <a class="dashboard-card" href="/students"><strong>Élèves</strong><span>Gérer les élèves</span></a>
+      <a class="dashboard-card" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a>
+    </div>`));
 });
 
 async function start() {

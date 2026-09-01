@@ -6,6 +6,9 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-attendance}:${POSTGRES_PASSWORD:-attendance_dev_password}@postgres:5432/${POSTGRES_DB:-attendance}
       DATABASE_SSL: "false"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
