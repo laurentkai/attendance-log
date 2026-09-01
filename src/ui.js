@@ -11,14 +11,25 @@ function escapeHtml(value = '') {
 }
 
 function renderNavigation() {
-  return `<nav class="admin-nav" aria-label="Navigation principale">
-    <a href="/classes">Classes</a>
-    <a href="/students">Élèves</a>
-    <a href="/students/import">Importer des élèves</a>
-    <form method="post" action="/logout">
-      <button class="link-button" type="submit">Déconnexion</button>
-    </form>
-  </nav>`;
+  return `<header class="app-header">
+    <div class="app-header-bar">
+      <span class="app-brand">Attendance Log</span>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">
+        <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span>Menu</span>
+      </button>
+    </div>
+    <nav class="admin-nav" id="primary-navigation" aria-label="Navigation principale">
+      <a href="/" data-section="home">Accueil</a>
+      <a href="/classes" data-section="classes">Classes</a>
+      <a href="/students" data-section="students">Élèves</a>
+      <a href="/sessions" data-section="sessions">Sessions</a>
+      <a href="/students/import" data-section="import">Importer</a>
+      <form method="post" action="/logout">
+        <button class="nav-logout" type="submit">Déconnexion</button>
+      </form>
+    </nav>
+  </header>`;
 }
 
 function renderPage(title, content, { authenticated = true } = {}) {

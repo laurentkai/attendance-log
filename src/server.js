@@ -7,6 +7,7 @@ const connectPgSimple = require('connect-pg-simple');
 const { pool, verifyDatabaseConnection } = require('./db/client');
 const { router: authRouter, requireAuthentication } = require('./auth');
 const classesRouter = require('./classes');
+const courseSessionsRouter = require('./course-sessions');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
 const { renderPage } = require('./ui');
@@ -62,6 +63,7 @@ app.use(session({
 app.use(authRouter);
 app.use(requireAuthentication);
 app.use('/classes', classesRouter);
+app.use('/sessions', courseSessionsRouter);
 app.use('/students/import', studentImportRouter);
 app.use('/students', studentsRouter);
 
@@ -73,11 +75,7 @@ app.get('/', (_request, response) => {
         <h1>Administration</h1>
       </div>
     </header>
-    <div class="dashboard-grid">
-      <a class="dashboard-card" href="/classes"><strong>Classes</strong><span>Gérer les classes</span></a>
-      <a class="dashboard-card" href="/students"><strong>Élèves</strong><span>Gérer les élèves</span></a>
-      <a class="dashboard-card" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a>
-    </div>`));
+    <p>Utilisez le menu pour gérer les classes, les élèves et les sessions.</p>`));
 });
 
 async function start() {

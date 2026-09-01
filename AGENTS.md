@@ -74,12 +74,33 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 
 ## UI requirements
 
-- Design mobile-first because smartphones are the primary usage environment.
+- Design mobile-first because Attendance Log is primarily operated from a smartphone during live attendance taking.
+- Design and review phone-width layouts first; treat desktop as a responsive enhancement rather than the primary target.
 - No workflow may require desktop-only interaction.
-- Optimize the scanner interface for phone screens.
+- Keep workflows short and clear, with primary actions reachable without excessive navigation.
 - Use comfortable touch targets.
-- Avoid dense tables on small screens when a simpler mobile layout is possible.
-- Desktop support remains required, but mobile usability takes priority.
+- Avoid horizontal scrolling and dense information on small screens when a simpler mobile layout is possible.
+- Optimize camera and scanner workflows for phone screens and one-handed use where practical.
+- Keep information density concise while retaining the details needed for the current task.
+- Desktop support remains required as a responsive enhancement, but mobile usability takes priority.
+
+## UI and design skills
+
+For user-facing UI work, consult the relevant installed project skills under `.agents/skills/` when applicable:
+
+- `frontend-design`: use for layout, visual hierarchy, component appearance, responsive mobile-first presentation, and avoiding generic or low-quality generated UI.
+- `web-design-guidelines`: use for usability, accessibility, responsive behavior, forms, navigation, touch interaction, semantic HTML, and general web-interface quality.
+- `dashboard-design-system`: use when building or refining recurring application patterns such as navigation, cards, forms, status indicators, buttons, lists, and administrative screens so the interface remains visually consistent.
+- `dashboard-product-design-standard`: use for information architecture, workflow clarity, administrative UX, prioritizing primary and secondary actions, and keeping each screen focused on the user's task.
+
+Apply these skills with the following precedence:
+
+1. Requirements and validated product decisions in `AGENTS.md` take priority over skill guidance.
+2. Explicit user instructions take priority over generic skill recommendations.
+3. Apply skills proportionally to the task.
+4. Do not introduce React, Vue, Tailwind, component libraries, build tooling, or other dependencies merely because a skill uses or recommends them.
+5. Translate applicable design principles into the existing vanilla HTML, CSS, and JavaScript architecture.
+6. Do not perform unrelated visual redesigns while implementing a targeted feature.
 
 ## Development rules
 

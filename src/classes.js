@@ -236,6 +236,7 @@ router.get('/:id', async (request, response) => {
         </div>
         <div class="context-actions">
           <a class="button button-secondary" href="/classes/${classRecord.id}/edit">Modifier la classe</a>
+          <a class="button button-secondary" href="/sessions/new?class_id=${classRecord.id}">Créer une séance</a>
           <a class="button" href="/students/import?class_id=${classRecord.id}">Importer dans cette classe</a>
         </div>
       </header>

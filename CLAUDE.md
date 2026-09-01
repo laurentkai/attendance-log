@@ -18,6 +18,24 @@ Claude should primarily review and validate changes implemented by Codex. Review
 - Clearly distinguish confirmed findings from assumptions.
 - Remain concise and actionable.
 
+## UI Review Guidance
+
+When reviewing user-facing changes, Claude should consult the relevant installed project skills under `.agents/skills/`: `frontend-design`, `web-design-guidelines`, `dashboard-design-system`, and `dashboard-product-design-standard`.
+
+UI reviews should check:
+
+- Consistency with the existing interface and recurring UI patterns.
+- Mobile usability at phone widths, including navigation clarity and avoidance of horizontal scrolling.
+- Comfortable touch-target sizing and practical one-handed interaction where relevant.
+- Accessibility basics, semantic HTML, keyboard focus, and clear control labels.
+- Form usability, visual hierarchy, and prioritization of primary versus secondary actions.
+- Unnecessary duplication or workflow steps.
+- Whether the implementation remains simple, framework-free, and consistent with the vanilla HTML, CSS, and JavaScript architecture.
+
+`AGENTS.md`, validated product decisions, and explicit user instructions take priority over generic skill recommendations. Apply skill guidance proportionally to the reviewed change. Translate applicable principles into the existing architecture; do not require React, Vue, Tailwind, shadcn/ui, component libraries, build tooling, or new dependencies because a skill recommends them.
+
+Clearly distinguish concrete usability or accessibility problems from optional aesthetic preferences. Optional visual preferences should not block a commit unless they conflict with `AGENTS.md` or materially harm usability. Do not demand a broad redesign when reviewing a targeted feature.
+
 ## Project state
 
 This codebase is an early-stage scaffold, not a feature-complete app. Currently implemented: an Express server that serves a static placeholder page and a `/health` endpoint that pings PostgreSQL. None of the V1 functional scope in `AGENTS.md` (students, classes, sessions, attendance, QR codes, exports) has been built yet — there is no database schema/migrations, no routes beyond `/` and `/health`, and no authentication. Expect most review work to be against future diffs that add this functionality incrementally.
