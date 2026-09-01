@@ -24,6 +24,10 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 ### Students
 
 - Support manual creation, editing, and deletion.
+- Students have an `active` status.
+- Normal student deletion in V1 means deactivation (`active = false`) so historical references can be preserved.
+- Inactive students must not appear in normal active student, class, or attendance workflows.
+- Do not implement hard-delete behavior unless explicitly requested later.
 - Support CSV import.
 - Use email as the functional unique key for matching students during imports.
 - Allow one student to belong to multiple classes.
