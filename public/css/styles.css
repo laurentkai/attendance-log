@@ -7,16 +7,179 @@
 body {
   min-height: 100vh;
   margin: 0;
-  display: grid;
-  place-items: center;
+  padding: 1rem;
+  box-sizing: border-box;
 }
 
 main {
-  width: min(100% - 2rem, 36rem);
+  width: min(100%, 48rem);
+  margin: 0 auto;
   padding: 2rem;
   box-sizing: border-box;
-  text-align: center;
   background: #fff;
   border-radius: 0.75rem;
   box-shadow: 0 0.25rem 1rem rgb(0 0 0 / 8%);
+}
+
+h1,
+h2,
+p {
+  overflow-wrap: anywhere;
+}
+
+h1 {
+  margin: 0.25rem 0 0;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+a {
+  color: #075985;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+}
+
+.button {
+  min-height: 2.75rem;
+  padding: 0.7rem 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 0.5rem;
+  font: inherit;
+  font-weight: 650;
+  color: #fff;
+  background: #0369a1;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button-secondary {
+  color: #17202a;
+  background: #e5e7eb;
+}
+
+.button-danger {
+  background: #b91c1c;
+}
+
+.message,
+.empty-state,
+.form-card,
+.class-card {
+  padding: 1rem;
+  border-radius: 0.6rem;
+}
+
+.message-error {
+  color: #7f1d1d;
+  background: #fee2e2;
+}
+
+.message-success {
+  color: #14532d;
+  background: #dcfce7;
+}
+
+.empty-state {
+  text-align: center;
+  color: #4b5563;
+  background: #f3f4f6;
+}
+
+.card-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.class-card {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid #d1d5db;
+}
+
+.class-description {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.muted {
+  color: #6b7280;
+}
+
+.card-actions,
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.card-actions form {
+  margin: 0;
+}
+
+.form-card {
+  display: grid;
+  gap: 0.75rem;
+  background: #f9fafb;
+}
+
+label {
+  font-weight: 650;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.75rem;
+  box-sizing: border-box;
+  border: 1px solid #9ca3af;
+  border-radius: 0.5rem;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus,
+.button:focus-visible,
+a:focus-visible {
+  outline: 0.2rem solid #f59e0b;
+  outline-offset: 0.15rem;
+}
+
+@media (max-width: 32rem) {
+  main {
+    padding: 1.25rem;
+  }
+
+  .page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .card-actions .button,
+  .card-actions form,
+  .card-actions form .button,
+  .form-actions .button {
+    width: 100%;
+  }
 }
