@@ -29,6 +29,12 @@ UI reviews should check:
 - Comfortable touch-target sizing and practical one-handed interaction where relevant.
 - Accessibility basics, semantic HTML, keyboard focus, and clear control labels.
 - Form usability, visual hierarchy, and prioritization of primary versus secondary actions.
+- Consistency with neighboring screens and reuse of established headers, lists, forms, searches, statuses, messages, and action groups.
+- Source-level reuse: equivalent concepts must share canonical DOM structures and base CSS classes, with contextual differences expressed through modifiers or additional children rather than parallel implementations.
+- Shared components must retain contextually useful information; consistency must not remove relevant content or reduce usability merely to make screens identical.
+- Whether an existing shared pattern was extended instead of duplicated; visual resemblance alone is not sufficient evidence of consistency.
+- Stable row alignment when actions are conditional or unavailable.
+- Intentional compact-list and mobile layouts rather than oversized cards or accidental wrapping.
 - Unnecessary duplication or workflow steps.
 - Whether the implementation remains simple, framework-free, and consistent with the vanilla HTML, CSS, and JavaScript architecture.
 

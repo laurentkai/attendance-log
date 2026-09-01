@@ -55,7 +55,7 @@ function renderStudentForm({
           <span>${escapeHtml(classRecord.name)}</span>
         </label>`).join('')}</div>`;
   const codeField = editing
-    ? `<div>
+    ? `<div class="form-field">
         <span class="field-label">Code élève</span>
         <strong class="student-code">${escapeHtml(values.student_code)}</strong>
       </div>`
@@ -69,18 +69,26 @@ function renderStudentForm({
 
   return renderPage(title, `
     <header class="page-header">
-      <h1>${escapeHtml(title)}</h1>
+      <div>
+        <h1>${escapeHtml(title)}</h1>
+      </div>
     </header>
     ${errorMessage}
     <form class="form-card" method="post" action="${escapeHtml(action)}">
-      <label for="first_name">Prénom <span aria-hidden="true">*</span></label>
-      <input id="first_name" name="first_name" type="text" value="${escapeHtml(values.firstName || '')}" required autofocus>
+      <div class="form-field">
+        <label for="first_name">Prénom <span aria-hidden="true">*</span></label>
+        <input id="first_name" name="first_name" type="text" value="${escapeHtml(values.firstName || '')}" autocomplete="given-name" required>
+      </div>
 
-      <label for="last_name">Nom <span aria-hidden="true">*</span></label>
-      <input id="last_name" name="last_name" type="text" value="${escapeHtml(values.lastName || '')}" required>
+      <div class="form-field">
+        <label for="last_name">Nom <span aria-hidden="true">*</span></label>
+        <input id="last_name" name="last_name" type="text" value="${escapeHtml(values.lastName || '')}" autocomplete="family-name" required>
+      </div>
 
-      <label for="email">Adresse e-mail <span aria-hidden="true">*</span></label>
-      <input id="email" name="email" type="email" value="${escapeHtml(values.email || '')}" required>
+      <div class="form-field">
+        <label for="email">Adresse e-mail <span aria-hidden="true">*</span></label>
+        <input id="email" name="email" type="email" value="${escapeHtml(values.email || '')}" autocomplete="email" spellcheck="false" required>
+      </div>
 
       ${codeField}
       <fieldset>
@@ -96,12 +104,12 @@ function renderStudentForm({
     </form>`);
 }
 
-async function replaceMemberships(client, studentId, classIds) {
-  await client.query('DELETE FROM student_classes WHERE student_id = $1', [studentId]);
-
+async function addMemberships(client, studentId, classIds) {
   for (const classId of classIds) {
     await client.query(
-      'INSERT INTO student_classes (student_id, class_id) VALUES ($1, $2)',
+      `INSERT INTO student_classes (student_id, class_id)
+       VALUES ($1, $2)
+       ON CONFLICT (student_id, class_id) DO NOTHING`,
       [studentId, classId],
     );
   }
@@ -112,13 +120,9 @@ router.get('/', async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code, s.active,
-              COALESCE(string_agg(c.name, ', ' ORDER BY LOWER(c.name)), '') AS class_names
+      `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code, s.active
        FROM students s
-       LEFT JOIN student_classes sc ON sc.student_id = s.id
-       LEFT JOIN classes c ON c.id = sc.class_id
        WHERE s.active = $1
-       GROUP BY s.id
        ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
       [!showInactive],
     );
@@ -132,32 +136,44 @@ router.get('/', async (request, response) => {
       : '';
     const cards = result.rows.length === 0
       ? `<p class="empty-state">Aucun élève ${showInactive ? 'inactif' : 'actif'}.</p>`
-      : `<div class="card-list">${result.rows.map((student) => `
-          <article class="student-card">
-            <div>
-              <h2>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</h2>
-              <p><a href="mailto:${escapeHtml(student.email)}">${escapeHtml(student.email)}</a></p>
-              <p><strong>Code :</strong> <span class="student-code">${escapeHtml(student.student_code)}</span></p>
-              <p><strong>Classes :</strong> ${student.class_names
-                ? escapeHtml(student.class_names)
-                : '<span class="muted">Aucune</span>'}</p>
+      : `<section data-filterable-list>
+          <div class="search">
+            <label for="student-search">Rechercher dans le répertoire</label>
+            <div class="search-controls">
+              <input id="student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="student-list" data-list-search>
             </div>
-            <div class="card-actions">
-              <a class="button button-secondary" href="/students/${student.id}/edit">Modifier</a>
+          </div>
+          <p class="empty-state" role="status" data-list-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
+          <div class="compact-list" id="student-list" data-list-results>${result.rows.map((student) => `
+          <article class="compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+            <div class="compact-identity student-identity">
+              <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
+              <p class="compact-meta"><a href="mailto:${escapeHtml(student.email)}">${escapeHtml(student.email)}</a> · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+            </div>
+            <div class="compact-status">
+              <span class="status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
+            </div>
+            <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
+              <a class="button button-quiet" href="/students/${student.id}/edit">Modifier</a>
               ${student.active ? `<form method="post" action="/students/${student.id}/deactivate" data-confirm="Désactiver cet élève ?">
-                <button class="button button-danger" type="submit">Désactiver</button>
+                <button class="button button-danger-quiet" type="submit">Désactiver</button>
               </form>` : ''}
             </div>
-          </article>`).join('')}</div>`;
+          </article>`).join('')}</div>
+        </section>`;
 
     response.send(renderPage('Élèves', `
       <header class="page-header">
-        <h1>${showInactive ? 'Élèves inactifs' : 'Élèves'}</h1>
-        <a class="button" href="/students/new">Ajouter</a>
+        <div>
+          <h1>Élèves</h1>
+          <p class="page-description">${showInactive ? 'Élèves globalement inactifs.' : 'Répertoire des élèves actifs.'}</p>
+        </div>
+        <a class="button" href="/students/new">Ajouter un élève</a>
       </header>
-      <div class="filter-links">
-        <a href="${showInactive ? '/students' : '/students?status=inactive'}">${showInactive ? 'Voir les élèves actifs' : 'Voir les élèves inactifs'}</a>
-      </div>
+      <nav class="view-switch" aria-label="Filtrer les élèves par activité">
+        <a href="/students"${showInactive ? '' : ' aria-current="page"'}>Actifs</a>
+        <a href="/students?status=inactive"${showInactive ? ' aria-current="page"' : ''}>Inactifs</a>
+      </nav>
       ${notice}
       ${cards}`));
   } catch (error) {
@@ -217,8 +233,14 @@ router.post('/', async (request, response) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (selectedClassIds.length > 0) {
+      await client.query(
+        'SELECT id FROM classes WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE',
+        [selectedClassIds],
+      );
+    }
     const student = await insertStudent(client, values);
-    await replaceMemberships(client, student.id, selectedClassIds);
+    await addMemberships(client, student.id, selectedClassIds);
     await client.query('COMMIT');
     response.redirect(303, '/students?notice=created');
   } catch (error) {
@@ -323,13 +345,66 @@ router.post('/:id', async (request, response) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const membershipResult = await client.query(
+      'SELECT class_id FROM student_classes WHERE student_id = $1 ORDER BY class_id',
+      [request.params.id],
+    );
+    const selectedIds = new Set(selectedClassIds);
+    const removedClassIds = membershipResult.rows
+      .map((membership) => String(membership.class_id))
+      .filter((classId) => !selectedIds.has(classId));
+    const affectedClassIds = [...new Set([
+      ...selectedClassIds,
+      ...membershipResult.rows.map((membership) => String(membership.class_id)),
+    ])];
+    if (affectedClassIds.length > 0) {
+      await client.query(
+        'SELECT id FROM classes WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE',
+        [affectedClassIds],
+      );
+    }
+    if (removedClassIds.length > 0) {
+      const protectedResult = await client.query(
+        `SELECT c.name
+         FROM classes c
+         WHERE c.id = ANY($1::bigint[])
+           AND EXISTS (
+             SELECT 1 FROM course_sessions cs
+             WHERE cs.class_id = c.id AND cs.started_at IS NOT NULL
+           )
+         ORDER BY LOWER(c.name)
+         LIMIT 1`,
+        [removedClassIds],
+      );
+      if (protectedResult.rowCount > 0) {
+        await client.query('ROLLBACK');
+        response.status(409).send(renderStudentForm({
+          title: 'Modifier l’élève',
+          action: `/students/${request.params.id}`,
+          submitLabel: 'Enregistrer',
+          values,
+          classes,
+          selectedClassIds,
+          editing: true,
+          error: `L’affectation à la classe « ${protectedResult.rows[0].name} » ne peut plus être retirée car cette classe a déjà commencé. Gérez son activité depuis la page de la classe.`,
+        }));
+        return;
+      }
+    }
     await client.query(
       `UPDATE students
        SET first_name = $1, last_name = $2, email = $3, active = $4
        WHERE id = $5`,
       [values.firstName, values.lastName, values.email, values.active, request.params.id],
     );
-    await replaceMemberships(client, request.params.id, selectedClassIds);
+    if (removedClassIds.length > 0) {
+      await client.query(
+        `DELETE FROM student_classes
+         WHERE student_id = $1 AND class_id = ANY($2::bigint[])`,
+        [request.params.id, removedClassIds],
+      );
+    }
+    await addMemberships(client, request.params.id, selectedClassIds);
     await client.query('COMMIT');
     response.redirect(
       303,
@@ -365,21 +440,37 @@ router.post('/:id/deactivate', async (request, response) => {
     return;
   }
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+    await client.query(
+      `SELECT c.id
+       FROM classes c
+       INNER JOIN student_classes sc ON sc.class_id = c.id
+       WHERE sc.student_id = $1
+       ORDER BY c.id
+       FOR UPDATE`,
+      [request.params.id],
+    );
+    const result = await client.query(
       'UPDATE students SET active = FALSE WHERE id = $1 AND active = TRUE RETURNING id',
       [request.params.id],
     );
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       const page = renderMessagePage('Élève introuvable', 'Cet élève actif n’existe pas.', 404);
       response.status(page.status).send(page.html);
       return;
     }
+    await client.query('COMMIT');
     response.redirect(303, '/students?notice=deactivated');
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Unable to deactivate student:', error);
     const page = renderMessagePage('Désactivation impossible', 'Impossible de désactiver cet élève pour le moment.');
     response.status(page.status).send(page.html);
+  } finally {
+    client.release();
   }
 });
 

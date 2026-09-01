@@ -25,7 +25,7 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
     ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
     : '';
   const summaryContent = summary
-    ? `<section class="summary-card" aria-labelledby="import-summary-title">
+    ? `<section class="summary-card import-summary" aria-labelledby="import-summary-title">
         <h2 id="import-summary-title">Résumé de l’import</h2>
         <dl class="summary-list">
           <div><dt>Créés</dt><dd>${summary.created}</dd></div>
@@ -41,25 +41,39 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
 
   return renderPage('Importer des élèves', `
     <header class="page-header">
-      <h1>Importer des élèves</h1>
+      <div>
+        <h1>Importer des élèves</h1>
+        <p class="page-description">Ajoutez des élèves à une classe à partir d’un fichier CSV.</p>
+      </div>
       ${selectedClass
-        ? `<a class="button button-secondary" href="/classes/${selectedClass.id}">Voir ${escapeHtml(selectedClass.name)}</a>`
+        ? `<a class="button button-secondary" href="/classes/${selectedClass.id}">Retour à la classe</a>`
         : ''}
     </header>
     ${errorMessage}
     ${summaryContent}
-    <form class="form-card" method="post" action="/students/import" enctype="multipart/form-data">
-      <label for="class_id">Classe cible <span aria-hidden="true">*</span></label>
-      <select id="class_id" name="class_id" required>
-        <option value="">Choisir une classe</option>
-        ${classOptions}
-      </select>
+    <section class="instruction-panel" aria-labelledby="import-instructions-title">
+      <h2 id="import-instructions-title">Préparer le fichier</h2>
+      <p>Utilisez les colonnes <span class="student-code" translate="no">first_name</span>, <span class="student-code" translate="no">last_name</span> et <span class="student-code" translate="no">email</span>. Taille maximale : 1 Mo.</p>
+    </section>
+    ${classes.length === 0 ? '<p class="message message-warning" role="status">Créez une classe avant d’importer des élèves.</p>' : ''}
+    <form class="form-card import-form" method="post" action="/students/import" enctype="multipart/form-data">
+      <div class="form-field">
+        <label for="class_id">Classe cible <span aria-hidden="true">*</span></label>
+        <select id="class_id" name="class_id" required>
+          <option value="">Choisir une classe</option>
+          ${classOptions}
+        </select>
+      </div>
 
-      <label for="csv_file">Fichier CSV <span aria-hidden="true">*</span></label>
-      <input id="csv_file" name="csv_file" type="file" accept=".csv,text/csv" required>
-      <p class="help-text">Colonnes requises : first_name, last_name, email. Taille maximale : 1 Mo.</p>
+      <div class="form-field">
+        <label for="csv_file">Fichier CSV <span aria-hidden="true">*</span></label>
+        <input id="csv_file" name="csv_file" type="file" accept=".csv,text/csv" required>
+        <p class="help-text">Un seul fichier CSV, jusqu’à 2 000 lignes.</p>
+      </div>
 
-      <button class="button" type="submit"${classes.length === 0 ? ' disabled' : ''}>Importer</button>
+      <div class="form-actions">
+        <button class="button" type="submit"${classes.length === 0 ? ' disabled' : ''}>Importer les élèves</button>
+      </div>
     </form>`);
 }
 
@@ -172,6 +186,7 @@ router.post('/', receiveCsvFile, async (request, response) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [selectedClassId]);
       const existingResult = await client.query(
         'SELECT id FROM students WHERE LOWER(email) = LOWER($1) FOR UPDATE',
         [values.email],
@@ -189,7 +204,9 @@ router.post('/', receiveCsvFile, async (request, response) => {
       const membershipResult = await client.query(
         `INSERT INTO student_classes (student_id, class_id)
          VALUES ($1, $2)
-         ON CONFLICT DO NOTHING`,
+         ON CONFLICT (student_id, class_id)
+         DO UPDATE SET active = TRUE
+         WHERE student_classes.active = FALSE`,
         [studentId, selectedClassId],
       );
       summary.newlyAssigned += membershipResult.rowCount;

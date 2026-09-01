@@ -8,9 +8,10 @@ const { pool, verifyDatabaseConnection } = require('./db/client');
 const { router: authRouter, requireAuthentication } = require('./auth');
 const classesRouter = require('./classes');
 const courseSessionsRouter = require('./course-sessions');
+const { formatDateForDisplay } = require('./date-format');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
-const { renderPage } = require('./ui');
+const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const app = express();
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -67,15 +68,73 @@ app.use('/sessions', courseSessionsRouter);
 app.use('/students/import', studentImportRouter);
 app.use('/students', studentsRouter);
 
-app.get('/', (_request, response) => {
-  response.send(renderPage('Administration', `
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">Attendance Log</p>
-        <h1>Administration</h1>
-      </div>
-    </header>
-    <p>Utilisez le menu pour gérer les classes, les élèves et les sessions.</p>`));
+app.get('/', async (_request, response) => {
+  try {
+    const result = await pool.query(
+      `SELECT cs.id, cs.date, cs.title, cs.instructor, c.name AS class_name,
+              COUNT(s.id)::integer AS total_students,
+              COUNT(ar.student_id) FILTER (WHERE ar.status = 'present')::integer AS present_count
+       FROM course_sessions cs
+       INNER JOIN classes c ON c.id = cs.class_id
+       LEFT JOIN student_classes sc ON sc.class_id = cs.class_id AND sc.active = TRUE
+       LEFT JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+       LEFT JOIN attendance_records ar
+         ON ar.session_id = cs.id AND ar.student_id = s.id
+       WHERE cs.state = 'open'
+       GROUP BY cs.id, c.name
+       ORDER BY cs.date, LOWER(cs.title), cs.id`,
+    );
+    const openSessions = result.rows.length === 0
+      ? ''
+      : `<div class="compact-list" data-live-session-list>${result.rows.map((sessionRecord) => `
+          <article class="compact-row compact-row-status session-row" data-live-session-card data-session-id="${sessionRecord.id}">
+            <div class="compact-identity session-identity">
+              <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(sessionRecord.date))}</p>
+              <p class="compact-title">${escapeHtml(sessionRecord.title)}</p>
+              <p class="compact-meta">${escapeHtml(sessionRecord.class_name)} · ${escapeHtml(sessionRecord.instructor)}</p>
+            </div>
+            <div class="compact-status">
+              <strong class="compact-count"><span data-present-count>${sessionRecord.present_count}</span> / <span data-total-count>${sessionRecord.total_students}</span> présents</strong>
+              <span class="status-badge status-open" data-session-state>Séance ouverte</span>
+            </div>
+            <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(sessionRecord.title)}">
+              <a class="button" href="/sessions/${sessionRecord.id}">Présences</a>
+              <span class="session-edit-slot">
+                <a class="button button-quiet" href="/sessions/${sessionRecord.id}/edit" data-session-edit>Modifier</a>
+                <button class="button button-quiet button-unavailable" type="button" data-session-edit-disabled disabled hidden>Modifier</button>
+              </span>
+            </div>
+          </article>`).join('')}</div>`;
+
+    response.send(renderPage('Accueil', `
+      <header class="page-header">
+        <div>
+          <h1>Tableau de bord</h1>
+          <p class="page-description">Accédez aux tâches courantes et aux séances actuellement ouvertes.</p>
+        </div>
+      </header>
+      <nav class="dashboard-actions" aria-label="Accès rapides">
+        <a class="dashboard-link" href="/classes"><strong>Classes</strong><span>Gérer les groupes</span></a>
+        <a class="dashboard-link" href="/students"><strong>Élèves</strong><span>Consulter les élèves actifs</span></a>
+        <a class="dashboard-link" href="/sessions"><strong>Séances</strong><span>Planifier et prendre les présences</span></a>
+        <a class="dashboard-link" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a>
+      </nav>
+      <section class="page-section" aria-labelledby="open-sessions-title" data-live-dashboard>
+        <div class="section-header">
+          <div>
+            <h2 id="open-sessions-title">Séances ouvertes</h2>
+            <p class="section-description">Suivi des présences en cours.</p>
+          </div>
+          <a class="button button-quiet" href="/sessions">Voir toutes les séances</a>
+        </div>
+        ${openSessions}
+        <p class="empty-state" data-live-empty-state${result.rows.length > 0 ? ' hidden' : ''}>Aucune séance ouverte. Les séances planifiées apparaissent dans la rubrique Séances.</p>
+      </section>`));
+  } catch (error) {
+    console.error('Unable to load dashboard:', error);
+    const page = renderMessagePage('Accueil indisponible', 'Impossible de charger le tableau de bord pour le moment.');
+    response.status(page.status).send(page.html);
+  }
 });
 
 async function start() {

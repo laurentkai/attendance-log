@@ -1,12 +1,9 @@
 const express = require('express');
 const { pool } = require('./db/client');
+const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const { escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
 const router = express.Router();
-const frenchDateFormatter = new Intl.DateTimeFormat('fr-BE', {
-  dateStyle: 'long',
-  timeZone: 'UTC',
-});
 
 function isValidId(value) {
   return /^[1-9]\d*$/.test(value);
@@ -20,27 +17,6 @@ function isValidDate(value) {
   const parsedDate = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsedDate.getTime())
     && parsedDate.toISOString().slice(0, 10) === value;
-}
-
-function formatDateForInput(value) {
-  if (typeof value === 'string') {
-    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
-    return match ? match[1] : '';
-  }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, '0');
-    const day = String(value.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  return '';
-}
-
-function formatDateForDisplay(value) {
-  const dateValue = formatDateForInput(value);
-  return dateValue
-    ? frenchDateFormatter.format(new Date(`${dateValue}T00:00:00Z`))
-    : '';
 }
 
 function getFormValues(body = {}) {
@@ -74,33 +50,47 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
     ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
     : '';
   const classField = edit
-    ? `<p><strong>Classe :</strong> ${escapeHtml(values.class_name)}</p>
-       <input name="class_id" type="hidden" value="${escapeHtml(values.class_id)}">`
-    : `<label for="class_id">Classe <span aria-hidden="true">*</span></label>
-       <select id="class_id" name="class_id" required>
-         <option value="">Sélectionner une classe</option>
-         ${classes.map((classRecord) => `<option value="${classRecord.id}"${String(classRecord.id) === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
-       </select>`;
+    ? `<div class="form-field">
+         <p><strong>Classe :</strong> ${escapeHtml(values.class_name)}</p>
+         <input name="class_id" type="hidden" value="${escapeHtml(values.class_id)}">
+       </div>`
+    : `<div class="form-field">
+         <label for="class_id">Classe <span aria-hidden="true">*</span></label>
+         <select id="class_id" name="class_id" required>
+           <option value="">Sélectionner une classe</option>
+           ${classes.map((classRecord) => `<option value="${classRecord.id}"${String(classRecord.id) === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
+         </select>
+       </div>`;
 
   return renderPage(title, `
     <header class="page-header">
-      <h1>${escapeHtml(title)}</h1>
+      <div>
+        <h1>${escapeHtml(title)}</h1>
+      </div>
     </header>
     ${errorMessage}
     <form class="form-card" method="post" action="${escapeHtml(action)}">
       ${classField}
 
-      <label for="date">Date <span aria-hidden="true">*</span></label>
-      <input id="date" name="date" type="date" value="${escapeHtml(formatDateForInput(values.date))}" required>
+      <div class="form-field">
+        <label for="date">Date <span aria-hidden="true">*</span></label>
+        <input id="date" name="date" type="date" value="${escapeHtml(formatDateForInput(values.date))}" required>
+      </div>
 
-      <label for="title">Titre <span aria-hidden="true">*</span></label>
-      <input id="title" name="title" type="text" value="${escapeHtml(values.title)}" required>
+      <div class="form-field">
+        <label for="title">Titre <span aria-hidden="true">*</span></label>
+        <input id="title" name="title" type="text" value="${escapeHtml(values.title)}" autocomplete="off" required>
+      </div>
 
-      <label for="instructor">Formateur <span aria-hidden="true">*</span></label>
-      <input id="instructor" name="instructor" type="text" value="${escapeHtml(values.instructor)}" required>
+      <div class="form-field">
+        <label for="instructor">Formateur <span aria-hidden="true">*</span></label>
+        <input id="instructor" name="instructor" type="text" value="${escapeHtml(values.instructor)}" autocomplete="off" required>
+      </div>
 
-      <label for="notes">Notes</label>
-      <textarea id="notes" name="notes" rows="5">${escapeHtml(values.notes ?? '')}</textarea>
+      <div class="form-field">
+        <label for="notes">Notes</label>
+        <textarea id="notes" name="notes" rows="5" autocomplete="off">${escapeHtml(values.notes ?? '')}</textarea>
+      </div>
 
       <div class="form-actions">
         <button class="button" type="submit">${escapeHtml(submitLabel)}</button>
@@ -114,14 +104,85 @@ async function getClasses() {
   return result.rows;
 }
 
-router.get('/', async (request, response) => {
-  try {
-    const result = await pool.query(
-      `SELECT cs.id, cs.date, cs.title, cs.instructor, cs.state, c.name AS class_name
-       FROM course_sessions cs
-       INNER JOIN classes c ON c.id = cs.class_id
-       ORDER BY cs.date DESC, LOWER(cs.title), cs.id DESC`,
+async function loadRoster(session) {
+  if (session.state === 'closed') {
+    return pool.query(
+      `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code, ar.status
+       FROM attendance_records ar
+       INNER JOIN students s ON s.id = ar.student_id
+       WHERE ar.session_id = $1
+       ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
+      [session.id],
     );
+  }
+
+  return pool.query(
+    `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code,
+            COALESCE(ar.status, 'pending') AS status
+     FROM student_classes sc
+     INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+     LEFT JOIN attendance_records ar
+       ON ar.session_id = $2 AND ar.student_id = s.id
+     WHERE sc.class_id = $1 AND sc.active = TRUE
+     ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
+    [session.class_id, session.id],
+  );
+}
+
+function lockEligibleStudent(client, sessionId, studentId) {
+  return client.query(
+    `SELECT cs.id
+     FROM course_sessions cs
+     WHERE cs.id = $1
+       AND cs.state = 'open'
+       AND EXISTS (
+         SELECT 1
+         FROM student_classes sc
+         INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+         WHERE sc.class_id = cs.class_id AND sc.active = TRUE AND s.id = $2
+       )
+     FOR UPDATE`,
+    [sessionId, studentId],
+  );
+}
+
+function getStateLabel(state) {
+  return {
+    scheduled: 'Séance planifiée',
+    open: 'Séance ouverte',
+    closed: 'Séance clôturée',
+  }[state];
+}
+
+router.get('/', async (request, response) => {
+  const searchQuery = typeof request.query.q === 'string' ? request.query.q.trim().slice(0, 100) : '';
+  const searchPattern = `%${searchQuery}%`;
+  const classId = isValidId(request.query.class_id || '') ? request.query.class_id : '';
+
+  try {
+    const [result, classResult] = await Promise.all([
+      pool.query(
+        `SELECT cs.id, cs.date, cs.title, cs.instructor, cs.state, c.name AS class_name
+         FROM course_sessions cs
+         INNER JOIN classes c ON c.id = cs.class_id
+         WHERE ($1::bigint IS NULL OR cs.class_id = $1)
+           AND ($2 = ''
+            OR cs.title ILIKE $3
+            OR c.name ILIKE $3
+            OR cs.instructor ILIKE $3)
+         ORDER BY cs.date DESC, LOWER(cs.title), cs.id DESC`,
+        [classId || null, searchQuery, searchPattern],
+      ),
+      classId
+        ? pool.query('SELECT id, name FROM classes WHERE id = $1', [classId])
+        : Promise.resolve({ rows: [] }),
+    ]);
+    const classRecord = classResult.rows[0];
+    if (classId && !classRecord) {
+      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
     const notices = {
       created: 'La séance a été créée.',
       updated: 'La séance a été modifiée.',
@@ -130,26 +191,49 @@ router.get('/', async (request, response) => {
       ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const sessions = result.rows.length === 0
-      ? '<p class="empty-state">Aucune séance pour le moment.</p>'
-      : `<div class="card-list">${result.rows.map((session) => `
-          <article class="session-card">
-            <div>
-              <p class="session-date">${escapeHtml(formatDateForDisplay(session.date))}</p>
-              <h2>${escapeHtml(session.title)}</h2>
-              <p>${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p>
-              <span class="status-badge status-${session.state}">${session.state === 'open' ? 'Ouverte' : 'Clôturée'}</span>
+      ? `<p class="empty-state">${searchQuery
+        ? 'Aucune séance ne correspond à cette recherche.'
+        : 'Aucune séance pour le moment.'}</p>`
+      : `<div class="compact-list">${result.rows.map((session) => `
+          <article class="compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.id}"` : ''}>
+            <div class="compact-identity session-identity">
+              <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p>
+              <p class="compact-title">${escapeHtml(session.title)}</p>
+              <p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p>
             </div>
-            <div class="card-actions">
-              <a class="button" href="/sessions/${session.id}">Gérer les présences</a>
-              <a class="button button-secondary" href="/sessions/${session.id}/edit">Modifier</a>
+            <div class="compact-status">
+              <span class="status-badge status-${session.state}" data-session-state>${getStateLabel(session.state)}</span>
+            </div>
+            <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(session.title)}">
+              <a class="button" href="/sessions/${session.id}">${session.state === 'scheduled' ? 'Voir la séance' : 'Présences'}</a>
+              <span class="session-edit-slot">
+                <a class="button button-quiet" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
+                <button class="button button-quiet button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>Modifier</button>
+              </span>
             </div>
           </article>`).join('')}</div>`;
 
     response.send(renderPage('Séances', `
       <header class="page-header">
-        <h1>Séances</h1>
-        <a class="button" href="/sessions/new">Ajouter</a>
+        <div>
+          <h1>Séances</h1>
+          <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : 'Planifiez les cours et gérez les présences.'}</p>
+        </div>
+        <a class="button" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Nouvelle séance</a>
       </header>
+      ${classRecord ? `<nav class="context-tabs" aria-label="Gestion de la classe ${escapeHtml(classRecord.name)}">
+        <a href="/classes/${classRecord.id}">Gérer les élèves</a>
+        <a href="/sessions?class_id=${classRecord.id}" aria-current="page">Gérer les séances</a>
+      </nav>` : ''}
+      <form class="search" method="get" action="/sessions" role="search">
+        <label for="session-search">Rechercher une séance</label>
+        ${classId ? `<input name="class_id" type="hidden" value="${classId}">` : ''}
+        <div class="search-controls">
+          <input id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Titre, classe ou formateur…">
+          <button class="button" type="submit">Rechercher</button>
+          ${searchQuery ? `<a class="button button-secondary" href="/sessions${classId ? `?class_id=${classId}` : ''}">Effacer</a>` : ''}
+        </div>
+      </form>
       ${notice}
       ${sessions}`));
   } catch (error) {
@@ -250,7 +334,7 @@ router.get('/:id/edit', async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.instructor, cs.notes,
+      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
               c.name AS class_name
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
@@ -259,6 +343,15 @@ router.get('/:id/edit', async (request, response) => {
     );
     if (result.rowCount === 0) {
       const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    if (result.rows[0].state === 'closed') {
+      const page = renderMessagePage(
+        'Séance en lecture seule',
+        'Réouvrez la séance avant de modifier ses informations.',
+        409,
+      );
       response.status(page.status).send(page.html);
       return;
     }
@@ -285,6 +378,25 @@ router.post('/:id', async (request, response) => {
     return;
   }
 
+  try {
+    const stateResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.params.id]);
+    if (stateResult.rowCount === 0) {
+      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    if (stateResult.rows[0].state === 'closed') {
+      const page = renderMessagePage('Séance en lecture seule', 'Réouvrez la séance avant de modifier ses informations.', 409);
+      response.status(page.status).send(page.html);
+      return;
+    }
+  } catch (error) {
+    console.error('Unable to verify course session state:', error);
+    const page = renderMessagePage('Modification impossible', 'Impossible de vérifier cette séance pour le moment.');
+    response.status(page.status).send(page.html);
+    return;
+  }
+
   const values = getFormValues(request.body);
   const validationError = validateForm(values);
   if (validationError) {
@@ -305,12 +417,15 @@ router.post('/:id', async (request, response) => {
     const result = await pool.query(
       `UPDATE course_sessions
        SET date = $1, title = $2, instructor = $3, notes = $4
-       WHERE id = $5 AND class_id = $6
+       WHERE id = $5 AND class_id = $6 AND state IN ('scheduled', 'open')
        RETURNING id`,
       [values.date, values.title, values.instructor, values.notes || null, request.params.id, values.class_id],
     );
     if (result.rowCount === 0) {
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const sessionResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.params.id]);
+      const page = sessionResult.rows[0]?.state === 'closed'
+        ? renderMessagePage('Séance en lecture seule', 'Réouvrez la séance avant de modifier ses informations.', 409)
+        : renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
       response.status(page.status).send(page.html);
       return;
     }
@@ -318,6 +433,130 @@ router.post('/:id', async (request, response) => {
   } catch (error) {
     console.error('Unable to update course session:', error);
     const page = renderMessagePage('Modification impossible', 'Impossible de modifier cette séance pour le moment.');
+    response.status(page.status).send(page.html);
+  }
+});
+
+router.get('/:id/status', async (request, response) => {
+  if (!isValidId(request.params.id)) {
+    response.status(404).json({ error: 'Séance introuvable.' });
+    return;
+  }
+
+  try {
+    const sessionResult = await pool.query(
+      'SELECT id, class_id, state FROM course_sessions WHERE id = $1',
+      [request.params.id],
+    );
+    if (sessionResult.rowCount === 0) {
+      response.status(404).json({ error: 'Séance introuvable.' });
+      return;
+    }
+    const session = sessionResult.rows[0];
+    const rosterResult = await loadRoster(session);
+    response.set('Cache-Control', 'no-store');
+    response.json({
+      id: String(session.id),
+      state: session.state,
+      present: rosterResult.rows.filter((student) => student.status === 'present').length,
+      total: rosterResult.rowCount,
+      roster: rosterResult.rows.map((student) => ({
+        studentId: String(student.id),
+        status: student.status,
+      })),
+    });
+  } catch (error) {
+    console.error('Unable to load live course session status:', error);
+    response.status(500).json({ error: 'Impossible de charger l’état de la séance.' });
+  }
+});
+
+router.get('/:id/quick-attendance', async (request, response) => {
+  if (!isValidId(request.params.id)) {
+    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    response.status(page.status).send(page.html);
+    return;
+  }
+
+  try {
+    const sessionResult = await pool.query(
+      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.state, c.name AS class_name
+       FROM course_sessions cs
+       INNER JOIN classes c ON c.id = cs.class_id
+       WHERE cs.id = $1`,
+      [request.params.id],
+    );
+    if (sessionResult.rowCount === 0) {
+      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
+
+    const session = sessionResult.rows[0];
+    if (session.state !== 'open') {
+      response.status(409).send(renderPage('Prise de présence rapide', `
+        <div class="quick-attendance">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Prise de présence rapide</p>
+              <h1>${escapeHtml(session.title)}</h1>
+              <p class="page-description">${escapeHtml(session.class_name)} · ${escapeHtml(formatDateForDisplay(session.date))}</p>
+            </div>
+            <span class="status-badge status-${session.state}">${getStateLabel(session.state)}</span>
+          </header>
+          <p class="message message-warning">${session.state === 'closed'
+            ? 'Cette séance est clôturée. Réouvrez-la depuis la gestion complète avant de reprendre les présences.'
+            : 'Cette séance doit être ouverte avant de prendre les présences.'}</p>
+          <a class="button button-secondary" href="/sessions/${session.id}">Retour à la séance</a>
+        </div>`));
+      return;
+    }
+
+    const rosterResult = await loadRoster(session);
+    const presentCount = rosterResult.rows.filter((student) => student.status === 'present').length;
+    const eligibleStudents = rosterResult.rows.filter((student) => student.status !== 'present');
+    const studentRows = eligibleStudents.map((student) => `
+      <article class="compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+        <div class="compact-identity student-identity">
+          <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
+          <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+        </div>
+        <div class="compact-actions">
+          <form method="post" action="/sessions/${session.id}/quick-attendance/${student.id}" data-quick-present-form>
+            <button class="button" type="submit">Présent</button>
+          </form>
+        </div>
+      </article>`).join('');
+
+    response.send(renderPage('Prise de présence rapide', `
+      <div class="quick-attendance" data-quick-attendance data-session-id="${session.id}">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Prise de présence rapide</p>
+            <h1>${escapeHtml(session.title)}</h1>
+            <p class="page-description">${escapeHtml(session.class_name)} · ${escapeHtml(formatDateForDisplay(session.date))}</p>
+          </div>
+          <span class="status-badge status-open" data-session-state>Séance ouverte</span>
+        </header>
+        <section class="summary-card attendance-summary" aria-label="Présences actuelles" aria-live="polite">
+          <strong class="quick-attendance-count"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> présents</strong>
+          <button class="button button-secondary" type="button" data-quick-undo disabled>Annuler la dernière action</button>
+        </section>
+        <p class="message message-warning" data-quick-readonly hidden>Cette séance vient d’être clôturée. La prise de présence est maintenant indisponible.</p>
+        <p class="message message-error" data-quick-error role="alert" hidden>La présence n’a pas pu être mise à jour. Réessayez.</p>
+        <div class="search">
+          <label for="quick-attendance-search">Rechercher un élève</label>
+          <div class="search-controls">
+            <input id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
+          </div>
+        </div>
+        <p class="quick-attendance-state" role="status" data-quick-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
+        <p class="quick-attendance-state" role="status" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>Tous les élèves sont présents.</p>
+        <div class="compact-list" id="quick-attendance-results" data-quick-results${eligibleStudents.length === 0 ? ' hidden' : ''}>${studentRows}</div>
+      </div>`));
+  } catch (error) {
+    console.error('Unable to load quick attendance:', error);
+    const page = renderMessagePage('Prise de présence indisponible', 'Impossible de charger la prise de présence rapide pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
@@ -345,26 +584,7 @@ router.get('/:id', async (request, response) => {
     }
 
     const session = sessionResult.rows[0];
-    const studentsResult = session.state === 'closed'
-      ? await pool.query(
-        `SELECT s.id, s.first_name, s.last_name, ar.status
-         FROM attendance_records ar
-         INNER JOIN students s ON s.id = ar.student_id
-         WHERE ar.session_id = $1
-         ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
-        [request.params.id],
-      )
-      : await pool.query(
-        `SELECT s.id, s.first_name, s.last_name,
-                COALESCE(ar.status, 'pending') AS status
-         FROM student_classes sc
-         INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
-         LEFT JOIN attendance_records ar
-           ON ar.session_id = $2 AND ar.student_id = s.id
-         WHERE sc.class_id = $1
-         ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
-        [session.class_id, request.params.id],
-      );
+    const studentsResult = await loadRoster(session);
 
     const presentCount = studentsResult.rows.filter((student) => student.status === 'present').length;
     const notices = {
@@ -378,23 +598,30 @@ router.get('/:id', async (request, response) => {
       ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const studentList = studentsResult.rows.length === 0
-      ? `<p class="empty-state">${session.state === 'open'
+      ? `<p class="empty-state">${session.state === 'closed'
+        ? 'Aucun élève enregistré pour cette séance.'
+        : session.state === 'open'
         ? 'Aucun élève actif dans cette classe.'
-        : 'Aucun élève enregistré pour cette séance.'}</p>`
-      : `<div class="card-list">${studentsResult.rows.map((student) => `
-          <article class="attendance-card">
-            <div>
-              <h2>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</h2>
-              <span class="status-badge status-${student.status}">${{
+        : 'Aucun élève actif dans cette classe. La séance n’a pas encore commencé.'}</p>`
+      : `<div class="compact-list" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
+          <article class="compact-row compact-row-status student-row" data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+            <div class="compact-identity student-identity">
+              <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
+              <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+            </div>
+            <div class="compact-status">
+              <span class="status-badge status-${student.status}" data-attendance-status>${{
                 pending: 'En attente',
                 present: 'Présent',
                 absent: 'Absent',
               }[student.status]}</span>
             </div>
-            ${session.state === 'open' ? `<form class="attendance-actions" method="post" action="/sessions/${session.id}/attendance/${student.id}">
-              <button class="button" name="status" type="submit" value="present">Présent</button>
-              <button class="button button-danger" name="status" type="submit" value="absent">Absent</button>
-            </form>` : ''}
+            <div class="compact-actions compact-actions--attendance" data-attendance-actions${session.state === 'open' ? '' : ' hidden'}>
+              ${session.state === 'open' ? `<form class="compact-actions compact-actions--split" method="post" action="/sessions/${session.id}/attendance/${student.id}" data-attendance-form>
+                <button class="button" name="status" type="submit" value="present">Présent</button>
+                <button class="button button-danger-secondary" name="status" type="submit" value="absent">Absent</button>
+              </form>` : ''}
+            </div>
           </article>`).join('')}</div>`;
 
     response.send(renderPage(session.title, `
@@ -402,29 +629,174 @@ router.get('/:id', async (request, response) => {
         <div>
           <p class="eyebrow">${escapeHtml(session.class_name)}</p>
           <h1>${escapeHtml(session.title)}</h1>
-          <p>${escapeHtml(formatDateForDisplay(session.date))} · ${escapeHtml(session.instructor)}</p>
-          ${session.notes ? `<p class="session-notes">${escapeHtml(session.notes)}</p>` : ''}
+          <p class="page-description">${escapeHtml(formatDateForDisplay(session.date))} · ${escapeHtml(session.instructor)}</p>
+          ${session.notes ? `<p class="page-description session-notes">${escapeHtml(session.notes)}</p>` : ''}
         </div>
         <div class="context-actions">
-          <a class="button button-secondary" href="/sessions/${session.id}/edit">Modifier</a>
-          ${session.state === 'open'
-            ? `<form method="post" action="/sessions/${session.id}/close" data-confirm="Clôturer cette séance et marquer les élèves en attente comme absents ?"><button class="button button-danger" type="submit">Clôturer</button></form>`
-            : `<form method="post" action="/sessions/${session.id}/open"><button class="button" type="submit">Rouvrir</button></form>`}
+          <a class="button" href="/sessions/${session.id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Prise de présence rapide</a>
+          <form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="button" type="submit">${session.state === 'scheduled' ? 'Ouvrir la séance' : 'Réouvrir la séance'}</button></form>
+          <a class="button button-secondary" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier la séance</a>
+          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer cette séance et marquer les élèves en attente comme absents ?"${session.state === 'open' ? '' : ' hidden'}><button class="button button-danger" type="submit">Clôturer la séance</button></form>
         </div>
       </header>
       ${notice}
-      <section class="summary-card" aria-label="Résumé des présences">
-        <strong>${presentCount} / ${studentsResult.rows.length} présents</strong>
-        <span class="status-badge status-${session.state}">${session.state === 'open' ? 'Séance ouverte' : 'Séance clôturée'}</span>
+      ${session.state === 'closed' ? '<p class="message message-warning">Cette séance est clôturée et en lecture seule. Réouvrez-la pour modifier ses informations ou les présences.</p>' : ''}
+      <section class="summary-card attendance-summary" aria-label="Résumé des présences" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.id}"` : ''}>
+        <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> présents</strong>
+        <span class="status-badge status-${session.state}" data-session-state aria-live="polite">${getStateLabel(session.state)}</span>
       </section>
-      <section class="page-section">
-        <h2>Élèves</h2>
+      <p class="message message-warning" data-live-readonly hidden>Cette séance vient d’être clôturée. Les présences sont maintenant en lecture seule.</p>
+      <p class="message message-error" data-live-error role="alert" hidden>La présence n’a pas pu être mise à jour. Réessayez.</p>
+      <section class="page-section" aria-labelledby="attendance-title">
+        <div class="section-header">
+          <div>
+            <h2 id="attendance-title">Gestion des présences</h2>
+          </div>
+        </div>
+        ${studentsResult.rows.length > 0 ? `<div class="search">
+          <label for="attendance-search">Rechercher un élève</label>
+          <div class="search-controls">
+            <input id="attendance-search" name="attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
+          </div>
+          <p class="help-text" role="status" data-attendance-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
+        </div>` : ''}
         ${studentList}
       </section>`));
   } catch (error) {
     console.error('Unable to load course session attendance:', error);
     const page = renderMessagePage('Séance indisponible', 'Impossible de charger cette séance pour le moment.');
     response.status(page.status).send(page.html);
+  }
+});
+
+router.post('/:id/quick-attendance/:studentId', async (request, response) => {
+  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+    response.status(404).json({ error: 'Présence introuvable.' });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const allowedResult = await lockEligibleStudent(
+      client,
+      request.params.id,
+      request.params.studentId,
+    );
+    if (allowedResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      response.status(409).json({
+        error: 'La séance doit être ouverte et l’élève doit être actif dans cette classe.',
+      });
+      return;
+    }
+
+    const currentResult = await client.query(
+      `SELECT status
+       FROM attendance_records
+       WHERE session_id = $1 AND student_id = $2
+       FOR UPDATE`,
+      [request.params.id, request.params.studentId],
+    );
+    const previousStatus = currentResult.rows[0]?.status || 'pending';
+    if (previousStatus === 'present') {
+      await client.query('COMMIT');
+      response.set('Cache-Control', 'no-store');
+      response.json({
+        studentId: request.params.studentId,
+        status: 'present',
+        changed: false,
+      });
+      return;
+    }
+
+    const updateResult = await client.query(
+      `INSERT INTO attendance_records (session_id, student_id, status)
+       VALUES ($1, $2, 'present')
+       ON CONFLICT (session_id, student_id)
+       DO UPDATE SET status = 'present', updated_at = CURRENT_TIMESTAMP
+       RETURNING ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint::text AS version`,
+      [request.params.id, request.params.studentId],
+    );
+    await client.query('COMMIT');
+    response.set('Cache-Control', 'no-store');
+    response.json({
+      studentId: request.params.studentId,
+      status: 'present',
+      previousStatus,
+      version: updateResult.rows[0].version,
+      changed: true,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Unable to update quick attendance:', error);
+    response.status(500).json({ error: 'Impossible de mettre à jour cette présence.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/:id/quick-attendance/:studentId/undo', async (request, response) => {
+  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+    response.status(404).json({ error: 'Présence introuvable.' });
+    return;
+  }
+  const previousStatus = typeof request.body.previous_status === 'string'
+    ? request.body.previous_status
+    : '';
+  const expectedVersion = typeof request.body.expected_version === 'string'
+    ? request.body.expected_version
+    : '';
+  if (!['pending', 'absent'].includes(previousStatus) || !/^\d{1,20}$/.test(expectedVersion)) {
+    response.status(400).json({ error: 'Action à annuler invalide.' });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const allowedResult = await lockEligibleStudent(
+      client,
+      request.params.id,
+      request.params.studentId,
+    );
+    if (allowedResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      response.status(409).json({ error: 'Cette action ne peut plus être annulée.' });
+      return;
+    }
+
+    const updateResult = await client.query(
+      `UPDATE attendance_records
+       SET status = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE session_id = $2
+         AND student_id = $3
+         AND status = 'present'
+         AND ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint = $4::bigint
+       RETURNING status`,
+      [previousStatus, request.params.id, request.params.studentId, expectedVersion],
+    );
+    if (updateResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      response.status(409).json({
+        error: 'La présence a été modifiée depuis cette action. L’annulation a été ignorée.',
+      });
+      return;
+    }
+
+    await client.query('COMMIT');
+    response.set('Cache-Control', 'no-store');
+    response.json({
+      studentId: request.params.studentId,
+      status: previousStatus,
+      undone: true,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Unable to undo quick attendance:', error);
+    response.status(500).json({ error: 'Impossible d’annuler cette action.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -443,19 +815,10 @@ router.post('/:id/attendance/:studentId', async (request, response) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const allowedResult = await client.query(
-      `SELECT cs.id
-       FROM course_sessions cs
-       WHERE cs.id = $1
-         AND cs.state = 'open'
-         AND EXISTS (
-           SELECT 1
-           FROM student_classes sc
-           INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
-           WHERE sc.class_id = cs.class_id AND s.id = $2
-         )
-       FOR UPDATE`,
-      [request.params.id, request.params.studentId],
+    const allowedResult = await lockEligibleStudent(
+      client,
+      request.params.id,
+      request.params.studentId,
     );
     if (allowedResult.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -498,7 +861,7 @@ router.post('/:id/close', async (request, response) => {
   try {
     await client.query('BEGIN');
     const sessionResult = await client.query(
-      'SELECT id, class_id FROM course_sessions WHERE id = $1 FOR UPDATE',
+      'SELECT id, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
       [request.params.id],
     );
     if (sessionResult.rowCount === 0) {
@@ -507,13 +870,23 @@ router.post('/:id/close', async (request, response) => {
       response.status(page.status).send(page.html);
       return;
     }
+    if (sessionResult.rows[0].state !== 'open') {
+      await client.query('ROLLBACK');
+      const page = renderMessagePage('Clôture impossible', 'Seule une séance ouverte peut être clôturée.', 409);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    await client.query(
+      'SELECT id FROM classes WHERE id = $1 FOR UPDATE',
+      [sessionResult.rows[0].class_id],
+    );
 
     await client.query(
       `INSERT INTO attendance_records (session_id, student_id, status)
        SELECT $1, s.id, 'absent'
        FROM student_classes sc
        INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
-       WHERE sc.class_id = $2
+       WHERE sc.class_id = $2 AND sc.active = TRUE
        ON CONFLICT (session_id, student_id)
        DO UPDATE SET status = 'absent', updated_at = CURRENT_TIMESTAMP
        WHERE attendance_records.status = 'pending'`,
@@ -539,21 +912,43 @@ router.post('/:id/open', async (request, response) => {
     return;
   }
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      "UPDATE course_sessions SET state = 'open' WHERE id = $1 RETURNING id",
+    await client.query('BEGIN');
+    const sessionResult = await client.query(
+      'SELECT id, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
+      [request.params.id],
+    );
+    if (sessionResult.rowCount > 0) {
+      await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [sessionResult.rows[0].class_id]);
+    }
+    const result = await client.query(
+      `UPDATE course_sessions
+       SET state = 'open', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+       WHERE id = $1 AND state IN ('scheduled', 'closed')
+       RETURNING id`,
       [request.params.id],
     );
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
+      if (sessionResult.rowCount > 0) {
+        const page = renderMessagePage('Ouverture impossible', 'Cette séance est déjà ouverte.', 409);
+        response.status(page.status).send(page.html);
+        return;
+      }
       const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
       response.status(page.status).send(page.html);
       return;
     }
+    await client.query('COMMIT');
     response.redirect(303, `/sessions/${request.params.id}?notice=opened`);
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Unable to open course session:', error);
     const page = renderMessagePage('Ouverture impossible', 'Impossible d’ouvrir cette séance pour le moment.');
     response.status(page.status).send(page.html);
+  } finally {
+    client.release();
   }
 });
 

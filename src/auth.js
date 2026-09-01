@@ -24,11 +24,15 @@ function renderLogin(error = '') {
     </header>
     ${errorMessage}
     <form class="form-card" method="post" action="/login">
-      <label for="username">Identifiant</label>
-      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      <div class="form-field">
+        <label for="username">Identifiant</label>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      </div>
 
-      <label for="password">Mot de passe</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <div class="form-field">
+        <label for="password">Mot de passe</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
 
       <button class="button" type="submit">Se connecter</button>
     </form>`, { authenticated: false });

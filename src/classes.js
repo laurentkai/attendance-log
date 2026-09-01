@@ -9,7 +9,9 @@ function renderMessagePage(title, message, status = 500) {
     status,
     html: renderPage(title, `
       <header class="page-header">
-        <h1>${escapeHtml(title)}</h1>
+        <div>
+          <h1>${escapeHtml(title)}</h1>
+        </div>
       </header>
       <p class="message message-error">${escapeHtml(message)}</p>`),
   };
@@ -31,15 +33,21 @@ function renderClassForm({ title, action, submitLabel, values, error = '' }) {
 
   return renderPage(title, `
     <header class="page-header">
-      <h1>${escapeHtml(title)}</h1>
+      <div>
+        <h1>${escapeHtml(title)}</h1>
+      </div>
     </header>
     ${errorMessage}
     <form class="form-card" method="post" action="${escapeHtml(action)}">
-      <label for="name">Nom <span aria-hidden="true">*</span></label>
-      <input id="name" name="name" type="text" value="${escapeHtml(values.name || '')}" required autofocus>
+      <div class="form-field">
+        <label for="name">Nom <span aria-hidden="true">*</span></label>
+        <input id="name" name="name" type="text" value="${escapeHtml(values.name || '')}" autocomplete="off" required>
+      </div>
 
-      <label for="description">Description</label>
-      <textarea id="description" name="description" rows="5">${escapeHtml(values.description || '')}</textarea>
+      <div class="form-field">
+        <label for="description">Description</label>
+        <textarea id="description" name="description" rows="5" autocomplete="off">${escapeHtml(values.description || '')}</textarea>
+      </div>
 
       <div class="form-actions">
         <button class="button" type="submit">${escapeHtml(submitLabel)}</button>
@@ -75,27 +83,35 @@ router.get('/', async (request, response) => {
       : '';
     const classList = result.rows.length === 0
       ? '<p class="empty-state">Aucune classe pour le moment.</p>'
-      : `<div class="card-list">${result.rows.map((classRecord) => `
-          <article class="class-card">
-            <div>
-              <h2>${escapeHtml(classRecord.name)}</h2>
-              <p class="class-description">${classRecord.description
+      : `<div class="compact-list">${result.rows.map((classRecord) => `
+          <article class="compact-row class-management-row">
+            <div class="compact-identity class-identity">
+              <p class="compact-title">${escapeHtml(classRecord.name)}</p>
+              <p class="compact-meta class-description">${classRecord.description
                 ? escapeHtml(classRecord.description)
                 : '<span class="muted">Aucune description</span>'}</p>
             </div>
-            <div class="card-actions">
-              <a class="button" href="/classes/${classRecord.id}">Gérer les élèves</a>
-              <a class="button button-secondary" href="/classes/${classRecord.id}/edit">Modifier</a>
-              <form method="post" action="/classes/${classRecord.id}/delete" data-confirm="Supprimer cette classe ?">
-                <button class="button button-danger" type="submit">Supprimer</button>
-              </form>
+            <div class="row-action-stack">
+              <div class="compact-actions compact-actions--split" aria-label="Gérer ${escapeHtml(classRecord.name)}">
+                <a class="button button-secondary" href="/classes/${classRecord.id}">Gérer les élèves</a>
+                <a class="button button-secondary" href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
+              </div>
+              <div class="compact-actions" aria-label="Administration de ${escapeHtml(classRecord.name)}">
+                <a class="button button-quiet" href="/classes/${classRecord.id}/edit">Modifier</a>
+                <form method="post" action="/classes/${classRecord.id}/delete" data-confirm="Supprimer cette classe ?">
+                  <button class="button button-danger-quiet" type="submit">Supprimer</button>
+                </form>
+              </div>
             </div>
           </article>`).join('')}</div>`;
 
     response.send(renderPage('Classes', `
       <header class="page-header">
-        <h1>Classes</h1>
-        <a class="button" href="/classes/new">Ajouter</a>
+        <div>
+          <h1>Classes</h1>
+          <p class="page-description">Accédez directement aux élèves ou aux séances de chaque classe.</p>
+        </div>
+        <a class="button" href="/classes/new">Ajouter une classe</a>
       </header>
       ${notice}
       ${classList}`));
@@ -157,18 +173,31 @@ router.get('/:id', async (request, response) => {
     return;
   }
 
+  const searchQuery = typeof request.query.q === 'string' ? request.query.q.trim().slice(0, 100) : '';
+  const canSearch = searchQuery.length >= 2;
+
   try {
     const [classResult, assignedResult, availableResult] = await Promise.all([
-      pool.query('SELECT id, name, description FROM classes WHERE id = $1', [request.params.id]),
       pool.query(
-        `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code
+        `SELECT c.id, c.name, c.description,
+                EXISTS (
+                  SELECT 1 FROM course_sessions cs
+                  WHERE cs.class_id = c.id AND cs.started_at IS NOT NULL
+                ) AS membership_locked
+         FROM classes c
+         WHERE c.id = $1`,
+        [request.params.id],
+      ),
+      pool.query(
+        `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code,
+                sc.active AS membership_active
          FROM students s
          INNER JOIN student_classes sc ON sc.student_id = s.id
          WHERE sc.class_id = $1 AND s.active = TRUE
          ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
         [request.params.id],
       ),
-      pool.query(
+      canSearch ? pool.query(
         `SELECT s.id, s.first_name, s.last_name, s.email
          FROM students s
          WHERE s.active = TRUE
@@ -176,9 +205,13 @@ router.get('/:id', async (request, response) => {
              SELECT 1 FROM student_classes sc
              WHERE sc.student_id = s.id AND sc.class_id = $1
            )
+           AND (s.first_name ILIKE $2
+             OR s.last_name ILIKE $2
+             OR s.email ILIKE $2
+             OR s.student_code ILIKE $2)
          ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
-        [request.params.id],
-      ),
+        [request.params.id, `%${searchQuery}%`],
+      ) : Promise.resolve({ rows: [] }),
     ]);
 
     if (classResult.rowCount === 0) {
@@ -192,28 +225,46 @@ router.get('/:id', async (request, response) => {
       students_added: 'Les élèves sélectionnés ont été ajoutés.',
       no_students_added: 'Aucune nouvelle affectation n’a été ajoutée.',
       student_removed: 'L’élève a été retiré de la classe.',
+      membership_deactivated: 'L’affectation de l’élève a été désactivée pour cette classe.',
+      membership_reactivated: 'L’affectation de l’élève a été réactivée pour cette classe.',
     };
     const notice = notices[request.query.notice]
       ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const assignedStudents = assignedResult.rows.length === 0
-      ? '<p class="empty-state">Aucun élève actif dans cette classe.</p>'
-      : `<div class="card-list">${assignedResult.rows.map((student) => `
-          <article class="student-card">
-            <div>
-              <h2>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</h2>
-              <p>${escapeHtml(student.email)}</p>
-              <p><strong>Code :</strong> <span class="student-code">${escapeHtml(student.student_code)}</span></p>
+      ? '<p class="empty-state">Aucune affectation d’élève dans cette classe.</p>'
+      : `<section data-filterable-list>
+          <div class="search">
+            <label for="class-roster-search">Rechercher dans les affectations</label>
+            <div class="search-controls">
+              <input id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="class-roster-list" data-list-search>
             </div>
-            <div class="card-actions">
-              <a class="button button-secondary" href="/students/${student.id}/edit">Modifier</a>
-              <form method="post" action="/classes/${classRecord.id}/students/${student.id}/remove" data-confirm="Retirer cet élève de la classe ?">
-                <button class="button button-danger" type="submit">Retirer de la classe</button>
+          </div>
+          <p class="empty-state" role="status" data-list-no-results hidden>Aucune affectation ne correspond à cette recherche.</p>
+          <div class="compact-list" id="class-roster-list" data-list-results>${assignedResult.rows.map((student) => `
+          <article class="compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+            <div class="compact-identity student-identity">
+              <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
+              <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+            </div>
+            <div class="compact-status">
+              <span class="status-badge status-${student.membership_active ? 'active' : 'inactive'}">Dans cette classe : ${student.membership_active ? 'actif' : 'inactif'}</span>
+            </div>
+            <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
+              <a class="button button-quiet" href="/students/${student.id}/edit">Modifier l’élève</a>
+              <form method="post" action="/classes/${classRecord.id}/students/${student.id}/${student.membership_active ? 'deactivate' : 'reactivate'}">
+                <button class="button button-secondary" type="submit">${student.membership_active ? 'Désactiver pour cette classe' : 'Réactiver pour cette classe'}</button>
               </form>
+              ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.id}/students/${student.id}/remove" data-confirm="Retirer cet élève de la classe ?">
+                <button class="button button-danger-quiet" type="submit">Retirer de la classe</button>
+              </form>`}
             </div>
-          </article>`).join('')}</div>`;
-    const availableStudents = availableResult.rows.length === 0
-      ? '<p class="muted">Aucun autre élève actif disponible.</p>'
+          </article>`).join('')}</div>
+        </section>`;
+    const availableStudents = !canSearch
+      ? '<p class="empty-state">Saisissez au moins 2 caractères pour rechercher un élève actif.</p>'
+      : availableResult.rows.length === 0
+      ? '<p class="empty-state">Aucun élève actif disponible ne correspond à cette recherche.</p>'
       : `<form class="form-card" method="post" action="/classes/${classRecord.id}/students">
           <fieldset>
             <legend>Élèves à ajouter</legend>
@@ -230,23 +281,44 @@ router.get('/:id', async (request, response) => {
       <header class="page-header">
         <div>
           <h1>${escapeHtml(classRecord.name)}</h1>
-          <p class="class-description">${classRecord.description
+          <p class="page-description class-description">${classRecord.description
             ? escapeHtml(classRecord.description)
             : '<span class="muted">Aucune description</span>'}</p>
         </div>
-        <div class="context-actions">
-          <a class="button button-secondary" href="/classes/${classRecord.id}/edit">Modifier la classe</a>
-          <a class="button button-secondary" href="/sessions/new?class_id=${classRecord.id}">Créer une séance</a>
-          <a class="button" href="/students/import?class_id=${classRecord.id}">Importer dans cette classe</a>
-        </div>
+        <a class="button button-secondary" href="/classes/${classRecord.id}/edit">Modifier la classe</a>
       </header>
+      <nav class="context-tabs" aria-label="Gestion de la classe">
+        <a href="/classes/${classRecord.id}" aria-current="page">Gérer les élèves</a>
+        <a href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
+      </nav>
       ${notice}
+      ${classRecord.membership_locked
+        ? '<p class="message message-warning" role="status">Cette classe a déjà commencé. Ses affectations sont conservées pour protéger l’historique. Désactivez une affectation pour exclure l’élève des futures séances de cette classe.</p>'
+        : ''}
       <section class="page-section">
-        <h2>Élèves actifs affectés</h2>
+        <div class="section-header">
+          <div>
+            <h2>Élèves de la classe</h2>
+            <p class="section-description">L’état affiché ici concerne uniquement cette classe.</p>
+          </div>
+          <a class="button button-secondary" href="/students/import?class_id=${classRecord.id}">Importer des élèves</a>
+        </div>
         ${assignedStudents}
       </section>
       <section class="page-section">
-        <h2>Ajouter des élèves existants</h2>
+        <div class="section-header">
+          <div>
+            <h2>Ajouter des élèves existants</h2>
+          </div>
+        </div>
+        <form class="search" method="get" action="/classes/${classRecord.id}" role="search">
+          <label for="membership-search">Rechercher un élève actif</label>
+          <div class="search-controls">
+            <input id="membership-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…">
+            <button class="button" type="submit">Rechercher</button>
+            ${searchQuery ? `<a class="button button-secondary" href="/classes/${classRecord.id}">Effacer</a>` : ''}
+          </div>
+        </form>
         ${availableStudents}
       </section>`));
   } catch (error) {
@@ -265,20 +337,24 @@ router.post('/:id/students', async (request, response) => {
 
   const studentIds = getStudentIds(request.body);
 
+  const client = await pool.connect();
   try {
-    const classResult = await pool.query('SELECT id FROM classes WHERE id = $1', [request.params.id]);
+    await client.query('BEGIN');
+    const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
     if (classResult.rowCount === 0) {
+      await client.query('ROLLBACK');
       const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
       response.status(page.status).send(page.html);
       return;
     }
 
     if (studentIds.length === 0) {
+      await client.query('ROLLBACK');
       response.redirect(303, `/classes/${request.params.id}?notice=no_students_added`);
       return;
     }
 
-    const result = await pool.query(
+    const result = await client.query(
       `INSERT INTO student_classes (student_id, class_id)
        SELECT s.id, $1
        FROM students s
@@ -286,14 +362,18 @@ router.post('/:id/students', async (request, response) => {
        ON CONFLICT DO NOTHING`,
       [request.params.id, studentIds],
     );
+    await client.query('COMMIT');
     response.redirect(
       303,
       `/classes/${request.params.id}?notice=${result.rowCount > 0 ? 'students_added' : 'no_students_added'}`,
     );
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Unable to add class memberships:', error);
     const page = renderMessagePage('Affectation impossible', 'Impossible d’ajouter les élèves à cette classe pour le moment.');
     response.status(page.status).send(page.html);
+  } finally {
+    client.release();
   }
 });
 
@@ -304,8 +384,31 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
     return;
   }
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+    const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
+    if (classResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    const startedResult = await client.query(
+      'SELECT 1 FROM course_sessions WHERE class_id = $1 AND started_at IS NOT NULL LIMIT 1',
+      [request.params.id],
+    );
+    if (startedResult.rowCount > 0) {
+      await client.query('ROLLBACK');
+      const page = renderMessagePage(
+        'Retrait impossible',
+        'Cette classe a déjà commencé. Désactivez l’affectation pour préserver l’historique.',
+        409,
+      );
+      response.status(page.status).send(page.html);
+      return;
+    }
+    const result = await client.query(
       `DELETE FROM student_classes sc
        USING students s
        WHERE sc.class_id = $1
@@ -316,17 +419,76 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
       [request.params.id, request.params.studentId],
     );
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       const page = renderMessagePage('Affectation introuvable', 'Cette affectation active n’existe pas.', 404);
       response.status(page.status).send(page.html);
       return;
     }
+    await client.query('COMMIT');
     response.redirect(303, `/classes/${request.params.id}?notice=student_removed`);
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Unable to remove class membership:', error);
     const page = renderMessagePage('Retrait impossible', 'Impossible de retirer cet élève de la classe pour le moment.');
     response.status(page.status).send(page.html);
+  } finally {
+    client.release();
   }
 });
+
+async function updateMembershipActivity(request, response, active) {
+  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+    const page = renderMessagePage('Affectation introuvable', 'Cette affectation n’existe pas.', 404);
+    response.status(page.status).send(page.html);
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
+    if (classResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    const result = await client.query(
+      `UPDATE student_classes sc
+       SET active = $3
+       FROM students s
+       WHERE sc.class_id = $1
+         AND sc.student_id = $2
+         AND s.id = sc.student_id
+         AND s.active = TRUE
+       RETURNING sc.student_id`,
+      [request.params.id, request.params.studentId, active],
+    );
+    if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
+      const page = renderMessagePage('Affectation introuvable', 'Cette affectation active ne peut pas être modifiée.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    await client.query('COMMIT');
+    response.redirect(303, `/classes/${request.params.id}?notice=${active ? 'membership_reactivated' : 'membership_deactivated'}`);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Unable to update class membership activity:', error);
+    const page = renderMessagePage('Modification impossible', 'Impossible de modifier cette affectation pour le moment.');
+    response.status(page.status).send(page.html);
+  } finally {
+    client.release();
+  }
+}
+
+router.post('/:id/students/:studentId/deactivate', (request, response) => (
+  updateMembershipActivity(request, response, false)
+));
+
+router.post('/:id/students/:studentId/reactivate', (request, response) => (
+  updateMembershipActivity(request, response, true)
+));
 
 router.get('/:id/edit', async (request, response) => {
   if (!isValidId(request.params.id)) {
@@ -432,7 +594,7 @@ router.post('/:id/delete', async (request, response) => {
     if (error.code === '23503') {
       const page = renderMessagePage(
         'Suppression impossible',
-        'Cette classe est liée à une session de cours et ne peut pas être supprimée.',
+        'Cette classe est liée à une séance et ne peut pas être supprimée.',
         409,
       );
       response.status(page.status).send(page.html);

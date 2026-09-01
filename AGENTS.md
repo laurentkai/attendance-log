@@ -31,6 +31,9 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 - Support CSV import.
 - Use email as the functional unique key for matching students during imports.
 - Allow one student to belong to multiple classes.
+- Track global student activity separately from activity in each class membership.
+- An inactive class membership remains stored but excludes the student only from future active rosters for that class.
+- Deactivating or reactivating a class membership must not affect the student's other classes or historical attendance.
 - Re-importing the same email must reuse the existing student and QR code.
 - Assign each student a randomly generated, unique `student_code` that is exactly seven uppercase alphanumeric characters.
 - Exclude the visually ambiguous characters `0`, `O`, `1`, and `I`.
@@ -48,7 +51,9 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 
 ### Attendance workflow
 
-- A session can be open or closed.
+- A session can be `scheduled`, `open`, or `closed`.
+- New sessions are `scheduled`; this means the course is planned and attendance taking has not started.
+- A session becomes operational only when an administrator explicitly changes it from `scheduled` to `open`.
 - While a session is open, unscanned students are pending.
 - Scanning a student's QR code marks that student present.
 - Attendance must also be manually correctable.
@@ -57,6 +62,11 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 - Reopening does not reset attendance statuses: students marked `present` remain `present`, and students automatically or manually marked `absent` remain `absent`.
 - Reopening simply allows the administrator to scan or manually correct attendance again.
 - The session may then be closed again.
+- Once any session for a class has entered `open`, class membership rows must remain permanently preserved for historical integrity.
+- Before a class session has ever entered `open`, memberships may be removed normally.
+- After a class has started, deactivate that class membership instead of deleting it when the student should no longer appear in future active workflows for the class.
+- Active rosters require both an active student and an active class membership.
+- A class membership may be reactivated without changing historical attendance.
 - Show `present count / total students`.
 - While open, the count reflects the current state; while closed, it shows the final count.
 
@@ -82,6 +92,14 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 - Avoid horizontal scrolling and dense information on small screens when a simpler mobile layout is possible.
 - Optimize camera and scanner workflows for phone screens and one-handed use where practical.
 - Keep information density concise while retaining the details needed for the current task.
+- Review user-facing changes against the whole application and neighboring screens, not only the route being changed.
+- Equivalent UI concepts must reuse the same canonical DOM structure and base CSS classes; extend an existing pattern instead of creating a page-specific parallel implementation.
+- Express genuine contextual differences with explicit modifier classes or additional child content.
+- Preserve contextually useful information within shared components; harmonization must not remove relevant content or reduce usability merely to make screens identical.
+- Verify UI consistency at the source and rendered-markup level, not only by visual resemblance.
+- Keep optional row actions in stable layouts so state changes do not shift neighboring controls.
+- Prefer compact lists for operational data; reserve larger cards for genuinely grouped content.
+- Design mobile layouts intentionally rather than relying on desktop controls to wrap by accident.
 - Desktop support remains required as a responsive enhancement, but mobile usability takes priority.
 
 ## UI and design skills
@@ -99,8 +117,9 @@ Apply these skills with the following precedence:
 2. Explicit user instructions take priority over generic skill recommendations.
 3. Apply skills proportionally to the task.
 4. Do not introduce React, Vue, Tailwind, component libraries, build tooling, or other dependencies merely because a skill uses or recommends them.
-5. Translate applicable design principles into the existing vanilla HTML, CSS, and JavaScript architecture.
-6. Do not perform unrelated visual redesigns while implementing a targeted feature.
+5. Apply the skills' UX and design principles even when their reference implementation uses another framework, translating them into the existing vanilla HTML, CSS, and JavaScript architecture.
+6. Check visual changes against adjacent screens so equivalent concepts do not drift.
+7. Do not perform unrelated visual redesigns while implementing a targeted feature.
 
 ## Development rules
 

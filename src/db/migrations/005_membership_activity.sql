@@ -1,0 +1,2 @@
+ALTER TABLE student_classes
+  ADD COLUMN active BOOLEAN NOT NULL DEFAULT TRUE;

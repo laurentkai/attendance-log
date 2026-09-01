@@ -30,3 +30,26 @@ if (path.startsWith('/students/import')) {
 }
 
 document.querySelector(`[data-section="${currentSection}"]`)?.setAttribute('aria-current', 'page');
+
+document.querySelectorAll('[data-filterable-list]').forEach((filterableList) => {
+  const searchInput = filterableList.querySelector('[data-list-search]');
+  const rows = [...filterableList.querySelectorAll('[data-list-row]')];
+  const results = filterableList.querySelector('[data-list-results]');
+  const noResults = filterableList.querySelector('[data-list-no-results]');
+
+  if (!searchInput || rows.length === 0) return;
+
+  searchInput.addEventListener('input', () => {
+    const query = searchInput.value.trim().toLocaleLowerCase('fr');
+    let visibleCount = 0;
+
+    rows.forEach((row) => {
+      const matches = row.dataset.search.includes(query);
+      row.hidden = !matches;
+      if (matches) visibleCount += 1;
+    });
+
+    if (results) results.hidden = visibleCount === 0;
+    if (noResults) noResults.hidden = visibleCount > 0;
+  });
+});

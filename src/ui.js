@@ -23,7 +23,7 @@ function renderNavigation() {
       <a href="/" data-section="home">Accueil</a>
       <a href="/classes" data-section="classes">Classes</a>
       <a href="/students" data-section="students">Élèves</a>
-      <a href="/sessions" data-section="sessions">Sessions</a>
+      <a href="/sessions" data-section="sessions">Séances</a>
       <a href="/students/import" data-section="import">Importer</a>
       <form method="post" action="/logout">
         <button class="nav-logout" type="submit">Déconnexion</button>
@@ -38,14 +38,19 @@ function renderPage(title, content, { authenticated = true } = {}) {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f8fafc">
     <title>${escapeHtml(title)} · Attendance Log</title>
     <link rel="stylesheet" href="/css/styles.css">
     <script src="/js/classes.js" defer></script>
+    <script src="/js/live-attendance.js" defer></script>
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Aller au contenu</a>
     <main class="page">
       ${authenticated ? renderNavigation() : ''}
-      ${content}
+      <div id="main-content" tabindex="-1">
+        ${content}
+      </div>
     </main>
   </body>
 </html>`;
@@ -60,7 +65,9 @@ function renderMessagePage(
     status,
     html: renderPage(title, `
       <header class="page-header">
-        <h1>${escapeHtml(title)}</h1>
+        <div>
+          <h1>${escapeHtml(title)}</h1>
+        </div>
       </header>
       <p class="message message-error">${escapeHtml(message)}</p>`),
   };
