@@ -1,10 +1,12 @@
 const express = require('express');
+const QRCode = require('qrcode');
 const { pool } = require('./db/client');
 const {
   insertStudent,
   normalizeStudentValues,
   validateStudentValues,
 } = require('./student-data');
+const { createStudentQrPayload } = require('./student-qr');
 const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
@@ -41,6 +43,7 @@ function renderStudentForm({
   classes,
   selectedClassIds,
   editing = false,
+  studentId = '',
   error = '',
 }) {
   const selectedIds = new Set(selectedClassIds);
@@ -72,6 +75,9 @@ function renderStudentForm({
       <div>
         <h1>${escapeHtml(title)}</h1>
       </div>
+      ${editing ? `<div class="context-actions">
+        <a class="button button-secondary" href="/students/${escapeHtml(studentId)}/qr">Afficher le QR</a>
+      </div>` : ''}
     </header>
     ${errorMessage}
     <form class="form-card" method="post" action="${escapeHtml(action)}">
@@ -263,6 +269,99 @@ router.post('/', async (request, response) => {
   }
 });
 
+router.get('/:id/qr.png', async (request, response) => {
+  if (!isValidId(request.params.id)) {
+    response.status(404).end();
+    return;
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT qr_token, student_code FROM students WHERE id = $1',
+      [request.params.id],
+    );
+    if (result.rowCount === 0) {
+      response.status(404).end();
+      return;
+    }
+
+    const png = await QRCode.toBuffer(
+      createStudentQrPayload(result.rows[0].qr_token),
+      {
+        type: 'png',
+        width: 512,
+        margin: 3,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#172033', light: '#ffffff' },
+      },
+    );
+    response.set({
+      'Cache-Control': 'private, no-store, max-age=0',
+      'Content-Type': 'image/png',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (request.query.download === '1') {
+      response.attachment(`eleve-${result.rows[0].student_code}-qr.png`);
+    }
+    response.send(png);
+  } catch (error) {
+    console.error('Unable to render student QR code:', error);
+    response.status(500).end();
+  }
+});
+
+router.get('/:id/qr', async (request, response) => {
+  if (!isValidId(request.params.id)) {
+    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    response.status(page.status).send(page.html);
+    return;
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT id, first_name, last_name, student_code, active
+       FROM students
+       WHERE id = $1`,
+      [request.params.id],
+    );
+    if (result.rowCount === 0) {
+      const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
+
+    const student = result.rows[0];
+    const studentName = `${student.first_name} ${student.last_name}`;
+    response.send(renderPage(`QR de ${studentName}`, `
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">QR personnel</p>
+          <h1>${escapeHtml(studentName)}</h1>
+          <p class="page-description">Ce QR identifie cet élève pendant la prise de présence.</p>
+        </div>
+        <div class="context-actions">
+          <a class="button button-secondary" href="/students/${student.id}/edit">Modifier l’élève</a>
+        </div>
+      </header>
+      <section class="qr-display" aria-labelledby="student-qr-title">
+        <div class="compact-identity student-identity">
+          <h2 class="compact-title" id="student-qr-title">${escapeHtml(studentName)}</h2>
+          <p class="compact-meta">Code élève · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+          <span class="status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
+        </div>
+        <img class="student-qr-image" src="/students/${student.id}/qr.png" width="512" height="512" alt="QR personnel de ${escapeHtml(studentName)}">
+        <div class="form-actions">
+          <a class="button" href="/students/${student.id}/qr.png?download=1" download="eleve-${escapeHtml(student.student_code)}-qr.png">Télécharger le QR</a>
+          <a class="button button-secondary" href="/students">Retour aux élèves</a>
+        </div>
+      </section>`));
+  } catch (error) {
+    console.error('Unable to load student QR page:', error);
+    const page = renderMessagePage('QR indisponible', 'Impossible de charger ce QR pour le moment.');
+    response.status(page.status).send(page.html);
+  }
+});
+
 router.get('/:id/edit', async (request, response) => {
   if (!isValidId(request.params.id)) {
     const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
@@ -298,6 +397,7 @@ router.get('/:id/edit', async (request, response) => {
       classes,
       selectedClassIds: membershipResult.rows.map((membership) => membership.class_id),
       editing: true,
+      studentId: student.id,
     }));
   } catch (error) {
     console.error('Unable to load student:', error);
@@ -337,6 +437,7 @@ router.post('/:id', async (request, response) => {
       classes,
       selectedClassIds,
       editing: true,
+      studentId: request.params.id,
       error: validationError,
     }));
     return;
@@ -386,6 +487,7 @@ router.post('/:id', async (request, response) => {
           classes,
           selectedClassIds,
           editing: true,
+          studentId: request.params.id,
           error: `L’affectation à la classe « ${protectedResult.rows[0].name} » ne peut plus être retirée car cette classe a déjà commencé. Gérez son activité depuis la page de la classe.`,
         }));
         return;
@@ -426,6 +528,7 @@ router.post('/:id', async (request, response) => {
       classes,
       selectedClassIds,
       editing: true,
+      studentId: request.params.id,
       error: message,
     }));
   } finally {

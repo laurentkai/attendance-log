@@ -100,6 +100,11 @@ function requireAuthentication(request, response, next) {
     return;
   }
 
+  if (request.accepts(['html', 'json']) === 'json') {
+    response.status(401).json({ error: 'Votre session a expiré.' });
+    return;
+  }
+
   response.redirect(303, '/login');
 }
 

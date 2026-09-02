@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('./db/client');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
+const { parseStudentQrPayload } = require('./student-qr');
 const { escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
 const router = express.Router();
@@ -105,7 +106,7 @@ async function getClasses() {
 }
 
 async function loadRoster(session) {
-  if (session.state === 'closed') {
+  if (session.closed_at) {
     return pool.query(
       `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code, ar.status
        FROM attendance_records ar
@@ -135,15 +136,64 @@ function lockEligibleStudent(client, sessionId, studentId) {
      FROM course_sessions cs
      WHERE cs.id = $1
        AND cs.state = 'open'
-       AND EXISTS (
-         SELECT 1
-         FROM student_classes sc
-         INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
-         WHERE sc.class_id = cs.class_id AND sc.active = TRUE AND s.id = $2
+       AND (
+         (cs.closed_at IS NULL AND EXISTS (
+           SELECT 1
+           FROM student_classes sc
+           INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+           WHERE sc.class_id = cs.class_id AND sc.active = TRUE AND s.id = $2
+         ))
+         OR (cs.closed_at IS NOT NULL AND EXISTS (
+           SELECT 1
+           FROM attendance_records ar
+           WHERE ar.session_id = cs.id AND ar.student_id = $2
+         ))
        )
      FOR UPDATE`,
     [sessionId, studentId],
   );
+}
+
+async function markStudentPresent(client, sessionId, studentId) {
+  const allowedResult = await lockEligibleStudent(client, sessionId, studentId);
+  if (allowedResult.rowCount === 0) {
+    return { allowed: false };
+  }
+
+  const currentResult = await client.query(
+    `SELECT status
+     FROM attendance_records
+     WHERE session_id = $1 AND student_id = $2
+     FOR UPDATE`,
+    [sessionId, studentId],
+  );
+  const previousStatus = currentResult.rows[0]?.status || 'pending';
+  if (previousStatus === 'present') {
+    return {
+      allowed: true,
+      changed: false,
+      status: 'present',
+      studentId: String(studentId),
+    };
+  }
+
+  const updateResult = await client.query(
+    `INSERT INTO attendance_records (session_id, student_id, status)
+     VALUES ($1, $2, 'present')
+     ON CONFLICT (session_id, student_id)
+     DO UPDATE SET status = 'present', updated_at = CURRENT_TIMESTAMP
+     RETURNING ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint::text AS version`,
+    [sessionId, studentId],
+  );
+
+  return {
+    allowed: true,
+    changed: true,
+    status: 'present',
+    studentId: String(studentId),
+    previousStatus,
+    version: updateResult.rows[0].version,
+  };
 }
 
 function getStateLabel(state) {
@@ -445,7 +495,7 @@ router.get('/:id/status', async (request, response) => {
 
   try {
     const sessionResult = await pool.query(
-      'SELECT id, class_id, state FROM course_sessions WHERE id = $1',
+      'SELECT id, class_id, state, closed_at FROM course_sessions WHERE id = $1',
       [request.params.id],
     );
     if (sessionResult.rowCount === 0) {
@@ -480,7 +530,8 @@ router.get('/:id/quick-attendance', async (request, response) => {
 
   try {
     const sessionResult = await pool.query(
-      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.state, c.name AS class_name
+      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.state, cs.closed_at,
+              c.name AS class_name
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
        WHERE cs.id = $1`,
@@ -544,6 +595,18 @@ router.get('/:id/quick-attendance', async (request, response) => {
         </section>
         <p class="message message-warning" data-quick-readonly hidden>Cette séance vient d’être clôturée. La prise de présence est maintenant indisponible.</p>
         <p class="message message-error" data-quick-error role="alert" hidden>La présence n’a pas pu être mise à jour. Réessayez.</p>
+        <section class="qr-scanner-panel" aria-label="Scanner un QR" data-qr-scanner>
+          <div class="compact-actions qr-scanner-actions">
+            <button class="button" type="button" data-qr-start>Scanner un QR</button>
+            <button class="button button-secondary" type="button" data-qr-stop hidden>Arrêter le scanner</button>
+            <button class="button button-secondary" type="button" aria-pressed="true" data-qr-sound>Son activé</button>
+          </div>
+          <div class="qr-video-frame" data-qr-view hidden>
+            <video data-qr-video muted playsinline aria-label="Aperçu de la caméra pour scanner un QR"></video>
+            <span class="qr-scan-guide" aria-hidden="true"></span>
+          </div>
+          <p class="message" role="status" aria-live="polite" data-qr-feedback hidden></p>
+        </section>
         <div class="search">
           <label for="quick-attendance-search">Rechercher un élève</label>
           <div class="search-controls">
@@ -571,6 +634,7 @@ router.get('/:id', async (request, response) => {
   try {
     const sessionResult = await pool.query(
       `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
+              cs.closed_at,
               c.name AS class_name
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
@@ -669,6 +733,84 @@ router.get('/:id', async (request, response) => {
   }
 });
 
+router.post('/:id/quick-attendance/qr', async (request, response) => {
+  if (!isValidId(request.params.id)) {
+    response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
+    return;
+  }
+
+  const qrToken = parseStudentQrPayload(request.body?.payload);
+  if (!qrToken) {
+    response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
+    return;
+  }
+
+  try {
+    const studentResult = await pool.query(
+      `SELECT id, first_name, last_name
+       FROM students
+       WHERE qr_token = $1::uuid`,
+      [qrToken],
+    );
+    if (studentResult.rowCount === 0) {
+      response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
+      return;
+    }
+
+    const student = studentResult.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await markStudentPresent(client, request.params.id, student.id);
+      if (!result.allowed) {
+        const sessionResult = await client.query(
+          'SELECT state FROM course_sessions WHERE id = $1',
+          [request.params.id],
+        );
+        await client.query('ROLLBACK');
+        if (sessionResult.rowCount === 0) {
+          response.status(404).json({ outcome: 'unknown', message: 'Séance introuvable.' });
+          return;
+        }
+        if (sessionResult.rows[0].state !== 'open') {
+          response.status(409).json({
+            outcome: 'session_unavailable',
+            message: 'La séance n’est pas ouverte.',
+          });
+          return;
+        }
+        response.status(409).json({
+          outcome: 'ineligible',
+          message: 'Cet élève ne peut pas être enregistré pour cette séance.',
+        });
+        return;
+      }
+
+      await client.query('COMMIT');
+      const { allowed: _allowed, ...attendanceResult } = result;
+      response.set('Cache-Control', 'no-store');
+      response.json({
+        ...attendanceResult,
+        outcome: result.changed ? 'present' : 'already_present',
+        message: result.changed
+          ? `${student.first_name} ${student.last_name} — présent`
+          : `${student.first_name} ${student.last_name} est déjà présent`,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Unable to update attendance from QR:', error);
+    response.status(500).json({
+      outcome: 'error',
+      message: 'Impossible de traiter ce QR pour le moment.',
+    });
+  }
+});
+
 router.post('/:id/quick-attendance/:studentId', async (request, response) => {
   if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
     response.status(404).json({ error: 'Présence introuvable.' });
@@ -678,12 +820,12 @@ router.post('/:id/quick-attendance/:studentId', async (request, response) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const allowedResult = await lockEligibleStudent(
+    const result = await markStudentPresent(
       client,
       request.params.id,
       request.params.studentId,
     );
-    if (allowedResult.rowCount === 0) {
+    if (!result.allowed) {
       await client.query('ROLLBACK');
       response.status(409).json({
         error: 'La séance doit être ouverte et l’élève doit être actif dans cette classe.',
@@ -691,42 +833,10 @@ router.post('/:id/quick-attendance/:studentId', async (request, response) => {
       return;
     }
 
-    const currentResult = await client.query(
-      `SELECT status
-       FROM attendance_records
-       WHERE session_id = $1 AND student_id = $2
-       FOR UPDATE`,
-      [request.params.id, request.params.studentId],
-    );
-    const previousStatus = currentResult.rows[0]?.status || 'pending';
-    if (previousStatus === 'present') {
-      await client.query('COMMIT');
-      response.set('Cache-Control', 'no-store');
-      response.json({
-        studentId: request.params.studentId,
-        status: 'present',
-        changed: false,
-      });
-      return;
-    }
-
-    const updateResult = await client.query(
-      `INSERT INTO attendance_records (session_id, student_id, status)
-       VALUES ($1, $2, 'present')
-       ON CONFLICT (session_id, student_id)
-       DO UPDATE SET status = 'present', updated_at = CURRENT_TIMESTAMP
-       RETURNING ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint::text AS version`,
-      [request.params.id, request.params.studentId],
-    );
     await client.query('COMMIT');
+    const { allowed: _allowed, ...attendanceResult } = result;
     response.set('Cache-Control', 'no-store');
-    response.json({
-      studentId: request.params.studentId,
-      status: 'present',
-      previousStatus,
-      version: updateResult.rows[0].version,
-      changed: true,
-    });
+    response.json(attendanceResult);
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to update quick attendance:', error);
@@ -861,7 +971,7 @@ router.post('/:id/close', async (request, response) => {
   try {
     await client.query('BEGIN');
     const sessionResult = await client.query(
-      'SELECT id, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
+      'SELECT id, class_id, state, closed_at FROM course_sessions WHERE id = $1 FOR UPDATE',
       [request.params.id],
     );
     if (sessionResult.rowCount === 0) {
@@ -881,18 +991,32 @@ router.post('/:id/close', async (request, response) => {
       [sessionResult.rows[0].class_id],
     );
 
+    if (sessionResult.rows[0].closed_at) {
+      await client.query(
+        `UPDATE attendance_records
+         SET status = 'absent', updated_at = CURRENT_TIMESTAMP
+         WHERE session_id = $1 AND status = 'pending'`,
+        [request.params.id],
+      );
+    } else {
+      await client.query(
+        `INSERT INTO attendance_records (session_id, student_id, status)
+         SELECT $1, s.id, 'absent'
+         FROM student_classes sc
+         INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+         WHERE sc.class_id = $2 AND sc.active = TRUE
+         ON CONFLICT (session_id, student_id)
+         DO UPDATE SET status = 'absent', updated_at = CURRENT_TIMESTAMP
+         WHERE attendance_records.status = 'pending'`,
+        [request.params.id, sessionResult.rows[0].class_id],
+      );
+    }
     await client.query(
-      `INSERT INTO attendance_records (session_id, student_id, status)
-       SELECT $1, s.id, 'absent'
-       FROM student_classes sc
-       INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
-       WHERE sc.class_id = $2 AND sc.active = TRUE
-       ON CONFLICT (session_id, student_id)
-       DO UPDATE SET status = 'absent', updated_at = CURRENT_TIMESTAMP
-       WHERE attendance_records.status = 'pending'`,
-      [request.params.id, sessionResult.rows[0].class_id],
+      `UPDATE course_sessions
+       SET state = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP)
+       WHERE id = $1`,
+      [request.params.id],
     );
-    await client.query("UPDATE course_sessions SET state = 'closed' WHERE id = $1", [request.params.id]);
     await client.query('COMMIT');
     response.redirect(303, `/sessions/${request.params.id}?notice=closed`);
   } catch (error) {

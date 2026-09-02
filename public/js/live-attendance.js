@@ -10,6 +10,18 @@ const attendanceLabels = {
   absent: 'Absent',
 };
 
+function redirectOnUnauthorized(response) {
+  if (response.status !== 401) return false;
+  window.location.assign('/login');
+  return true;
+}
+
+function authenticationError() {
+  const error = new Error('Authentication required');
+  error.authenticationRequired = true;
+  return error;
+}
+
 function updateStatusBadge(element, status, label) {
   if (!element) return;
   element.classList.remove(
@@ -28,6 +40,7 @@ async function fetchSessionStatus(sessionId) {
   const response = await fetch(`/sessions/${sessionId}/status`, {
     headers: { accept: 'application/json' },
   });
+  if (redirectOnUnauthorized(response)) throw authenticationError();
   if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
     throw new Error('Unable to refresh session status');
   }
@@ -40,8 +53,8 @@ function startPolling(refresh) {
     let shouldContinue = true;
     try {
       shouldContinue = await refresh();
-    } catch (_error) {
-      shouldContinue = true;
+    } catch (error) {
+      shouldContinue = !error.authenticationRequired;
     }
     if (shouldContinue) timerId = window.setTimeout(poll, pollInterval);
   };
@@ -119,9 +132,13 @@ document.querySelectorAll('[data-attendance-form]').forEach((form) => {
     try {
       const response = await fetch(form.action, {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/x-www-form-urlencoded',
+        },
         body,
       });
+      if (redirectOnUnauthorized(response)) return;
       if (!response.ok) throw new Error('Unable to update attendance');
       document.querySelector('[data-live-error]')?.setAttribute('hidden', '');
       await refreshLiveSession?.();
@@ -171,7 +188,20 @@ if (quickAttendance) {
   const errorMessage = quickAttendance.querySelector('[data-quick-error]');
   const readonlyMessage = quickAttendance.querySelector('[data-quick-readonly]');
   const undoButton = quickAttendance.querySelector('[data-quick-undo]');
+  const qrStartButton = quickAttendance.querySelector('[data-qr-start]');
+  const qrStopButton = quickAttendance.querySelector('[data-qr-stop]');
+  const qrView = quickAttendance.querySelector('[data-qr-view]');
+  const qrVideo = quickAttendance.querySelector('[data-qr-video]');
+  const qrFeedback = quickAttendance.querySelector('[data-qr-feedback]');
+  const qrSoundButton = quickAttendance.querySelector('[data-qr-sound]');
   let undoCandidate = null;
+  let qrScanner = null;
+  let audioContext = null;
+  let soundEnabled = true;
+  let scannerActive = false;
+  let scannerUnavailable = false;
+  let scanProcessing = false;
+  let lastScan = { payload: '', at: 0 };
 
   const setError = (message = '') => {
     if (!errorMessage) return;
@@ -181,6 +211,66 @@ if (quickAttendance) {
 
   const updateUndoButton = () => {
     if (undoButton) undoButton.disabled = !undoCandidate;
+  };
+
+  const setQrFeedback = (message = '', type = '') => {
+    if (!qrFeedback) return;
+    qrFeedback.classList.remove('message-success', 'message-warning', 'message-error');
+    if (type) qrFeedback.classList.add(`message-${type}`);
+    qrFeedback.textContent = message;
+    qrFeedback.hidden = !message;
+  };
+
+  const prepareAudio = async () => {
+    if (!soundEnabled) return null;
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return null;
+      if (!audioContext) audioContext = new AudioContext();
+      if (audioContext.state === 'suspended') await audioContext.resume();
+      return audioContext.state === 'running' ? audioContext : null;
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const playScanSound = async (type) => {
+    if (!soundEnabled) return;
+    try {
+      const context = await prepareAudio();
+      if (!context) return;
+      const sounds = {
+        success: [
+          { frequency: 660, offset: 0, duration: 0.07 },
+          { frequency: 880, offset: 0.08, duration: 0.08 },
+        ],
+        duplicate: [{ frequency: 480, offset: 0, duration: 0.1 }],
+        error: [{ frequency: 240, offset: 0, duration: 0.14 }],
+      };
+      const startTime = context.currentTime;
+      sounds[type].forEach(({ frequency, offset, duration }) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const toneStart = startTime + offset;
+        oscillator.type = type === 'duplicate' ? 'triangle' : 'sine';
+        oscillator.frequency.setValueAtTime(frequency, toneStart);
+        gain.gain.setValueAtTime(0.0001, toneStart);
+        gain.gain.exponentialRampToValueAtTime(0.045, toneStart + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, toneStart + duration);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(toneStart);
+        oscillator.stop(toneStart + duration);
+      });
+    } catch (_error) {
+      // Audio feedback must never interrupt attendance scanning.
+    }
+  };
+
+  const updateSoundButton = () => {
+    if (!qrSoundButton) return;
+    qrSoundButton.textContent = soundEnabled ? 'Son activé' : 'Son désactivé';
+    qrSoundButton.setAttribute('aria-pressed', String(soundEnabled));
   };
 
   const updateQuickCount = (present, total) => {
@@ -206,6 +296,36 @@ if (quickAttendance) {
     if (completeState) completeState.hidden = eligibleCount > 0;
   };
 
+  const applyPresentResult = (payload, row = null) => {
+    if (!payload.changed) return;
+
+    undoCandidate = {
+      studentId: payload.studentId,
+      previousStatus: payload.previousStatus,
+      version: payload.version,
+    };
+    updateUndoButton();
+    const studentRow = row || rows.find(
+      (candidateRow) => candidateRow.dataset.studentId === payload.studentId,
+    );
+    if (studentRow) studentRow.dataset.eligible = 'false';
+    filterQuickRows();
+    const presentCount = Number(quickAttendance.querySelector('[data-present-count]').textContent);
+    const totalCount = Number(quickAttendance.querySelector('[data-total-count]').textContent);
+    updateQuickCount(presentCount + 1, totalCount);
+  };
+
+  const stopScanner = () => {
+    qrScanner?.stop();
+    scannerActive = false;
+    if (qrView) qrView.hidden = true;
+    if (qrStopButton) qrStopButton.hidden = true;
+    if (qrStartButton) {
+      qrStartButton.hidden = false;
+      qrStartButton.disabled = scannerUnavailable;
+    }
+  };
+
   const refreshQuickAttendance = async () => {
     const status = await fetchSessionStatus(sessionId);
     updateQuickCount(status.present, status.total);
@@ -228,6 +348,10 @@ if (quickAttendance) {
       undoCandidate = null;
       updateUndoButton();
       searchInput.disabled = true;
+      scannerUnavailable = true;
+      stopScanner();
+      if (qrSoundButton) qrSoundButton.disabled = true;
+      if (completeState) completeState.hidden = true;
       readonlyMessage?.removeAttribute('hidden');
       return false;
     }
@@ -248,22 +372,11 @@ if (quickAttendance) {
           method: 'POST',
           headers: { accept: 'application/json' },
         });
+        if (redirectOnUnauthorized(response)) return;
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || 'La présence n’a pas pu être mise à jour.');
 
-        if (payload.changed) {
-          undoCandidate = {
-            studentId: payload.studentId,
-            previousStatus: payload.previousStatus,
-            version: payload.version,
-          };
-          updateUndoButton();
-          row.dataset.eligible = 'false';
-          filterQuickRows();
-          const presentCount = Number(quickAttendance.querySelector('[data-present-count]').textContent);
-          const totalCount = Number(quickAttendance.querySelector('[data-total-count]').textContent);
-          updateQuickCount(presentCount + 1, totalCount);
-        }
+        applyPresentResult(payload, row);
         await refreshQuickAttendance();
       } catch (error) {
         setError(error.message || 'La présence n’a pas pu être mise à jour. Réessayez.');
@@ -294,6 +407,7 @@ if (quickAttendance) {
           body,
         },
       );
+      if (redirectOnUnauthorized(response)) return;
       const payload = await response.json();
       undoCandidate = null;
       updateUndoButton();
@@ -316,6 +430,115 @@ if (quickAttendance) {
       setError('L’annulation a échoué. Réessayez.');
     }
   });
+
+  const handleQrResult = async (result) => {
+    const payloadValue = result?.data;
+    const now = Date.now();
+    if (
+      scanProcessing
+      || typeof payloadValue !== 'string'
+      || (lastScan.payload === payloadValue && now - lastScan.at < 2500)
+    ) {
+      return;
+    }
+
+    lastScan = { payload: payloadValue, at: now };
+    scanProcessing = true;
+    let scanSoundHandled = false;
+    setQrFeedback('QR détecté, vérification…', 'warning');
+    try {
+      const response = await fetch(`/sessions/${sessionId}/quick-attendance/qr`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ payload: payloadValue }),
+      });
+      if (redirectOnUnauthorized(response)) return;
+      const payload = await response.json();
+      if (!response.ok) {
+        setQrFeedback(payload.message || 'QR non reconnu.', 'error');
+        playScanSound('error');
+        scanSoundHandled = true;
+        await refreshQuickAttendance();
+        return;
+      }
+
+      applyPresentResult(payload);
+      setQrFeedback(payload.message, payload.changed ? 'success' : 'warning');
+      playScanSound(payload.changed ? 'success' : 'duplicate');
+      scanSoundHandled = true;
+      await refreshQuickAttendance();
+    } catch (_error) {
+      setQrFeedback('Le QR n’a pas pu être traité. Réessayez.', 'error');
+      if (!scanSoundHandled) playScanSound('error');
+    } finally {
+      scanProcessing = false;
+    }
+  };
+
+  qrStartButton?.addEventListener('click', async () => {
+    if (scannerUnavailable || scannerActive) return;
+    qrStartButton.disabled = true;
+    setQrFeedback('Activation de la caméra…', 'warning');
+
+    try {
+      await prepareAudio();
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Camera unsupported');
+      }
+      const { default: QrScanner } = await import('/vendor/qr-scanner/qr-scanner.min.js');
+      if (!(await QrScanner.hasCamera())) {
+        throw new Error('Camera not found');
+      }
+      if (!qrScanner) {
+        qrScanner = new QrScanner(qrVideo, handleQrResult, {
+          preferredCamera: 'environment',
+          maxScansPerSecond: 8,
+          returnDetailedScanResult: true,
+        });
+      }
+      await qrScanner.start();
+      scannerActive = true;
+      qrView.hidden = false;
+      qrStartButton.hidden = true;
+      qrStopButton.hidden = false;
+      setQrFeedback('Présentez un QR devant la caméra.', 'success');
+    } catch (error) {
+      const reason = `${error?.name || ''} ${error?.message || error}`;
+      if (/NotAllowed|Permission|denied/i.test(reason)) {
+        scannerUnavailable = true;
+        stopScanner();
+        setQrFeedback('Accès à la caméra refusé. Utilisez la recherche manuelle.', 'error');
+      } else if (/not found|NotFound|DevicesNotFound/i.test(reason)) {
+        scannerUnavailable = true;
+        stopScanner();
+        setQrFeedback('Aucune caméra disponible. Utilisez la recherche manuelle.', 'error');
+      } else if (/unsupported/i.test(reason)) {
+        scannerUnavailable = true;
+        stopScanner();
+        setQrFeedback('Scanner indisponible sur ce navigateur. Utilisez la recherche manuelle.', 'error');
+      } else {
+        scannerUnavailable = false;
+        stopScanner();
+        setQrFeedback('Le scanner n’a pas pu démarrer. Réessayez ou utilisez la recherche manuelle.', 'error');
+      }
+    }
+  });
+
+  qrStopButton?.addEventListener('click', () => {
+    stopScanner();
+    setQrFeedback();
+  });
+
+  qrSoundButton?.addEventListener('click', () => {
+    soundEnabled = !soundEnabled;
+    updateSoundButton();
+    if (soundEnabled) prepareAudio();
+  });
+
+  window.addEventListener('pagehide', () => qrScanner?.stop());
 
   filterQuickRows();
   startPolling(refreshQuickAttendance);

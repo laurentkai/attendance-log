@@ -37,7 +37,8 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 - Re-importing the same email must reuse the existing student and QR code.
 - Assign each student a randomly generated, unique `student_code` that is exactly seven uppercase alphanumeric characters.
 - Exclude the visually ambiguous characters `0`, `O`, `1`, and `I`.
-- Store only this `student_code` directly in the QR code; never embed personal data.
+- Give each student a separate stable, unique, non-guessable QR token that is independent of database IDs and class membership.
+- The QR payload may contain only an application-specific student marker and this token; never embed personal data, the student code, class data, or session data.
 
 ### Classes
 
@@ -60,6 +61,9 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 - Closing a session converts all remaining `pending` students to `absent`.
 - A closed session can be reopened.
 - Reopening does not reset attendance statuses: students marked `present` remain `present`, and students automatically or manually marked `absent` remain `absent`.
+- Once a session has been closed at least once, its attendance roster is permanently historical, including after reopening.
+- Build a historical roster only from that session's attendance records; later membership or student activity changes must not remove students, and later class additions must not add students.
+- Reclosing a historical session may finalize only its existing pending attendance records and must not add current class members to the roster.
 - Reopening simply allows the administrator to scan or manually correct attendance again.
 - The session may then be closed again.
 - Once any session for a class has entered `open`, class membership rows must remain permanently preserved for historical integrity.
@@ -73,6 +77,7 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 ### QR handling
 
 - An administrator must be able to display a student's QR code.
+- QR attendance is available only to authenticated staff within an open course session; possession of a student QR is not authentication.
 - The QR image must be easy to download or share manually through apps such as WhatsApp or email.
 - Do not integrate WhatsApp or email sending in V1.
 

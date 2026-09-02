@@ -63,6 +63,24 @@ app.use(session({
 
 app.use(authRouter);
 app.use(requireAuthentication);
+app.get('/vendor/qr-scanner/qr-scanner.min.js', (_request, response) => {
+  response.sendFile(path.join(
+    __dirname,
+    '..',
+    'node_modules',
+    'qr-scanner',
+    'qr-scanner.min.js',
+  ));
+});
+app.get('/vendor/qr-scanner/qr-scanner-worker.min.js', (_request, response) => {
+  response.sendFile(path.join(
+    __dirname,
+    '..',
+    'node_modules',
+    'qr-scanner',
+    'qr-scanner-worker.min.js',
+  ));
+});
 app.use('/classes', classesRouter);
 app.use('/sessions', courseSessionsRouter);
 app.use('/students/import', studentImportRouter);
@@ -72,14 +90,22 @@ app.get('/', async (_request, response) => {
   try {
     const result = await pool.query(
       `SELECT cs.id, cs.date, cs.title, cs.instructor, c.name AS class_name,
-              COUNT(s.id)::integer AS total_students,
+              COUNT(roster.student_id)::integer AS total_students,
               COUNT(ar.student_id) FILTER (WHERE ar.status = 'present')::integer AS present_count
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
-       LEFT JOIN student_classes sc ON sc.class_id = cs.class_id AND sc.active = TRUE
-       LEFT JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+       LEFT JOIN LATERAL (
+         SELECT s.id AS student_id
+         FROM student_classes sc
+         INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+         WHERE cs.closed_at IS NULL AND sc.class_id = cs.class_id AND sc.active = TRUE
+         UNION ALL
+         SELECT historical.student_id
+         FROM attendance_records historical
+         WHERE cs.closed_at IS NOT NULL AND historical.session_id = cs.id
+       ) roster ON TRUE
        LEFT JOIN attendance_records ar
-         ON ar.session_id = cs.id AND ar.student_id = s.id
+         ON ar.session_id = cs.id AND ar.student_id = roster.student_id
        WHERE cs.state = 'open'
        GROUP BY cs.id, c.name
        ORDER BY cs.date, LOWER(cs.title), cs.id`,
