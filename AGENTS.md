@@ -136,5 +136,7 @@ Apply these skills with the following precedence:
 - Use French for user-facing UI.
 - Supply secrets only through environment variables; never commit real credentials.
 - Treat PostgreSQL as persistent and every application container filesystem as disposable.
+- Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it.
+- Do not run `docker compose down` as routine cleanup; remove only isolated validation containers, databases, files, and test data when appropriate.
 - Validate changes before considering them complete.
 - Do not create Git commits automatically.

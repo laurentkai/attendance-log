@@ -6,6 +6,15 @@ document.querySelectorAll('[data-confirm]').forEach((form) => {
   });
 });
 
+document.querySelectorAll('form[data-submit-once]').forEach((form) => {
+  form.addEventListener('submit', () => {
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (!submitButton) return;
+    submitButton.disabled = true;
+    submitButton.textContent = 'Envoi…';
+  });
+});
+
 const appHeader = document.querySelector('.app-header');
 const menuButton = document.querySelector('.menu-toggle');
 
@@ -21,6 +30,8 @@ let currentSection = 'home';
 
 if (path.startsWith('/students/import')) {
   currentSection = 'import';
+} else if (path.startsWith('/settings/email')) {
+  currentSection = 'email';
 } else if (path.startsWith('/students')) {
   currentSection = 'students';
 } else if (path.startsWith('/classes')) {

@@ -581,41 +581,51 @@ router.get('/:id/quick-attendance', async (request, response) => {
 
     response.send(renderPage('Prise de présence rapide', `
       <div class="quick-attendance" data-quick-attendance data-session-id="${session.id}">
-        <header class="page-header">
+        <header class="page-header quick-attendance-header">
           <div>
             <p class="eyebrow">Prise de présence rapide</p>
             <h1>${escapeHtml(session.title)}</h1>
-            <p class="page-description">${escapeHtml(session.class_name)} · ${escapeHtml(formatDateForDisplay(session.date))}</p>
+            <p class="page-description">${escapeHtml(session.class_name)}</p>
           </div>
-          <span class="status-badge status-open" data-session-state>Séance ouverte</span>
+          <div class="quick-attendance-context" aria-label="État des présences">
+            <strong class="quick-attendance-count"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> présents</strong>
+            <span class="status-badge status-open" data-session-state>Séance ouverte</span>
+          </div>
         </header>
-        <section class="summary-card attendance-summary" aria-label="Présences actuelles" aria-live="polite">
-          <strong class="quick-attendance-count"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> présents</strong>
-          <button class="button button-secondary" type="button" data-quick-undo disabled>Annuler la dernière action</button>
-        </section>
         <p class="message message-warning" data-quick-readonly hidden>Cette séance vient d’être clôturée. La prise de présence est maintenant indisponible.</p>
-        <p class="message message-error" data-quick-error role="alert" hidden>La présence n’a pas pu être mise à jour. Réessayez.</p>
-        <section class="qr-scanner-panel" aria-label="Scanner un QR" data-qr-scanner>
-          <div class="compact-actions qr-scanner-actions">
-            <button class="button" type="button" data-qr-start>Scanner un QR</button>
-            <button class="button button-secondary" type="button" data-qr-stop hidden>Arrêter le scanner</button>
-            <button class="button button-secondary" type="button" aria-pressed="true" data-qr-sound>Son activé</button>
+        <div class="quick-operation-bar">
+          <div class="view-switch quick-mode-switch" role="group" aria-label="Mode de prise de présence">
+            <button type="button" aria-pressed="true" aria-controls="quick-manual-mode" data-quick-mode="manual">Manuel</button>
+            <button type="button" aria-pressed="false" aria-controls="quick-qr-mode" data-quick-mode="qr">QR</button>
           </div>
-          <div class="qr-video-frame" data-qr-view hidden>
-            <video data-qr-video muted playsinline aria-label="Aperçu de la caméra pour scanner un QR"></video>
-            <span class="qr-scan-guide" aria-hidden="true"></span>
-          </div>
-          <p class="message" role="status" aria-live="polite" data-qr-feedback hidden></p>
-        </section>
-        <div class="search">
-          <label for="quick-attendance-search">Rechercher un élève</label>
-          <div class="search-controls">
-            <input id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
-          </div>
+          <button class="button button-quiet quick-undo" type="button" data-quick-undo disabled>Annuler la dernière action</button>
         </div>
-        <p class="quick-attendance-state" role="status" data-quick-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
-        <p class="quick-attendance-state" role="status" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>Tous les élèves sont présents.</p>
-        <div class="compact-list" id="quick-attendance-results" data-quick-results${eligibleStudents.length === 0 ? ' hidden' : ''}>${studentRows}</div>
+        <p class="quick-operational-feedback" role="status" aria-live="polite" aria-atomic="true" data-quick-feedback>&nbsp;</p>
+        <section id="quick-manual-mode" class="quick-mode-panel" aria-label="Prise de présence manuelle" data-quick-mode-panel="manual">
+          <div class="search quick-search">
+            <label for="quick-attendance-search">Rechercher un élève</label>
+            <div class="search-input-action">
+              <input id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
+              <button class="search-clear" type="button" aria-label="Effacer la recherche" data-quick-search-clear hidden><span aria-hidden="true">×</span></button>
+            </div>
+          </div>
+          <div class="quick-results-state" aria-live="polite">
+            <p class="quick-attendance-state" data-quick-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
+            <p class="quick-attendance-state" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>Tous les élèves sont présents.</p>
+          </div>
+          <div class="compact-list" id="quick-attendance-results" data-quick-results${eligibleStudents.length === 0 ? ' hidden' : ''}>${studentRows}</div>
+        </section>
+        <section id="quick-qr-mode" class="quick-mode-panel qr-scanner-panel" aria-label="Scanner un QR" data-quick-mode-panel="qr" data-qr-scanner hidden>
+          <div class="qr-video-frame is-inactive" data-qr-view>
+            <video data-qr-video muted playsinline aria-label="Aperçu de la caméra pour scanner un QR"></video>
+            <span class="qr-scan-guide" aria-hidden="true" data-qr-guide hidden></span>
+            <p class="qr-camera-placeholder" data-qr-placeholder>Activation de la caméra…</p>
+          </div>
+          <div class="compact-actions qr-scanner-actions">
+            <button class="button button-secondary" type="button" data-qr-start hidden>Réessayer la caméra</button>
+            <button class="button button-quiet" type="button" aria-pressed="true" data-qr-sound>Son activé</button>
+          </div>
+        </section>
       </div>`));
   } catch (error) {
     console.error('Unable to load quick attendance:', error);

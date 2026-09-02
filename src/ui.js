@@ -25,6 +25,7 @@ function renderNavigation() {
       <a href="/students" data-section="students">Élèves</a>
       <a href="/sessions" data-section="sessions">Séances</a>
       <a href="/students/import" data-section="import">Importer</a>
+      <a href="/settings/email" data-section="email">E-mail</a>
       <form method="post" action="/logout">
         <button class="nav-logout" type="submit">Déconnexion</button>
       </form>

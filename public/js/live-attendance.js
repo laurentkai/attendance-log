@@ -185,41 +185,53 @@ if (quickAttendance) {
   const results = quickAttendance.querySelector('[data-quick-results]');
   const noResults = quickAttendance.querySelector('[data-quick-no-results]');
   const completeState = quickAttendance.querySelector('[data-quick-complete]');
-  const errorMessage = quickAttendance.querySelector('[data-quick-error]');
+  const feedbackMessage = quickAttendance.querySelector('[data-quick-feedback]');
   const readonlyMessage = quickAttendance.querySelector('[data-quick-readonly]');
   const undoButton = quickAttendance.querySelector('[data-quick-undo]');
+  const searchClearButton = quickAttendance.querySelector('[data-quick-search-clear]');
+  const modeButtons = [...quickAttendance.querySelectorAll('[data-quick-mode]')];
+  const modePanels = [...quickAttendance.querySelectorAll('[data-quick-mode-panel]')];
   const qrStartButton = quickAttendance.querySelector('[data-qr-start]');
-  const qrStopButton = quickAttendance.querySelector('[data-qr-stop]');
   const qrView = quickAttendance.querySelector('[data-qr-view]');
   const qrVideo = quickAttendance.querySelector('[data-qr-video]');
-  const qrFeedback = quickAttendance.querySelector('[data-qr-feedback]');
+  const qrGuide = quickAttendance.querySelector('[data-qr-guide]');
+  const qrPlaceholder = quickAttendance.querySelector('[data-qr-placeholder]');
   const qrSoundButton = quickAttendance.querySelector('[data-qr-sound]');
   let undoCandidate = null;
   let qrScanner = null;
   let audioContext = null;
   let soundEnabled = true;
   let scannerActive = false;
+  let scannerStarting = false;
   let scannerUnavailable = false;
+  let scannerUnavailableMessage = '';
   let scanProcessing = false;
   let lastScan = { payload: '', at: 0 };
+  let scannerGeneration = 0;
+  let currentMode = 'manual';
 
-  const setError = (message = '') => {
-    if (!errorMessage) return;
-    errorMessage.textContent = message;
-    errorMessage.hidden = !message;
+  const setFeedback = (message = '', type = '') => {
+    if (!feedbackMessage) return;
+    feedbackMessage.classList.remove('message-success', 'message-warning', 'message-error');
+    if (type) feedbackMessage.classList.add(`message-${type}`);
+    feedbackMessage.textContent = message || '\u00a0';
   };
+
+  const setError = (message = '') => setFeedback(message, message ? 'error' : '');
 
   const updateUndoButton = () => {
     if (undoButton) undoButton.disabled = !undoCandidate;
   };
 
-  const setQrFeedback = (message = '', type = '') => {
-    if (!qrFeedback) return;
-    qrFeedback.classList.remove('message-success', 'message-warning', 'message-error');
-    if (type) qrFeedback.classList.add(`message-${type}`);
-    qrFeedback.textContent = message;
-    qrFeedback.hidden = !message;
-  };
+  const setQrFeedback = setFeedback;
+
+  const waitForNextFrame = () => new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(resolve);
+      return;
+    }
+    window.setTimeout(resolve, 0);
+  });
 
   const prepareAudio = async () => {
     if (!soundEnabled) return null;
@@ -234,28 +246,23 @@ if (quickAttendance) {
     }
   };
 
-  const playScanSound = async (type) => {
+  const playQrSuccessTone = async () => {
     if (!soundEnabled) return;
     try {
       const context = await prepareAudio();
       if (!context) return;
-      const sounds = {
-        success: [
-          { frequency: 660, offset: 0, duration: 0.07 },
-          { frequency: 880, offset: 0.08, duration: 0.08 },
-        ],
-        duplicate: [{ frequency: 480, offset: 0, duration: 0.1 }],
-        error: [{ frequency: 240, offset: 0, duration: 0.14 }],
-      };
       const startTime = context.currentTime;
-      sounds[type].forEach(({ frequency, offset, duration }) => {
+      [
+        { frequency: 740, offset: 0, duration: 0.09 },
+        { frequency: 1040, offset: 0.1, duration: 0.11 },
+      ].forEach(({ frequency, offset, duration }) => {
         const oscillator = context.createOscillator();
         const gain = context.createGain();
         const toneStart = startTime + offset;
-        oscillator.type = type === 'duplicate' ? 'triangle' : 'sine';
+        oscillator.type = 'sine';
         oscillator.frequency.setValueAtTime(frequency, toneStart);
         gain.gain.setValueAtTime(0.0001, toneStart);
-        gain.gain.exponentialRampToValueAtTime(0.045, toneStart + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.16, toneStart + 0.008);
         gain.gain.exponentialRampToValueAtTime(0.0001, toneStart + duration);
         oscillator.connect(gain);
         gain.connect(context.destination);
@@ -264,6 +271,15 @@ if (quickAttendance) {
       });
     } catch (_error) {
       // Audio feedback must never interrupt attendance scanning.
+    }
+  };
+
+  const triggerQrSuccessFeedback = () => {
+    playQrSuccessTone();
+    try {
+      navigator.vibrate?.(80);
+    } catch (_error) {
+      // Haptic feedback is optional and must never interrupt attendance scanning.
     }
   };
 
@@ -276,6 +292,10 @@ if (quickAttendance) {
   const updateQuickCount = (present, total) => {
     quickAttendance.querySelector('[data-present-count]').textContent = present;
     quickAttendance.querySelector('[data-total-count]').textContent = total;
+  };
+
+  const updateSearchClearButton = () => {
+    if (searchClearButton) searchClearButton.hidden = searchInput.value.length === 0;
   };
 
   const filterQuickRows = () => {
@@ -294,6 +314,21 @@ if (quickAttendance) {
     if (results) results.hidden = visibleCount === 0;
     if (noResults) noResults.hidden = eligibleCount === 0 || visibleCount > 0;
     if (completeState) completeState.hidden = eligibleCount > 0;
+    updateSearchClearButton();
+  };
+
+  const focusSearch = () => {
+    try {
+      searchInput.focus({ preventScroll: true });
+    } catch (_error) {
+      searchInput.focus();
+    }
+  };
+
+  const clearManualSearch = ({ focus = false } = {}) => {
+    searchInput.value = '';
+    filterQuickRows();
+    if (focus) focusSearch();
   };
 
   const applyPresentResult = (payload, row = null) => {
@@ -315,13 +350,18 @@ if (quickAttendance) {
     updateQuickCount(presentCount + 1, totalCount);
   };
 
-  const stopScanner = () => {
+  const stopScanner = ({ offerRestart = false, placeholder = 'Caméra arrêtée.' } = {}) => {
+    scannerGeneration += 1;
     qrScanner?.stop();
     scannerActive = false;
-    if (qrView) qrView.hidden = true;
-    if (qrStopButton) qrStopButton.hidden = true;
+    qrView?.classList.add('is-inactive');
+    if (qrGuide) qrGuide.hidden = true;
+    if (qrPlaceholder) {
+      qrPlaceholder.textContent = placeholder;
+      qrPlaceholder.hidden = false;
+    }
     if (qrStartButton) {
-      qrStartButton.hidden = false;
+      qrStartButton.hidden = !offerRestart;
       qrStartButton.disabled = scannerUnavailable;
     }
   };
@@ -348,10 +388,13 @@ if (quickAttendance) {
       undoCandidate = null;
       updateUndoButton();
       searchInput.disabled = true;
+      if (searchClearButton) searchClearButton.disabled = true;
+      modeButtons.forEach((button) => { button.disabled = true; });
       scannerUnavailable = true;
-      stopScanner();
+      stopScanner({ placeholder: 'Séance clôturée.' });
       if (qrSoundButton) qrSoundButton.disabled = true;
       if (completeState) completeState.hidden = true;
+      setFeedback();
       readonlyMessage?.removeAttribute('hidden');
       return false;
     }
@@ -359,12 +402,14 @@ if (quickAttendance) {
   };
 
   searchInput.addEventListener('input', filterQuickRows);
+  searchClearButton?.addEventListener('click', () => clearManualSearch({ focus: true }));
 
   quickAttendance.querySelectorAll('[data-quick-present-form]').forEach((form) => {
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = form.querySelector('button');
       const row = form.closest('[data-quick-student]');
+      const studentName = row.querySelector('.compact-title').textContent.trim();
       button.disabled = true;
       setError();
       try {
@@ -377,9 +422,15 @@ if (quickAttendance) {
         if (!response.ok) throw new Error(payload.error || 'La présence n’a pas pu être mise à jour.');
 
         applyPresentResult(payload, row);
-        await refreshQuickAttendance();
+        setFeedback(
+          payload.changed ? `${studentName} — présent` : `${studentName} est déjà présent`,
+          payload.changed ? 'success' : 'warning',
+        );
+        clearManualSearch({ focus: true });
+        await refreshQuickAttendance().catch(() => {});
       } catch (error) {
         setError(error.message || 'La présence n’a pas pu être mise à jour. Réessayez.');
+        focusSearch();
       } finally {
         button.disabled = false;
       }
@@ -423,6 +474,7 @@ if (quickAttendance) {
       const presentCount = Number(quickAttendance.querySelector('[data-present-count]').textContent);
       const totalCount = Number(quickAttendance.querySelector('[data-total-count]').textContent);
       updateQuickCount(Math.max(0, presentCount - 1), totalCount);
+      setFeedback('Dernière action annulée.', 'success');
       await refreshQuickAttendance();
     } catch (_error) {
       undoCandidate = candidate;
@@ -443,8 +495,8 @@ if (quickAttendance) {
     }
 
     lastScan = { payload: payloadValue, at: now };
+    const resultGeneration = scannerGeneration;
     scanProcessing = true;
-    let scanSoundHandled = false;
     setQrFeedback('QR détecté, vérification…', 'warning');
     try {
       const response = await fetch(`/sessions/${sessionId}/quick-attendance/qr`, {
@@ -459,39 +511,57 @@ if (quickAttendance) {
       const payload = await response.json();
       if (!response.ok) {
         setQrFeedback(payload.message || 'QR non reconnu.', 'error');
-        playScanSound('error');
-        scanSoundHandled = true;
         await refreshQuickAttendance();
         return;
       }
 
       applyPresentResult(payload);
       setQrFeedback(payload.message, payload.changed ? 'success' : 'warning');
-      playScanSound(payload.changed ? 'success' : 'duplicate');
-      scanSoundHandled = true;
+      if (
+        payload.changed
+        && currentMode === 'qr'
+        && scannerActive
+        && resultGeneration === scannerGeneration
+      ) {
+        triggerQrSuccessFeedback();
+      }
       await refreshQuickAttendance();
     } catch (_error) {
       setQrFeedback('Le QR n’a pas pu être traité. Réessayez.', 'error');
-      if (!scanSoundHandled) playScanSound('error');
     } finally {
       scanProcessing = false;
     }
   };
 
-  qrStartButton?.addEventListener('click', async () => {
-    if (scannerUnavailable || scannerActive) return;
-    qrStartButton.disabled = true;
+  const startScanner = async () => {
+    if (scannerUnavailable) {
+      setQrFeedback(scannerUnavailableMessage || 'Scanner indisponible. Passez en mode Manuel.', 'error');
+      return;
+    }
+    if (scannerActive || scannerStarting || currentMode !== 'qr') return;
+    scannerStarting = true;
+    if (qrStartButton) {
+      qrStartButton.disabled = true;
+      qrStartButton.hidden = true;
+    }
+    if (qrPlaceholder) {
+      qrPlaceholder.textContent = 'Activation de la caméra…';
+      qrPlaceholder.hidden = false;
+    }
     setQrFeedback('Activation de la caméra…', 'warning');
 
     try {
       await prepareAudio();
+      if (currentMode !== 'qr') return;
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('Camera unsupported');
       }
       const { default: QrScanner } = await import('/vendor/qr-scanner/qr-scanner.min.js');
+      if (currentMode !== 'qr') return;
       if (!(await QrScanner.hasCamera())) {
         throw new Error('Camera not found');
       }
+      if (currentMode !== 'qr') return;
       if (!qrScanner) {
         qrScanner = new QrScanner(qrVideo, handleQrResult, {
           preferredCamera: 'environment',
@@ -500,37 +570,77 @@ if (quickAttendance) {
         });
       }
       await qrScanner.start();
+      if (currentMode !== 'qr') {
+        stopScanner();
+        return;
+      }
       scannerActive = true;
-      qrView.hidden = false;
-      qrStartButton.hidden = true;
-      qrStopButton.hidden = false;
+      qrView?.classList.remove('is-inactive');
+      if (qrGuide) qrGuide.hidden = false;
+      if (qrPlaceholder) qrPlaceholder.hidden = true;
+      if (qrStartButton) qrStartButton.hidden = true;
       setQrFeedback('Présentez un QR devant la caméra.', 'success');
     } catch (error) {
       const reason = `${error?.name || ''} ${error?.message || error}`;
       if (/NotAllowed|Permission|denied/i.test(reason)) {
         scannerUnavailable = true;
-        stopScanner();
-        setQrFeedback('Accès à la caméra refusé. Utilisez la recherche manuelle.', 'error');
+        scannerUnavailableMessage = 'Accès à la caméra refusé. Passez en mode Manuel.';
+        stopScanner({ placeholder: 'Accès à la caméra refusé.' });
+        setQrFeedback(scannerUnavailableMessage, 'error');
       } else if (/not found|NotFound|DevicesNotFound/i.test(reason)) {
         scannerUnavailable = true;
-        stopScanner();
-        setQrFeedback('Aucune caméra disponible. Utilisez la recherche manuelle.', 'error');
+        scannerUnavailableMessage = 'Aucune caméra disponible. Passez en mode Manuel.';
+        stopScanner({ placeholder: 'Aucune caméra disponible.' });
+        setQrFeedback(scannerUnavailableMessage, 'error');
       } else if (/unsupported/i.test(reason)) {
         scannerUnavailable = true;
-        stopScanner();
-        setQrFeedback('Scanner indisponible sur ce navigateur. Utilisez la recherche manuelle.', 'error');
+        scannerUnavailableMessage = 'Scanner indisponible sur ce navigateur. Passez en mode Manuel.';
+        stopScanner({ placeholder: 'Scanner indisponible.' });
+        setQrFeedback(scannerUnavailableMessage, 'error');
       } else {
         scannerUnavailable = false;
-        stopScanner();
-        setQrFeedback('Le scanner n’a pas pu démarrer. Réessayez ou utilisez la recherche manuelle.', 'error');
+        scannerUnavailableMessage = '';
+        stopScanner({ offerRestart: true, placeholder: 'La caméra n’a pas démarré.' });
+        setQrFeedback('Le scanner n’a pas pu démarrer. Réessayez ou passez en mode Manuel.', 'error');
       }
+    } finally {
+      scannerStarting = false;
+      if (qrStartButton && !scannerUnavailable) qrStartButton.disabled = false;
     }
+  };
+
+  const setMode = async (mode, { focus = true } = {}) => {
+    if (!['manual', 'qr'].includes(mode)) return;
+    currentMode = mode;
+
+    if (mode === 'manual') stopScanner();
+
+    modeButtons.forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.quickMode === mode));
+    });
+    modePanels.forEach((panel) => {
+      panel.hidden = panel.dataset.quickModePanel !== mode;
+    });
+    setFeedback();
+
+    if (mode === 'manual') {
+      if (focus) focusSearch();
+      return;
+    }
+
+    await waitForNextFrame();
+    if (currentMode !== 'qr') return;
+    await startScanner();
+  };
+
+  modeButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.dataset.quickMode === 'qr') prepareAudio();
+      return setMode(button.dataset.quickMode);
+    });
   });
 
-  qrStopButton?.addEventListener('click', () => {
-    stopScanner();
-    setQrFeedback();
-  });
+  qrStartButton?.addEventListener('click', startScanner);
 
   qrSoundButton?.addEventListener('click', () => {
     soundEnabled = !soundEnabled;
@@ -541,5 +651,6 @@ if (quickAttendance) {
   window.addEventListener('pagehide', () => qrScanner?.stop());
 
   filterQuickRows();
+  setMode('manual', { focus: false });
   startPolling(refreshQuickAttendance);
 }

@@ -14,6 +14,8 @@ Claude should primarily review and validate changes implemented by Codex. Review
 - Pay special attention to PostgreSQL persistence and the ephemeral nature of container filesystems.
 - Verify that no secrets or real credentials are committed.
 - Verify that no unnecessary framework, ORM, build system, or abstraction has been introduced.
+- Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it; do not use `docker compose down` as routine cleanup.
+- Cleanup may still remove isolated validation containers, databases, files, and test data.
 - Avoid modifying code unless explicitly requested.
 - Clearly distinguish confirmed findings from assumptions.
 - Remain concise and actionable.

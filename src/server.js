@@ -9,6 +9,7 @@ const { router: authRouter, requireAuthentication } = require('./auth');
 const classesRouter = require('./classes');
 const courseSessionsRouter = require('./course-sessions');
 const { formatDateForDisplay } = require('./date-format');
+const mailSettingsRouter = require('./mail-settings');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
 const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
@@ -83,6 +84,7 @@ app.get('/vendor/qr-scanner/qr-scanner-worker.min.js', (_request, response) => {
 });
 app.use('/classes', classesRouter);
 app.use('/sessions', courseSessionsRouter);
+app.use('/settings/email', mailSettingsRouter);
 app.use('/students/import', studentImportRouter);
 app.use('/students', studentsRouter);
 
