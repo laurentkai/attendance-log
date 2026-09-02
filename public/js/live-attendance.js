@@ -246,23 +246,30 @@ if (quickAttendance) {
     }
   };
 
-  const playQrSuccessTone = async () => {
+  const playQrFeedbackTone = async (type) => {
     if (!soundEnabled) return;
     try {
       const context = await prepareAudio();
       if (!context) return;
+      const tones = {
+        success: [
+          { frequency: 740, offset: 0, duration: 0.09, volume: 0.16 },
+          { frequency: 1040, offset: 0.1, duration: 0.11, volume: 0.16 },
+        ],
+        failure: [
+          { frequency: 420, offset: 0, duration: 0.1, volume: 0.1 },
+          { frequency: 260, offset: 0.11, duration: 0.14, volume: 0.1 },
+        ],
+      };
       const startTime = context.currentTime;
-      [
-        { frequency: 740, offset: 0, duration: 0.09 },
-        { frequency: 1040, offset: 0.1, duration: 0.11 },
-      ].forEach(({ frequency, offset, duration }) => {
+      tones[type].forEach(({ frequency, offset, duration, volume }) => {
         const oscillator = context.createOscillator();
         const gain = context.createGain();
         const toneStart = startTime + offset;
         oscillator.type = 'sine';
         oscillator.frequency.setValueAtTime(frequency, toneStart);
         gain.gain.setValueAtTime(0.0001, toneStart);
-        gain.gain.exponentialRampToValueAtTime(0.16, toneStart + 0.008);
+        gain.gain.exponentialRampToValueAtTime(volume, toneStart + 0.008);
         gain.gain.exponentialRampToValueAtTime(0.0001, toneStart + duration);
         oscillator.connect(gain);
         gain.connect(context.destination);
@@ -274,10 +281,10 @@ if (quickAttendance) {
     }
   };
 
-  const triggerQrSuccessFeedback = () => {
-    playQrSuccessTone();
+  const triggerQrScanFeedback = (type) => {
+    playQrFeedbackTone(type);
     try {
-      navigator.vibrate?.(80);
+      navigator.vibrate?.(type === 'success' ? 80 : [60, 40, 60, 40, 60]);
     } catch (_error) {
       // Haptic feedback is optional and must never interrupt attendance scanning.
     }
@@ -497,6 +504,7 @@ if (quickAttendance) {
     lastScan = { payload: payloadValue, at: now };
     const resultGeneration = scannerGeneration;
     scanProcessing = true;
+    let scanFeedbackHandled = false;
     setQrFeedback('QR détecté, vérification…', 'warning');
     try {
       const response = await fetch(`/sessions/${sessionId}/quick-attendance/qr`, {
@@ -511,6 +519,14 @@ if (quickAttendance) {
       const payload = await response.json();
       if (!response.ok) {
         setQrFeedback(payload.message || 'QR non reconnu.', 'error');
+        if (
+          currentMode === 'qr'
+          && scannerActive
+          && resultGeneration === scannerGeneration
+        ) {
+          triggerQrScanFeedback('failure');
+          scanFeedbackHandled = true;
+        }
         await refreshQuickAttendance();
         return;
       }
@@ -518,16 +534,24 @@ if (quickAttendance) {
       applyPresentResult(payload);
       setQrFeedback(payload.message, payload.changed ? 'success' : 'warning');
       if (
-        payload.changed
-        && currentMode === 'qr'
+        currentMode === 'qr'
         && scannerActive
         && resultGeneration === scannerGeneration
       ) {
-        triggerQrSuccessFeedback();
+        triggerQrScanFeedback(payload.changed ? 'success' : 'failure');
+        scanFeedbackHandled = true;
       }
       await refreshQuickAttendance();
     } catch (_error) {
       setQrFeedback('Le QR n’a pas pu être traité. Réessayez.', 'error');
+      if (
+        !scanFeedbackHandled
+        && currentMode === 'qr'
+        && scannerActive
+        && resultGeneration === scannerGeneration
+      ) {
+        triggerQrScanFeedback('failure');
+      }
     } finally {
       scanProcessing = false;
     }

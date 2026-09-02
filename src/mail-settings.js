@@ -52,9 +52,12 @@ function validateConfiguration(values, existingPassword = '') {
   if (values.replyTo && !emailPattern.test(values.replyTo)) {
     return 'L’adresse Reply-To n’est pas valide.';
   }
-  const effectivePassword = values.password || existingPassword;
-  if (Boolean(values.username) !== Boolean(effectivePassword)) {
+  const effectivePassword = values.username ? values.password || existingPassword : '';
+  if (values.username && !effectivePassword) {
     return 'Renseignez à la fois le nom d’utilisateur et le mot de passe SMTP, ou laissez les deux vides pour un relais sans authentification.';
+  }
+  if (values.securityMode === 'none' && values.username) {
+    return 'L’authentification SMTP nécessite une connexion chiffrée.';
   }
   return '';
 }
@@ -211,7 +214,7 @@ router.post('/', async (request, response) => {
       return;
     }
 
-    const password = values.password || current?.password || null;
+    const password = values.username ? values.password || current?.password || null : null;
     await pool.query(
       `INSERT INTO mail_configuration (
          id, smtp_host, smtp_port, security_mode, smtp_username, smtp_password,
