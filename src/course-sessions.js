@@ -1,10 +1,14 @@
 const express = require('express');
+const { requirePermission } = require('./auth');
 const { pool } = require('./db/client');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const { parseStudentQrPayload } = require('./student-qr');
+const { hasPermission, permissions } = require('./permissions');
 const { escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
 const router = express.Router();
+const requireAttendanceManagement = requirePermission(permissions.manageAttendance);
+const requireSessionManagement = requirePermission(permissions.manageSessions);
 
 function isValidId(value) {
   return /^[1-9]\d*$/.test(value);
@@ -240,6 +244,7 @@ router.get('/', async (request, response) => {
     const notice = notices[request.query.notice]
       ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
       : '';
+    const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
     const sessions = result.rows.length === 0
       ? `<p class="empty-state">${searchQuery
         ? 'Aucune séance ne correspond à cette recherche.'
@@ -256,10 +261,10 @@ router.get('/', async (request, response) => {
             </div>
             <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(session.title)}">
               <a class="btn btn-primary" href="/sessions/${session.id}">${session.state === 'scheduled' ? 'Voir la séance' : 'Présences'}</a>
-              <span class="session-edit-slot">
+              ${canManageSessions ? `<span class="session-edit-slot">
                 <a class="btn btn-light" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
                 <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>Modifier</button>
-              </span>
+              </span>` : ''}
             </div>
           </article>`).join('')}</div>`;
 
@@ -267,11 +272,11 @@ router.get('/', async (request, response) => {
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>Séances</h1>
-          <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : 'Planifiez les cours et gérez les présences.'}</p>
+          <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : canManageSessions ? 'Planifiez les cours et gérez les présences.' : 'Accédez aux séances et gérez les présences.'}</p>
         </div>
-        <a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Nouvelle séance</a>
+        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Nouvelle séance</a>` : ''}
       </header>
-      ${classRecord ? `<nav class="nav nav-pills context-tabs" aria-label="Gestion de la classe ${escapeHtml(classRecord.name)}">
+      ${classRecord && canManageSessions ? `<nav class="nav nav-pills context-tabs" aria-label="Gestion de la classe ${escapeHtml(classRecord.name)}">
         <a class="nav-link" href="/classes/${classRecord.id}">Gérer les élèves</a>
         <a class="nav-link active" href="/sessions?class_id=${classRecord.id}" aria-current="page">Gérer les séances</a>
       </nav>` : ''}
@@ -293,7 +298,7 @@ router.get('/', async (request, response) => {
   }
 });
 
-router.get('/new', async (request, response) => {
+router.get('/new', requireSessionManagement, async (request, response) => {
   try {
     const classes = await getClasses();
     response.send(renderSessionForm({
@@ -316,7 +321,7 @@ router.get('/new', async (request, response) => {
   }
 });
 
-router.post('/', async (request, response) => {
+router.post('/', requireSessionManagement, async (request, response) => {
   const values = getFormValues(request.body);
   const validationError = validateForm(values);
 
@@ -375,7 +380,7 @@ router.post('/', async (request, response) => {
   }
 });
 
-router.get('/:id/edit', async (request, response) => {
+router.get('/:id/edit', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
     const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
     response.status(page.status).send(page.html);
@@ -421,7 +426,7 @@ router.get('/:id/edit', async (request, response) => {
   }
 });
 
-router.post('/:id', async (request, response) => {
+router.post('/:id', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
     const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
     response.status(page.status).send(page.html);
@@ -555,7 +560,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
             <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer la prise de présence rapide"><span aria-hidden="true">×</span></a>
           </header>
           <p class="alert alert-warning">${session.state === 'closed'
-            ? 'Cette séance est clôturée. Réouvrez-la depuis la gestion complète avant de reprendre les présences.'
+            ? 'Cette séance est clôturée. Elle doit être réouverte par un gestionnaire avant de reprendre les présences.'
             : 'Cette séance doit être ouverte avant de prendre les présences.'}</p>
         </div>`, { navigation: false, pageClass: 'page--quick-attendance' }));
       return;
@@ -690,6 +695,7 @@ router.get('/:id', async (request, response) => {
             </div>
           </article>`).join('')}</div>`;
 
+    const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
     response.send(renderPage(session.title, `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
@@ -700,13 +706,13 @@ router.get('/:id', async (request, response) => {
         </div>
         <div class="context-actions d-flex flex-wrap gap-2">
           <a class="btn btn-primary" href="/sessions/${session.id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Prise de présence rapide</a>
-          <form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir la séance' : 'Réouvrir la séance'}</button></form>
+          ${canManageSessions ? `<form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir la séance' : 'Réouvrir la séance'}</button></form>
           <a class="btn btn-outline-secondary" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier la séance</a>
-          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer cette séance et marquer les élèves en attente comme absents ?"${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer la séance</button></form>
+          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer cette séance et marquer les élèves en attente comme absents ?"${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer la séance</button></form>` : ''}
         </div>
       </header>
       ${notice}
-      ${session.state === 'closed' ? '<p class="alert alert-warning">Cette séance est clôturée et en lecture seule. Réouvrez-la pour modifier ses informations ou les présences.</p>' : ''}
+      ${session.state === 'closed' ? `<p class="alert alert-warning">Cette séance est clôturée et en lecture seule. ${canManageSessions ? 'Réouvrez-la pour modifier ses informations ou les présences.' : 'Un gestionnaire doit la réouvrir avant toute correction.'}</p>` : ''}
       <section class="card card-body summary-card attendance-summary" aria-label="Résumé des présences" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.id}"` : ''}>
         <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> présents</strong>
         <span class="badge status-badge status-${session.state}" data-session-state aria-live="polite">${getStateLabel(session.state)}</span>
@@ -735,7 +741,7 @@ router.get('/:id', async (request, response) => {
   }
 });
 
-router.post('/:id/quick-attendance/qr', async (request, response) => {
+router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
     response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
     return;
@@ -813,7 +819,7 @@ router.post('/:id/quick-attendance/qr', async (request, response) => {
   }
 });
 
-router.post('/:id/quick-attendance/:studentId', async (request, response) => {
+router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, async (request, response) => {
   if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
     response.status(404).json({ error: 'Présence introuvable.' });
     return;
@@ -848,7 +854,7 @@ router.post('/:id/quick-attendance/:studentId', async (request, response) => {
   }
 });
 
-router.post('/:id/quick-attendance/:studentId/undo', async (request, response) => {
+router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement, async (request, response) => {
   if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
     response.status(404).json({ error: 'Présence introuvable.' });
     return;
@@ -912,7 +918,7 @@ router.post('/:id/quick-attendance/:studentId/undo', async (request, response) =
   }
 });
 
-router.post('/:id/attendance/:studentId', async (request, response) => {
+router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (request, response) => {
   if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
     const page = renderMessagePage('Présence introuvable', 'Cette présence ne peut pas être modifiée.', 404);
     response.status(page.status).send(page.html);
@@ -962,7 +968,7 @@ router.post('/:id/attendance/:studentId', async (request, response) => {
   }
 });
 
-router.post('/:id/close', async (request, response) => {
+router.post('/:id/close', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
     const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
     response.status(page.status).send(page.html);
@@ -1031,7 +1037,7 @@ router.post('/:id/close', async (request, response) => {
   }
 });
 
-router.post('/:id/open', async (request, response) => {
+router.post('/:id/open', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
     const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
     response.status(page.status).send(page.html);

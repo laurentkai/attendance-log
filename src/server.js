@@ -5,7 +5,13 @@ const express = require('express');
 const session = require('express-session');
 const connectPgSimple = require('connect-pg-simple');
 const { pool, verifyDatabaseConnection } = require('./db/client');
-const { router: authRouter, requireAuthentication } = require('./auth');
+const {
+  loadAuthenticatedUser,
+  requireAuthentication,
+  requirePermission,
+  router: authRouter,
+} = require('./auth');
+const adminUserSettingsRouter = require('./admin-user-settings');
 const backupSettingsRouter = require('./backup-settings');
 const { getStoredBackupSecretStatus, startBackupScheduler } = require('./backup');
 const classesRouter = require('./classes');
@@ -22,6 +28,8 @@ const {
 } = require('./mail');
 const { initializeSecrets } = require('./secrets');
 const { initializeInstanceIdentity } = require('./instance');
+const { hasPermission, permissions } = require('./permissions');
+const { requestContextMiddleware } = require('./request-context');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
 const {
@@ -37,7 +45,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535');
 }
 
-for (const variableName of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'SESSION_SECRET']) {
+for (const variableName of ['SESSION_SECRET']) {
   if (!process.env[variableName]) {
     throw new Error(`${variableName} is required`);
   }
@@ -90,9 +98,11 @@ app.use(session({
   },
 }));
 
+app.use(requestContextMiddleware);
+app.use(loadAuthenticatedUser);
 app.use(authRouter);
 app.use(requireAuthentication);
-app.get('/settings', (_request, response) => response.redirect(303, '/settings/email'));
+app.get('/settings', requirePermission(permissions.manageSettings), (_request, response) => response.redirect(303, '/settings/email'));
 app.get('/vendor/qr-scanner/qr-scanner.min.js', (_request, response) => {
   response.sendFile(path.join(
     __dirname,
@@ -111,16 +121,17 @@ app.get('/vendor/qr-scanner/qr-scanner-worker.min.js', (_request, response) => {
     'qr-scanner-worker.min.js',
   ));
 });
-app.use('/classes', classesRouter);
-app.use('/sessions', courseSessionsRouter);
-app.use('/settings/email', mailSettingsRouter);
-app.use('/settings/security', securitySettingsRouter);
-app.use('/settings/backups', backupSettingsRouter);
-app.use('/reporting', reportingRouter);
-app.use('/students/import', studentImportRouter);
-app.use('/students', studentsRouter);
+app.use('/classes', requirePermission(permissions.manageClasses), classesRouter);
+app.use('/sessions', requirePermission(permissions.viewSessions), courseSessionsRouter);
+app.use('/settings/email', requirePermission(permissions.manageSettings), mailSettingsRouter);
+app.use('/settings/security', requirePermission(permissions.manageSettings), securitySettingsRouter);
+app.use('/settings/backups', requirePermission(permissions.manageSettings), backupSettingsRouter);
+app.use('/settings/users', requirePermission(permissions.manageUsers), adminUserSettingsRouter);
+app.use('/reporting', requirePermission(permissions.viewReporting), reportingRouter);
+app.use('/students/import', requirePermission(permissions.manageStudents), studentImportRouter);
+app.use('/students', requirePermission(permissions.manageStudents), studentsRouter);
 
-app.get('/', async (_request, response) => {
+app.get('/', async (request, response) => {
   try {
     const result = await pool.query(
       `SELECT cs.id, cs.date, cs.title, cs.instructor, c.name AS class_name,
@@ -144,6 +155,9 @@ app.get('/', async (_request, response) => {
        GROUP BY cs.id, c.name
        ORDER BY cs.date, LOWER(cs.title), cs.id`,
     );
+    const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
+    const canManageClasses = hasPermission(request.currentUser, permissions.manageClasses);
+    const canManageStudents = hasPermission(request.currentUser, permissions.manageStudents);
     const openSessions = result.rows.length === 0
       ? ''
       : `<div class="list-group compact-list" data-live-session-list>${result.rows.map((sessionRecord) => `
@@ -159,10 +173,10 @@ app.get('/', async (_request, response) => {
             </div>
             <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(sessionRecord.title)}">
               <a class="btn btn-primary" href="/sessions/${sessionRecord.id}">Présences</a>
-              <span class="session-edit-slot">
+              ${canManageSessions ? `<span class="session-edit-slot">
                 <a class="btn btn-light" href="/sessions/${sessionRecord.id}/edit" data-session-edit>Modifier</a>
                 <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled hidden>Modifier</button>
-              </span>
+              </span>` : ''}
             </div>
           </article>`).join('')}</div>`;
 
@@ -175,10 +189,10 @@ app.get('/', async (_request, response) => {
       </header>
       <nav class="dashboard-actions" aria-label="Accès rapides">
         <div class="row g-2 row-cols-1 row-cols-md-2">
-          <div class="col"><a class="card card-body dashboard-link h-100" href="/classes"><strong>Classes</strong><span>Gérer les groupes</span></a></div>
-          <div class="col"><a class="card card-body dashboard-link h-100" href="/students"><strong>Élèves</strong><span>Consulter les élèves actifs</span></a></div>
-          <div class="col"><a class="card card-body dashboard-link h-100" href="/sessions"><strong>Séances</strong><span>Planifier et prendre les présences</span></a></div>
-          <div class="col"><a class="card card-body dashboard-link h-100" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a></div>
+          ${canManageClasses ? '<div class="col"><a class="card card-body dashboard-link h-100" href="/classes"><strong>Classes</strong><span>Gérer les groupes</span></a></div>' : ''}
+          ${canManageStudents ? '<div class="col"><a class="card card-body dashboard-link h-100" href="/students"><strong>Élèves</strong><span>Consulter les élèves actifs</span></a></div>' : ''}
+          <div class="col"><a class="card card-body dashboard-link h-100" href="/sessions"><strong>Séances</strong><span>${canManageSessions ? 'Planifier et prendre les présences' : 'Prendre les présences'}</span></a></div>
+          ${canManageStudents ? '<div class="col"><a class="card card-body dashboard-link h-100" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a></div>' : ''}
         </div>
       </nav>
       <section class="page-section" aria-labelledby="open-sessions-title" data-live-dashboard>

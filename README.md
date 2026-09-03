@@ -79,27 +79,49 @@ Modifier ensuite `.env` avec des valeurs propres à l’installation. Ne jamais 
 | `POSTGRES_PASSWORD` | Mot de passe PostgreSQL Compose | Requis en pratique ; utiliser une valeur forte |
 | `DATABASE_URL` | Connexion PostgreSQL lors d’une exécution directe hors Compose | Présente pour ce cas ; Compose construit sa propre URL avec les trois variables PostgreSQL |
 | `DATABASE_SSL` | Active la vérification TLS PostgreSQL hors Compose | Compose utilise `false` sur son réseau interne |
-| `ADMIN_USERNAME` | Identifiant du compte administrateur unique | Requis |
-| `ADMIN_PASSWORD` | Mot de passe du compte administrateur | Requis |
 | `SESSION_SECRET` | Signature des sessions administrateur | Requis, au moins 32 caractères |
 | `APP_ENCRYPTION_KEY` | Clé maître Base64 de 256 bits fournie par l’environnement | Optionnelle ; prioritaire sur le fichier persistant |
 | `APP_ENCRYPTION_KEY_FILE` | Emplacement du fichier de clé pour une exécution hors Compose | Optionnelle ; Compose impose `/app-secrets/encryption.key` |
 | `BACKUP_TIMEZONE` | Fuseau IANA utilisé par la planification des sauvegardes | Optionnelle, `Europe/Brussels` par défaut |
 | `BACKUP_RESTORE_MAX_MB` | Taille maximale d’un fichier envoyé pour restauration | Optionnelle, `512` Mo par défaut |
 
-En production, utiliser des valeurs distinctes et fortes pour `POSTGRES_PASSWORD`, `ADMIN_PASSWORD` et `SESSION_SECRET`. Une valeur `APP_ENCRYPTION_KEY`, lorsqu’elle est fournie, doit être une clé aléatoire de 256 bits encodée en Base64.
+En production, utiliser des valeurs distinctes et fortes pour `POSTGRES_PASSWORD` et `SESSION_SECRET`. Une valeur `APP_ENCRYPTION_KEY`, lorsqu’elle est fournie, doit être une clé aléatoire de 256 bits encodée en Base64.
 
-### 3. Construire, migrer et démarrer
+### 3. Construire l’image
 
 ```bash
 docker compose build
+```
+
+### 4. Appliquer les migrations
+
+```bash
 docker compose run --rm app npm run migrate
-docker compose up -d
 ```
 
 La commande de migration applique les migrations PostgreSQL absentes. Elle est conçue pour être relancée : les migrations déjà enregistrées dans `schema_migrations` ne sont pas réappliquées.
 
-Vérifier ensuite les services :
+### 5. Créer le premier administrateur
+
+```bash
+docker compose run --rm \
+  -e CREATE_ADMIN_NAME="Votre nom" \
+  -e CREATE_ADMIN_EMAIL="admin@example.com" \
+  -e CREATE_ADMIN_PASSWORD="VotreMotDePasseLongEtSolide" \
+  app npm run create-admin
+```
+
+Les options `-e` transmettent ces valeurs uniquement au conteneur ponctuel créé par `docker compose run --rm`. Elles ne doivent pas être ajoutées à `.env` et ne constituent pas une configuration d’exécution permanente. La commande refuse une adresse e-mail déjà utilisée et exige un mot de passe d’au moins 12 caractères.
+
+`npm run create-admin` peut être réutilisé ultérieurement de manière délibérée lorsqu’un amorçage administrateur est réellement nécessaire. En fonctionnement normal, les comptes et leurs rôles se gèrent depuis **Configuration > Utilisateurs** ; cette commande ne fait pas partie de la procédure de mise à jour.
+
+### 6. Démarrer ou recréer l’application
+
+```bash
+docker compose up -d
+```
+
+### 7. Vérifier les services
 
 ```bash
 docker compose ps
@@ -112,6 +134,10 @@ Une réponse saine ressemble à :
 ```json
 {"status":"ok","database":"connected"}
 ```
+
+### 8. Se connecter
+
+Ouvrir Attendance Log, puis utiliser l’adresse e-mail et le mot de passe fournis à l’étape 5.
 
 ## HTTPS et reverse proxy
 
@@ -294,7 +320,7 @@ La restauration actuelle se trouve dans **Configuration > Sauvegardes > Restaure
 Pour une installation neuve avec une sauvegarde cloud :
 
 1. installer et démarrer Attendance Log ;
-2. se connecter avec le compte administrateur de la nouvelle installation ;
+2. créer puis utiliser le compte administrateur de la nouvelle installation ;
 3. configurer les credentials S3/Azure actuels dans **Configuration > Sauvegardes** ;
 4. utiliser **Tester la destination** ;
 5. ouvrir **Restaurer une sauvegarde**, sélectionner la sauvegarde cloud et l’inspecter ;
@@ -337,7 +363,7 @@ Consulter :
 docker compose logs --tail=100 app
 ```
 
-Vérifier en priorité les variables requises dans `.env`, notamment `ADMIN_USERNAME`, `ADMIN_PASSWORD` et `SESSION_SECRET`.
+Vérifier en priorité les variables requises dans `.env`, notamment `SESSION_SECRET` et les paramètres PostgreSQL. Vérifier également que les migrations ont été appliquées et qu’au moins un compte administrateur actif existe dans `admin_users`.
 
 ### Une migration manque
 

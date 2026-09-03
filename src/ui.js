@@ -1,3 +1,6 @@
+const { hasPermission, permissions } = require('./permissions');
+const { getCurrentUser } = require('./request-context');
+
 const htmlEscapes = {
   '&': '&amp;',
   '<': '&lt;',
@@ -11,6 +14,12 @@ function escapeHtml(value = '') {
 }
 
 function renderNavigation() {
+  const currentUser = getCurrentUser();
+  const canManageClasses = hasPermission(currentUser, permissions.manageClasses);
+  const canManageStudents = hasPermission(currentUser, permissions.manageStudents);
+  const canViewReporting = hasPermission(currentUser, permissions.viewReporting);
+  const canManageSettings = hasPermission(currentUser, permissions.manageSettings);
+
   return `<nav class="navbar navbar-expand-lg app-header" aria-label="Navigation principale">
     <div class="container-xl">
       <a class="navbar-brand app-brand" href="/" aria-label="Attendance Log — Accueil">
@@ -22,12 +31,12 @@ function renderNavigation() {
         <span class="app-brand-wordmark" translate="no"><span>Attendance</span> <strong>Log</strong></span>
       </a>
       <div class="app-header-actions ms-auto order-lg-3">
-        <a class="btn header-icon-button settings-link" href="/settings/email" data-section="settings" aria-label="Paramètres" title="Paramètres">
+        ${canManageSettings ? `<a class="btn header-icon-button settings-link" href="/settings/email" data-section="settings" aria-label="Paramètres" title="Paramètres">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/>
             <circle cx="12" cy="12" r="3"/>
           </svg>
-        </a>
+        </a>` : ''}
         <form class="header-action-form" method="post" action="/logout">
           <button class="btn header-icon-button header-logout" type="submit" aria-label="Se déconnecter" title="Se déconnecter">
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
@@ -43,10 +52,10 @@ function renderNavigation() {
       <div class="collapse navbar-collapse" id="primary-navigation">
         <div class="navbar-nav admin-nav">
           <a class="nav-link" href="/" data-section="home">Accueil</a>
-          <a class="nav-link" href="/classes" data-section="classes">Classes</a>
-          <a class="nav-link" href="/students" data-section="students">Élèves</a>
+          ${canManageClasses ? '<a class="nav-link" href="/classes" data-section="classes">Classes</a>' : ''}
+          ${canManageStudents ? '<a class="nav-link" href="/students" data-section="students">Élèves</a>' : ''}
           <a class="nav-link" href="/sessions" data-section="sessions">Séances</a>
-          <a class="nav-link" href="/reporting" data-section="reporting">Reporting</a>
+          ${canViewReporting ? '<a class="nav-link" href="/reporting" data-section="reporting">Reporting</a>' : ''}
         </div>
       </div>
     </div>
@@ -58,6 +67,7 @@ function renderSettingsNavigation(activeSection) {
     <a class="nav-link${activeSection === 'email' ? ' active' : ''}" href="/settings/email"${activeSection === 'email' ? ' aria-current="page"' : ''}>E-mail</a>
     <a class="nav-link${activeSection === 'security' ? ' active' : ''}" href="/settings/security"${activeSection === 'security' ? ' aria-current="page"' : ''}>Sécurité</a>
     <a class="nav-link${activeSection === 'backups' ? ' active' : ''}" href="/settings/backups"${activeSection === 'backups' ? ' aria-current="page"' : ''}>Sauvegardes</a>
+    <a class="nav-link${activeSection === 'users' ? ' active' : ''}" href="/settings/users"${activeSection === 'users' ? ' aria-current="page"' : ''}>Utilisateurs</a>
   </nav>`;
 }
 

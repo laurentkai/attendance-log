@@ -93,7 +93,8 @@ Use a real browser/runtime inspection for high-risk interactive behavior when av
 
 ## Security and operations review
 
-- Administrative, Settings, Reporting, Backup, Restore, and key routes require authentication.
+- Authentication uses active PostgreSQL `admin_users`, never environment credentials. Verify role changes/deactivation affect existing sessions, UI visibility matches the centralized permission matrix, direct URLs are server-protected, and last-active-administrator changes are transactionally safe under concurrency.
+- Verify fixed role boundaries: administrators have full access; managers cannot access Settings or user management; attendance operators can use session attendance workflows but cannot administer students, classes, Reporting, Settings, Backup, or Restore.
 - State changes must not use an unsafe GET.
 - SQL must be parameterized and subprocesses must use controlled argument arrays.
 - Browser errors must be safe; server diagnostics must remain useful without secrets.

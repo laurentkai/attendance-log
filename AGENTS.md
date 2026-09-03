@@ -115,9 +115,14 @@ CSV Import belongs to student management and is accessed contextually from Stude
 
 ### Authentication and administration
 
-- The current model is one authenticated administrator account with no public registration.
-- Do not invent roles, OTP, or federated authentication until explicitly scoped.
-- Administrative, Settings, Reporting, Backup, Restore, and key-management routes require authentication.
+- Administrator identities are stored only in PostgreSQL `admin_users`; runtime authentication must never fall back to environment credentials.
+- Roles are fixed and centralized: `administrator`, `manager`, and `attendance_operator`. Do not build configurable permissions or a generic RBAC engine.
+- Load the active account from PostgreSQL for every authenticated request so deactivation, deletion, and role changes take effect on existing sessions.
+- Administrators have full access and exclusively manage Settings and administrator accounts. Managers handle students, Import, classes, sessions, attendance, Reporting/Excel, and student QR/e-mail. Attendance operators access only the session views and attendance workflows required to record attendance.
+- UI visibility follows permissions, but server-side authorization remains authoritative. Unauthorized authenticated requests return 403; unauthenticated HTML requests redirect to login and JSON requests return 401.
+- Preserve at least one active administrator transactionally. Prefer deactivation over hard deletion.
+- Passwords use the central adaptive password-hashing implementation and are never encrypted, rendered, or logged. Do not add OTP, invitations, recovery, or federated login until explicitly scoped.
+- The first administrator is created explicitly after migrations with `npm run create-admin`; never recreate one automatically at startup.
 
 ### Students, memberships, sessions, and attendance
 
