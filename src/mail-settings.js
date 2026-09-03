@@ -2,10 +2,11 @@ const express = require('express');
 const { pool } = require('./db/client');
 const {
   isCompleteMailConfiguration,
-  loadMailConfiguration,
+  migratePlaintextMailPassword,
   sendMail,
 } = require('./mail');
-const { escapeHtml, renderPage } = require('./ui');
+const { decryptSecret, encryptSecret } = require('./secrets');
+const { escapeHtml, renderPage, renderSettingsNavigation } = require('./ui');
 
 const router = express.Router();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -65,10 +66,11 @@ function validateConfiguration(values, existingPassword = '') {
 function renderSettingsPage({
   values,
   hasPassword,
+  secretReadable = true,
   feedback = null,
   testRecipient = '',
 }) {
-  const complete = isCompleteMailConfiguration({
+  const complete = secretReadable && isCompleteMailConfiguration({
     ...values,
     port: Number(values.port),
     password: hasPassword ? 'stored' : '',
@@ -87,6 +89,7 @@ function renderSettingsPage({
         </div>
         <span class="status-badge status-${complete ? 'active' : 'inactive'}">${complete ? 'E-mail configuré' : 'Configuration e-mail incomplète'}</span>
       </header>
+      ${renderSettingsNavigation('email')}
       <div class="notification-area" aria-live="polite" aria-atomic="true">
         ${feedbackMessage}
       </div>
@@ -168,11 +171,26 @@ function publicValues(configuration) {
 }
 
 async function renderCurrentSettings(response, options = {}) {
-  const configuration = await loadMailConfiguration();
+  const configuration = await migratePlaintextMailPassword();
+  let secretReadable = true;
+  if (configuration?.password) {
+    try {
+      decryptSecret(configuration.password);
+    } catch (_error) {
+      secretReadable = false;
+    }
+  }
   response.send(renderSettingsPage({
+    ...options,
     values: publicValues(configuration),
     hasPassword: Boolean(configuration?.password),
-    ...options,
+    secretReadable,
+    feedback: !secretReadable
+      ? {
+        type: 'error',
+        message: 'Le secret SMTP ne peut pas être déchiffré avec la clé active. Vérifiez que la clé de chiffrement correspond à cette base restaurée.',
+      }
+      : options.feedback,
   }));
 }
 
@@ -203,7 +221,7 @@ router.post('/', async (request, response) => {
   const values = getFormValues(request.body);
   let current = null;
   try {
-    current = await loadMailConfiguration();
+    current = await migratePlaintextMailPassword();
     const validationError = validateConfiguration(values, current?.password || '');
     if (validationError) {
       response.status(400).send(renderSettingsPage({
@@ -214,7 +232,9 @@ router.post('/', async (request, response) => {
       return;
     }
 
-    const password = values.username ? values.password || current?.password || null : null;
+    const password = values.username
+      ? values.password ? encryptSecret(values.password) : current?.password || null
+      : null;
     await pool.query(
       `INSERT INTO mail_configuration (
          id, smtp_host, smtp_port, security_mode, smtp_username, smtp_password,
@@ -264,6 +284,8 @@ function testMailErrorMessage(code) {
     SENDER_REJECTED: 'Le serveur SMTP a refusé l’adresse d’expéditeur.',
     RECIPIENT_REJECTED: 'Le serveur SMTP a refusé l’adresse de destination.',
     DELIVERY_FAILED: 'Le serveur SMTP n’a pas accepté l’e-mail de test.',
+    SECRET_KEY_MISMATCH: 'Le secret SMTP ne peut pas être déchiffré avec la clé active. Vérifiez que la clé de chiffrement correspond à cette base restaurée.',
+    SECRET_STORAGE_FAILED: 'Le secret SMTP n’a pas pu être protégé avant son utilisation.',
   }[code] || 'L’e-mail de test n’a pas pu être envoyé.';
 }
 

@@ -11,6 +11,12 @@ const courseSessionsRouter = require('./course-sessions');
 const { formatDateForDisplay } = require('./date-format');
 const mailSettingsRouter = require('./mail-settings');
 const reportingRouter = require('./reporting');
+const securitySettingsRouter = require('./security-settings');
+const {
+  getStoredMailSecretStatus,
+  migratePlaintextMailPassword,
+} = require('./mail');
+const { initializeSecrets } = require('./secrets');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
 const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
@@ -86,6 +92,7 @@ app.get('/vendor/qr-scanner/qr-scanner-worker.min.js', (_request, response) => {
 app.use('/classes', classesRouter);
 app.use('/sessions', courseSessionsRouter);
 app.use('/settings/email', mailSettingsRouter);
+app.use('/settings/security', securitySettingsRouter);
 app.use('/reporting', reportingRouter);
 app.use('/students/import', studentImportRouter);
 app.use('/students', studentsRouter);
@@ -170,11 +177,27 @@ app.get('/', async (_request, response) => {
 async function start() {
   try {
     await verifyDatabaseConnection();
+    const keyInfo = await initializeSecrets();
+    if (process.env.NODE_ENV === 'production' && keyInfo.source === 'persistent-file') {
+      console.warn('Application encryption key is stored in persistent application storage. Losing that storage makes encrypted provider secrets unrecoverable; export and securely store the recovery key.');
+    }
+    try {
+      await migratePlaintextMailPassword();
+    } catch (error) {
+      console.error('Unable to protect the stored SMTP credential:', error.code || 'MIGRATION_FAILED');
+    }
+    try {
+      if (await getStoredMailSecretStatus() === 'mismatch') {
+        console.warn('WARNING: The active application encryption key does not match stored encrypted data. Provider secrets are unavailable until the matching recovery key is restored.');
+      }
+    } catch (error) {
+      console.warn('Unable to verify stored encrypted data at startup:', error.code || 'PREFLIGHT_FAILED');
+    }
     app.listen(port, '0.0.0.0', () => {
       console.log(`Attendance Log listening on port ${port}`);
     });
   } catch (error) {
-    console.error('Unable to connect to PostgreSQL:', error.message);
+    console.error('Unable to start Attendance Log:', error.code || error.message);
     await pool.end();
     process.exit(1);
   }

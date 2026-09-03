@@ -11,8 +11,10 @@ Claude should primarily review and validate changes implemented by Codex. Review
 - Identify functional regressions, security issues, data-loss risks, and unnecessary complexity.
 - Check every change for consistency with `AGENTS.md`.
 - Pay special attention to mobile usability.
-- Pay special attention to PostgreSQL persistence and the ephemeral nature of container filesystems.
+- Pay special attention to the persistent `postgres_data` and `app_secrets` volumes used by Docker Compose on the Lightsail VPS, while treating unmounted container filesystems as disposable.
 - Verify that no secrets or real credentials are committed.
+- Verify that recoverable provider secrets are encrypted before database storage and that the application encryption key remains outside PostgreSQL and survives deployment replacement.
+- Before a second encrypted provider-secret category is introduced, require purpose/context binding with backward compatibility for existing v1 SMTP ciphertext.
 - Verify that no unnecessary framework, ORM, build system, or abstraction has been introduced.
 - Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it; do not use `docker compose down` as routine cleanup.
 - Cleanup may still remove isolated validation containers, databases, files, and test data.
@@ -61,9 +63,9 @@ There is no test suite, linter, or build step configured yet (no `test`/`lint`/`
 
 - **Runtime**: Node.js (>=22) + Express 5, single process, no framework beyond Express (per `AGENTS.md`, no frontend framework and no ORM).
 - **Entry point**: `src/server.js` — configures Express, validates `PORT`, serves `public/` as static assets, serves `views/index.html` for `/`, and exposes `/health`. It calls `verifyDatabaseConnection()` before binding to the port and exits (`process.exit(1)`) if PostgreSQL is unreachable at startup — the app is designed to fail fast rather than serve without a working database.
-- **Database**: `src/db/client.js` creates a single `pg` `Pool` from `DATABASE_URL` (required — throws if missing). `DATABASE_SSL=true` enables TLS with certificate verification; otherwise SSL is disabled (used for local/docker-compose Postgres). PostgreSQL is the *only* persistent store — the container filesystem is ephemeral (Lightsail Container Service), so nothing written to disk in the container survives a redeploy.
+- **Database**: `src/db/client.js` creates a single `pg` `Pool` from `DATABASE_URL` (required — throws if missing). `DATABASE_SSL=true` enables TLS with certificate verification; otherwise SSL is disabled for Compose PostgreSQL. PostgreSQL data persists in the `postgres_data` named volume; unmounted container storage remains disposable.
 - **Frontend**: Plain HTML/CSS/JS served from `views/` and `public/` — no build step, no bundler, no client-side framework. UI text is French; code/comments/commits are English (per `AGENTS.md`).
-- **Deployment**: `Dockerfile` builds a production image (`npm ci --omit=dev`, runs as non-root `node` user, listens on port 3000 over plain HTTP — TLS termination happens at Lightsail, not in the container). `docker-compose.yml` is for local development only and pairs the app with a `postgres:17-alpine` container plus a named volume for data persistence between local runs.
+- **Deployment**: `Dockerfile` builds a production image (`npm ci --omit=dev`, runs as non-root `node` user, listens on port 3000 over plain HTTP). The AWS Lightsail VPS uses Docker Compose with persistent `postgres_data` and `app_secrets` named volumes; `docker compose down -v` is destructive and must not be routine cleanup.
 - **Configuration**: All config is via environment variables loaded through `dotenv` (`.env`, not committed — see `.env.example` for the required keys: `PORT`, `DATABASE_URL`, `DATABASE_SSL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`).
 
 See `AGENTS.md` for the full functional specification (V1 scope, workflows, UI rules) and development rules — it is the source of truth and takes precedence over assumptions made from the current (minimal) code.

@@ -1,5 +1,10 @@
 const nodemailer = require('nodemailer');
 const { pool } = require('./db/client');
+const {
+  decryptSecret,
+  encryptSecret,
+  isEncryptedSecret,
+} = require('./secrets');
 
 const connectionTimeout = 10000;
 const socketTimeout = 15000;
@@ -27,7 +32,7 @@ function normalizeConfiguration(row) {
   };
 }
 
-async function loadMailConfiguration() {
+async function loadStoredMailConfiguration() {
   const result = await pool.query(
     `SELECT smtp_host, smtp_port, security_mode, smtp_username, smtp_password,
             sender_email, sender_name, reply_to
@@ -35,6 +40,54 @@ async function loadMailConfiguration() {
      WHERE id = 1`,
   );
   return normalizeConfiguration(result.rows[0]);
+}
+
+async function migratePlaintextMailPassword() {
+  const configuration = await loadStoredMailConfiguration();
+  if (!configuration?.password || isEncryptedSecret(configuration.password)) {
+    return configuration;
+  }
+
+  const encryptedPassword = encryptSecret(configuration.password);
+  const result = await pool.query(
+    `UPDATE mail_configuration
+     SET smtp_password = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = 1 AND smtp_password = $2`,
+    [encryptedPassword, configuration.password],
+  );
+  if (result.rowCount === 1) {
+    return { ...configuration, password: encryptedPassword };
+  }
+  const currentConfiguration = await loadStoredMailConfiguration();
+  if (currentConfiguration?.password && !isEncryptedSecret(currentConfiguration.password)) {
+    throw new MailError('SECRET_STORAGE_FAILED');
+  }
+  return currentConfiguration;
+}
+
+async function loadMailConfiguration() {
+  const configuration = await migratePlaintextMailPassword();
+  if (!configuration?.password) return configuration;
+  return {
+    ...configuration,
+    password: decryptSecret(configuration.password),
+  };
+}
+
+async function getStoredMailSecretStatus() {
+  const configuration = await loadStoredMailConfiguration();
+  if (!configuration?.password || !isEncryptedSecret(configuration.password)) {
+    return 'available';
+  }
+  try {
+    decryptSecret(configuration.password);
+    return 'available';
+  } catch (error) {
+    if (['SECRET_KEY_MISMATCH', 'INVALID_ENVELOPE'].includes(error?.code)) {
+      return 'mismatch';
+    }
+    throw error;
+  }
 }
 
 function isCompleteMailConfiguration(configuration) {
@@ -77,6 +130,10 @@ function createTransportOptions(configuration) {
 
 function normalizeMailError(error) {
   if (error instanceof MailError) return error;
+  if (['SECRET_KEY_MISMATCH', 'INVALID_ENVELOPE'].includes(error?.code)) {
+    return new MailError('SECRET_KEY_MISMATCH');
+  }
+  if (error?.code === 'SECRET_STORAGE_FAILED') return new MailError('SECRET_STORAGE_FAILED');
   if (error?.code === 'EAUTH' || error?.responseCode === 535) {
     return new MailError('AUTHENTICATION_FAILED');
   }
@@ -99,7 +156,12 @@ function normalizeMailError(error) {
 }
 
 async function sendMail({ to, subject, text, html, attachments }) {
-  const configuration = await loadMailConfiguration();
+  let configuration;
+  try {
+    configuration = await loadMailConfiguration();
+  } catch (error) {
+    throw normalizeMailError(error);
+  }
   if (!isCompleteMailConfiguration(configuration)) {
     throw new MailError('NOT_CONFIGURED');
   }
@@ -134,8 +196,11 @@ async function sendMail({ to, subject, text, html, attachments }) {
 module.exports = {
   MailError,
   createTransportOptions,
+  getStoredMailSecretStatus,
   isCompleteMailConfiguration,
   loadMailConfiguration,
+  loadStoredMailConfiguration,
+  migratePlaintextMailPassword,
   normalizeMailError,
   sendMail,
 };

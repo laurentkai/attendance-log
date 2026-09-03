@@ -874,6 +874,61 @@ select {
   max-width: 44rem;
 }
 
+.security-key-summary {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.security-key-summary div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.security-key-summary dt {
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.security-key-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.security-key-dialog {
+  width: min(calc(100% - 2rem), 36rem);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 1rem 3rem rgb(15 23 42 / 24%);
+}
+
+.security-key-dialog::backdrop {
+  background: rgb(15 23 42 / 55%);
+}
+
+.dialog-content {
+  display: grid;
+  gap: 0.875rem;
+  padding: 1rem;
+}
+
+.dialog-content h2,
+.dialog-content p {
+  margin: 0;
+}
+
+.recovery-key-output {
+  width: 100%;
+  resize: none;
+  overflow-wrap: normal;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
 .form-field {
   display: grid;
   gap: 0.4rem;

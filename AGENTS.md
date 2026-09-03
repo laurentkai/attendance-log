@@ -9,9 +9,10 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 - Node.js and Express provide the HTTP application.
 - PostgreSQL is the only persistent application data store.
 - The user interface uses vanilla HTML, CSS, and JavaScript.
-- The application is packaged with Docker for Amazon Lightsail Container Service.
-- Lightsail terminates production HTTPS; the container listens on plain HTTP internally.
-- The container filesystem is ephemeral and must never hold persistent application data.
+- The application is deployed with Docker Compose on an AWS Lightsail VPS.
+- Production HTTPS is terminated outside the application container; the container listens on plain HTTP internally.
+- Treat the container filesystem as disposable; persist PostgreSQL data and the application encryption key in separate Docker named volumes.
+- Encrypt recoverable provider secrets in PostgreSQL with the application master key; keep that key outside PostgreSQL in deployment secret management or a dedicated persistent key volume.
 
 ## V1 functional scope
 
@@ -135,6 +136,11 @@ Apply these skills with the following precedence:
 - Use English for code, comments, variable names, commit messages, and technical documentation.
 - Use French for user-facing UI.
 - Supply secrets only through environment variables; never commit real credentials.
+- Preserve the application encryption key across deployments and back it up with the corresponding database; losing or replacing it makes encrypted provider credentials unreadable.
+- VPS Docker Compose uses persistent `postgres_data` and `app_secrets` named volumes across builds, container replacement, image upgrades, and host reboots.
+- Set `NODE_ENV=production` in the VPS deployment environment while retaining the persistent named volumes.
+- Never run `docker compose down -v` unless explicit destruction of PostgreSQL data and the application encryption key is intended.
+- Before adding a second encrypted provider-secret category, bind ciphertext to its intended purpose/context while retaining compatibility with existing v1 SMTP ciphertext.
 - Treat PostgreSQL as persistent and every application container filesystem as disposable.
 - Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it.
 - Do not run `docker compose down` as routine cleanup; remove only isolated validation containers, databases, files, and test data when appropriate.

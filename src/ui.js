@@ -26,12 +26,19 @@ function renderNavigation() {
       <a href="/sessions" data-section="sessions">Séances</a>
       <a href="/reporting" data-section="reporting">Reporting</a>
       <a href="/students/import" data-section="import">Importer</a>
-      <a href="/settings/email" data-section="email">E-mail</a>
+      <a href="/settings/email" data-section="settings">Configuration</a>
       <form method="post" action="/logout">
         <button class="nav-logout" type="submit">Déconnexion</button>
       </form>
     </nav>
   </header>`;
+}
+
+function renderSettingsNavigation(activeSection) {
+  return `<nav class="context-tabs" aria-label="Configuration">
+    <a href="/settings/email"${activeSection === 'email' ? ' aria-current="page"' : ''}>E-mail</a>
+    <a href="/settings/security"${activeSection === 'security' ? ' aria-current="page"' : ''}>Sécurité</a>
+  </nav>`;
 }
 
 function renderPage(title, content, { authenticated = true } = {}) {
@@ -75,4 +82,4 @@ function renderMessagePage(
   };
 }
 
-module.exports = { escapeHtml, renderPage, renderMessagePage };
+module.exports = { escapeHtml, renderPage, renderMessagePage, renderSettingsNavigation };
