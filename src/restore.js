@@ -22,6 +22,7 @@ const {
 } = require('./backup');
 const { createStorageBackend } = require('./backup-storage');
 const { enterMaintenance, exitMaintenance } = require('./maintenance');
+const { getInstanceId, isValidInstanceId } = require('./instance');
 const { getKeyInfo } = require('./secrets');
 
 const preparedRestores = new Map();
@@ -115,6 +116,9 @@ function validateManifest(manifest, migrations) {
       && !/^[A-F0-9]{4}(?:-[A-F0-9]{4})+$/.test(manifest.encryptionKeyFingerprint)) {
     throw new RestoreError('BACKUP_INVALID');
   }
+  if (manifest.instanceId !== undefined && !isValidInstanceId(manifest.instanceId)) {
+    throw new RestoreError('BACKUP_INVALID');
+  }
 }
 
 async function validateDump(dumpPath) {
@@ -200,6 +204,8 @@ async function createPreparedRestore(zipPath, { source, filename, objectKey = nu
       filename: path.basename(filename || 'attendance-log-backup.zip'),
       objectKey,
       currentDatabasePopulated: await isDatabasePopulated(),
+      instanceMatch: !inspected.manifest.instanceId
+        || inspected.manifest.instanceId === getInstanceId(),
       fingerprintMatch: inspected.manifest.encryptionKeyFingerprint === getKeyInfo().fingerprint,
       safetyDownloaded: false,
       expiresAt: Date.now() + restoreLifetimeMs,

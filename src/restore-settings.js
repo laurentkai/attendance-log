@@ -13,6 +13,7 @@ const {
   prepareCloudRestore,
 } = require('./restore');
 const { getKeyInfo } = require('./secrets');
+const { getInstanceId } = require('./instance');
 const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
@@ -117,6 +118,9 @@ function renderPreview(prepared, feedback = null) {
   const keyStatus = prepared.fingerprintMatch
     ? '<p class="alert alert-success">Clé compatible — les secrets chiffrés devraient rester utilisables.</p>'
     : '<p class="alert alert-warning">La clé actuelle ne correspond pas à celle de cette sauvegarde. Les données métier seront restaurées, mais les identifiants chiffrés devront être récupérés avec la clé correspondante ou reconfigurés.</p>';
+  const instanceStatus = manifest.instanceId && !prepared.instanceMatch
+    ? '<p class="alert alert-info">Cette sauvegarde provient d’une autre instance. La restauration reste autorisée et l’identité de l’installation actuelle sera conservée.</p>'
+    : '';
   const safety = prepared.currentDatabasePopulated
     ? `<div class="card card-body app-form"><h2>Données actuelles détectées</h2><p>Avant leur remplacement, Attendance Log tentera une sauvegarde cloud. Si elle est indisponible, téléchargez obligatoirement cette sauvegarde de sécurité.</p>
         <form method="post" action="/settings/backups/restore/${escapeHtml(prepared.token)}/safety-download"><button class="btn btn-outline-secondary" type="submit">Télécharger la sauvegarde de sécurité</button></form>
@@ -135,9 +139,12 @@ function renderPreview(prepared, feedback = null) {
           <div><dt>Version de l’application</dt><dd>${escapeHtml(manifest.application?.version || '—')}${manifest.application?.commit ? ` · ${escapeHtml(manifest.application.commit)}` : ''}</dd></div>
           <div><dt>Migration de base</dt><dd>${escapeHtml(manifest.database?.migration || 'Aucune')}</dd></div>
           <div><dt>PostgreSQL</dt><dd>${escapeHtml(manifest.database?.version || '—')}</dd></div>
+          <div><dt>Instance source</dt><dd><code>${escapeHtml(manifest.instanceId || 'Non renseignée (ancienne sauvegarde)')}</code></dd></div>
+          <div><dt>Instance actuelle</dt><dd><code>${escapeHtml(getInstanceId())}</code></dd></div>
           <div><dt>Clé de la sauvegarde</dt><dd><code>${escapeHtml(manifest.encryptionKeyFingerprint || 'Non renseignée')}</code></dd></div>
           <div><dt>Clé actuelle</dt><dd><code>${escapeHtml(currentFingerprint)}</code></dd></div>
         </dl>
+        ${instanceStatus}
         ${keyStatus}
       </section>
       ${safety}

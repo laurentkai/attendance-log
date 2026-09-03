@@ -11,6 +11,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       APP_ENCRYPTION_KEY_FILE: /app-secrets/encryption.key
+      APP_INSTANCE_ID_FILE: /app-secrets/instance-id
       BACKUP_TIMEZONE: ${BACKUP_TIMEZONE:-Europe/Brussels}
       BACKUP_RESTORE_MAX_MB: ${BACKUP_RESTORE_MAX_MB:-512}
     volumes:

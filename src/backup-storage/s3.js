@@ -66,6 +66,9 @@ function createS3Backend(configuration) {
   }
 
   async function upload({ filename, filePath, objectKey }) {
+    if (!isOwnedBackupKey(objectKey, configuration.ownedPrefix)) {
+      throw new Error('BACKUP_OBJECT_OUTSIDE_PREFIX');
+    }
     const client = createClient();
     try {
       await client.send(new PutObjectCommand({

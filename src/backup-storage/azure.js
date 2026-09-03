@@ -46,6 +46,9 @@ function createAzureBackend(configuration) {
   }
 
   async function upload({ filePath, objectKey }) {
+    if (!isOwnedBackupKey(objectKey, configuration.ownedPrefix)) {
+      throw new Error('BACKUP_OBJECT_OUTSIDE_PREFIX');
+    }
     const blob = container.getBlockBlobClient(objectKey);
     await blob.uploadFile(filePath, {
       blobHTTPHeaders: {

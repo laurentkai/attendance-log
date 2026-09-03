@@ -7,6 +7,7 @@ const path = require('node:path');
 const { Client } = require('pg');
 const { pool } = require('./db/client');
 const { createStorageBackend } = require('./backup-storage');
+const { getInstanceId } = require('./instance');
 const { decryptSecret, getKeyInfo } = require('./secrets');
 
 const applicationPackage = require('../package.json');
@@ -36,13 +37,13 @@ function backupFilename(date = new Date()) {
   return `attendance-log-backup-${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}.zip`;
 }
 
-function normalizePrefix(value = '') {
+function normalizePrefix(value = '', instanceId = getInstanceId()) {
   const prefix = String(value).trim().replace(/^\/+|\/+$/g, '');
-  return `${prefix ? `${prefix}/` : ''}attendance-log/`;
+  return `${prefix ? `${prefix}/` : ''}attendance-log/${instanceId}/`;
 }
 
-function objectKeyFor(filename, date = new Date(), prefix = '') {
-  return `${normalizePrefix(prefix)}${date.getUTCFullYear()}/${pad(date.getUTCMonth() + 1)}/${filename}`;
+function objectKeyFor(filename, date = new Date(), prefix = '', instanceId = getInstanceId()) {
+  return `${normalizePrefix(prefix, instanceId)}${date.getUTCFullYear()}/${pad(date.getUTCMonth() + 1)}/${filename}`;
 }
 
 function normalizeConfiguration(row, { decrypt = false } = {}) {
@@ -223,6 +224,7 @@ async function buildManifest(type, generatedAt) {
       migration: migrationResult.rows[0]?.name || null,
       dumpFormat: 'custom',
     },
+    instanceId: getInstanceId(),
     encryptionKeyFingerprint: getKeyInfo().fingerprint,
   };
 }

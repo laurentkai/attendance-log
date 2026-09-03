@@ -21,6 +21,7 @@ const {
   migratePlaintextMailPassword,
 } = require('./mail');
 const { initializeSecrets } = require('./secrets');
+const { initializeInstanceIdentity } = require('./instance');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
 const {
@@ -202,6 +203,7 @@ async function start() {
   try {
     await verifyDatabaseConnection();
     await cleanupStaleRestoreWorkspaces();
+    await initializeInstanceIdentity();
     const keyInfo = await initializeSecrets();
     if (process.env.NODE_ENV === 'production' && keyInfo.source === 'persistent-file') {
       console.warn('Application encryption key is stored in persistent application storage. Losing that storage makes encrypted provider secrets unrecoverable; export and securely store the recovery key.');
