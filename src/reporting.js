@@ -53,8 +53,8 @@ function renderReportingNavigation(active) {
     ['sessions', '/reporting/sessions', 'Séances'],
     ['students', '/reporting/students', 'Élèves'],
   ];
-  return `<nav class="context-tabs" aria-label="Rubriques du reporting">
-    ${links.map(([key, href, label]) => `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
+  return `<nav class="nav nav-pills context-tabs" aria-label="Rubriques du reporting">
+    ${links.map(([key, href, label]) => `<a class="nav-link${active === key ? ' active' : ''}" href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
   </nav>`;
 }
 
@@ -69,7 +69,7 @@ function renderSummary(summary) {
 }
 
 function renderReportHeader({ eyebrow = '', title, description = '', action = '' }) {
-  return `<header class="page-header">
+  return `<header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
     <div>
       ${eyebrow ? `<p class="eyebrow">${escapeHtml(eyebrow)}</p>` : ''}
       <h1>${escapeHtml(title)}</h1>
@@ -83,9 +83,9 @@ function renderDataTable({ label, headers, rows }) {
   if (rows.length === 0) {
     return '<p class="empty-state">Aucune donnée historique clôturée.</p>';
   }
-  return `<div class="data-table-scroll" tabindex="0" role="region" aria-label="${escapeHtml(label)}">
-    <table class="data-table">
-      <thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join('')}</tr></thead>
+  return `<div class="table-responsive data-table-scroll" tabindex="0" role="region" aria-label="${escapeHtml(label)}">
+    <table class="table table-sm table-hover align-middle mb-0 data-table">
+      <thead class="table-light"><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join('')}</tr></thead>
       <tbody>${rows.join('')}</tbody>
     </table>
   </div>`;
@@ -123,43 +123,43 @@ router.get('/', async (_request, response) => {
       })}
       ${renderReportingNavigation('overview')}
       <section class="page-section" aria-labelledby="reporting-access-title">
-        <div class="section-header"><div><h2 id="reporting-access-title">Consulter les rapports</h2></div></div>
-        <div class="compact-list">
-          <a class="compact-row report-navigation-row" href="/reporting/courses">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="reporting-access-title">Consulter les rapports</h2></div></div>
+        <div class="list-group compact-list">
+          <a class="list-group-item compact-row report-navigation-row" href="/reporting/courses">
             <div class="compact-identity"><p class="compact-title">Reporting par cours</p><p class="compact-meta">Synthèse et détail par séance et par élève</p></div>
           </a>
-          <a class="compact-row report-navigation-row" href="/reporting/sessions">
+          <a class="list-group-item compact-row report-navigation-row" href="/reporting/sessions">
             <div class="compact-identity"><p class="compact-title">Reporting par séance</p><p class="compact-meta">Toutes les séances clôturées et leurs taux</p></div>
           </a>
-          <a class="compact-row report-navigation-row" href="/reporting/students">
+          <a class="list-group-item compact-row report-navigation-row" href="/reporting/students">
             <div class="compact-identity"><p class="compact-title">Reporting par élève</p><p class="compact-meta">Historique individuel des séances clôturées</p></div>
           </a>
         </div>
       </section>
       <section class="page-section" aria-labelledby="global-export-title">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="global-export-title">Export global des présences</h2>
             <p class="section-description">Les dates sont inclusives. Les séances ouvertes ou planifiées restent exclues.</p>
           </div>
         </div>
-        <form class="form-card report-filter-form" method="get" action="/reporting/export">
+        <form class="card card-body app-form report-filter-form" method="get" action="/reporting/export">
           <div class="form-field">
             <label for="report-class">Cours</label>
-            <select id="report-class" name="class_id">
+            <select class="form-select" id="report-class" name="class_id">
               <option value="">Tous les cours</option>
               ${classes.map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`).join('')}
             </select>
           </div>
           <div class="form-field">
             <label for="report-date-from">Du</label>
-            <input id="report-date-from" name="date_from" type="date">
+            <input class="form-control" id="report-date-from" name="date_from" type="date">
           </div>
           <div class="form-field">
             <label for="report-date-to">Au</label>
-            <input id="report-date-to" name="date_to" type="date">
+            <input class="form-control" id="report-date-to" name="date_to" type="date">
           </div>
-          <button class="button" type="submit">Exporter les présences</button>
+          <button class="btn btn-primary" type="submit">Exporter les présences</button>
         </form>
       </section>`));
   } catch (error) {
@@ -177,14 +177,14 @@ router.get('/courses', async (_request, response) => {
       : `<section data-filterable-list>
           <div class="search">
             <label for="report-course-search">Rechercher un cours</label>
-            <div class="search-controls"><input id="report-course-search" name="course_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom du cours…" data-list-search aria-controls="report-course-list"></div>
+            <div class="search-controls"><input class="form-control" id="report-course-search" name="course_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom du cours…" data-list-search aria-controls="report-course-list"></div>
           </div>
           <p class="empty-state" data-list-no-results hidden>Aucun cours ne correspond à cette recherche.</p>
-          <div class="compact-list" id="report-course-list" data-list-results>${courses.map((course) => `
-            <article class="compact-row compact-row-status report-row" data-list-row data-search="${escapeHtml(course.name.toLocaleLowerCase('fr'))}">
+          <div class="list-group compact-list" id="report-course-list" data-list-results>${courses.map((course) => `
+            <article class="list-group-item compact-row compact-row-status report-row" data-list-row data-search="${escapeHtml(course.name.toLocaleLowerCase('fr'))}">
               <div class="compact-identity"><p class="compact-title">${escapeHtml(course.name)}</p><p class="compact-meta">${course.closedSessionCount} séance${course.closedSessionCount > 1 ? 's' : ''} clôturée${course.closedSessionCount > 1 ? 's' : ''} · ${course.opportunities} présence${course.opportunities > 1 ? 's' : ''} attendue${course.opportunities > 1 ? 's' : ''}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(course.attendanceRate)}</strong><span class="compact-meta">${course.present} présents · ${course.absent} absents</span></div>
-              <div class="compact-actions"><a class="button button-secondary" href="/reporting/courses/${course.id}">Voir le rapport</a></div>
+              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/courses/${course.id}">Voir le rapport</a></div>
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage('Reporting par cours', `
@@ -253,14 +253,14 @@ router.get('/courses/:id', async (request, response) => {
         eyebrow: 'Reporting par cours',
         title: report.course.name,
         description: 'Données officielles issues uniquement des séances clôturées.',
-        action: `<div class="context-actions"><a class="button" href="/reporting/courses/${report.course.id}/export">Exporter en Excel</a><a class="button button-quiet" href="/reporting/courses">Retour aux cours</a></div>`,
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/courses">Retour aux cours</a></div>`,
       })}
       ${renderReportingNavigation('courses')}
       ${renderSummary(report.summary)}
-      <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header"><div><h2 id="course-session-breakdown">Par séance</h2></div></div>
+      <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-session-breakdown">Par séance</h2></div></div>
         ${renderDataTable({ label: 'Détail du cours par séance', headers: ['Date', 'Séance', 'Formateur', 'Attendus', 'Présents', 'Absents', 'Taux'], rows: sessionRows })}
       </section>
-      <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header"><div><h2 id="course-student-breakdown">Par élève</h2></div></div>
+      <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-student-breakdown">Par élève</h2></div></div>
         ${renderDataTable({ label: 'Détail du cours par élève', headers: ['Élève', 'Code', 'Séances', 'Présences', 'Absences', 'Taux'], rows: studentRows })}
       </section>`));
   } catch (error) {
@@ -276,13 +276,13 @@ router.get('/sessions', async (_request, response) => {
     const content = sessions.length === 0
       ? '<p class="empty-state">Aucune séance clôturée à reporter.</p>'
       : `<section data-filterable-list>
-          <div class="search"><label for="report-session-search">Rechercher une séance</label><div class="search-controls"><input id="report-session-search" name="session_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Titre, cours ou formateur…" data-list-search aria-controls="report-session-list"></div></div>
+          <div class="search"><label for="report-session-search">Rechercher une séance</label><div class="search-controls"><input class="form-control" id="report-session-search" name="session_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Titre, cours ou formateur…" data-list-search aria-controls="report-session-list"></div></div>
           <p class="empty-state" data-list-no-results hidden>Aucune séance ne correspond à cette recherche.</p>
-          <div class="compact-list" id="report-session-list" data-list-results>${sessions.map((session) => `
-            <article class="compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase('fr'))}">
+          <div class="list-group compact-list" id="report-session-list" data-list-results>${sessions.map((session) => `
+            <article class="list-group-item compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase('fr'))}">
               <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p><p class="compact-title">${escapeHtml(session.title)}</p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
-              <div class="compact-status"><span class="status-badge status-closed">Séance clôturée</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents</span></div>
-              <div class="compact-actions compact-actions--split"><a class="button button-secondary" href="/sessions/${session.id}">Voir la séance</a><a class="button" href="/reporting/sessions/${session.id}/export">Exporter en Excel</a></div>
+              <div class="compact-status"><span class="badge status-badge status-closed">Séance clôturée</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents</span></div>
+              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.id}">Voir la séance</a><a class="btn btn-primary" href="/reporting/sessions/${session.id}/export">Exporter en Excel</a></div>
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage('Reporting par séance', `
@@ -333,13 +333,13 @@ router.get('/students', async (_request, response) => {
     const content = students.length === 0
       ? '<p class="empty-state">Aucun élève ne possède encore de présence historique clôturée.</p>'
       : `<section data-filterable-list>
-          <div class="search"><label for="report-student-search">Rechercher un élève</label><div class="search-controls"><input id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom ou code élève…" data-list-search aria-controls="report-student-list"></div></div>
+          <div class="search"><label for="report-student-search">Rechercher un élève</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom ou code élève…" data-list-search aria-controls="report-student-list"></div></div>
           <p class="empty-state" data-list-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
-          <div class="compact-list" id="report-student-list" data-list-results>${students.map((student) => `
-            <article class="compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <div class="list-group compact-list" id="report-student-list" data-list-results>${students.map((student) => `
+            <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
               <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p><p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ${student.closedSessionCount} séance${student.closedSessionCount > 1 ? 's' : ''} clôturée${student.closedSessionCount > 1 ? 's' : ''}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(student.attendanceRate)}</strong><span class="compact-meta">${student.present} présents · ${student.absent} absents</span></div>
-              <div class="compact-actions"><a class="button button-secondary" href="/reporting/students/${student.id}">Voir le rapport</a></div>
+              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.id}">Voir le rapport</a></div>
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage('Reporting par élève', `
@@ -393,18 +393,18 @@ router.get('/students/:id', async (request, response) => {
     }
     const studentName = `${report.student.first_name} ${report.student.last_name}`;
     const rows = report.details.map((row) => `<tr>
-      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td><span class="status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td>
+      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td>
     </tr>`);
     response.send(renderPage(`Reporting — ${studentName}`, `
       ${renderReportHeader({
         eyebrow: 'Reporting par élève',
         title: studentName,
         description: `Code élève · ${report.student.student_code}`,
-        action: `<div class="context-actions"><a class="button" href="/reporting/students/${report.student.id}/export">Exporter en Excel</a><a class="button button-quiet" href="/reporting/students">Retour aux élèves</a></div>`,
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/students/${report.student.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/students">Retour aux élèves</a></div>`,
       })}
       ${renderReportingNavigation('students')}
       ${renderSummary(report.summary)}
-      <section class="page-section" aria-labelledby="student-history-title"><div class="section-header"><div><h2 id="student-history-title">Historique des présences</h2></div></div>
+      <section class="page-section" aria-labelledby="student-history-title"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="student-history-title">Historique des présences</h2></div></div>
         ${renderDataTable({ label: `Historique de ${studentName}`, headers: ['Date', 'Cours', 'Séance', 'Formateur', 'Statut'], rows })}
       </section>`));
   } catch (error) {

@@ -12,29 +12,29 @@ function secureEqual(firstValue, secondValue) {
 
 function renderLogin(error = '') {
   const errorMessage = error
-    ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
+    ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
 
   return renderPage('Connexion', `
-    <header class="page-header">
+    <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
         <p class="eyebrow">Administration</p>
         <h1>Connexion</h1>
       </div>
     </header>
     ${errorMessage}
-    <form class="form-card" method="post" action="/login">
+    <form class="card card-body app-form" method="post" action="/login">
       <div class="form-field">
         <label for="username">Identifiant</label>
-        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+        <input class="form-control" id="username" name="username" type="text" autocomplete="username" required autofocus>
       </div>
 
       <div class="form-field">
         <label for="password">Mot de passe</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
 
-      <button class="button" type="submit">Se connecter</button>
+      <button class="btn btn-primary" type="submit">Se connecter</button>
     </form>`, { authenticated: false });
 }
 

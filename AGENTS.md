@@ -1,161 +1,264 @@
-# Attendance Log Project Rules
+# Attendance Log — Project Operating Rules
 
-## Project purpose
+## Authority and use
 
-Attendance Log is a lightweight, mobile-first attendance application for a navigation school.
+This file is the authoritative specification for implementation and project operations. Apply every relevant rule automatically; future prompts may reference this file instead of repeating Docker persistence, Git, UI, security, backup/restore, and validation constraints. An explicit user instruction may override a rule for that task.
 
-## Architecture
+`CLAUDE.md` is the review companion. Codex implements and Claude reviews unless the user explicitly requests another role.
 
-- Node.js and Express provide the HTTP application.
-- PostgreSQL is the only persistent application data store.
-- The user interface uses vanilla HTML, CSS, and JavaScript.
-- The application is deployed with Docker Compose on an AWS Lightsail VPS.
-- Production HTTPS is terminated outside the application container; the container listens on plain HTTP internally.
-- Treat the container filesystem as disposable; persist PostgreSQL data and the application encryption key in separate Docker named volumes.
-- Encrypt recoverable provider secrets in PostgreSQL with the application master key; keep that key outside PostgreSQL in deployment secret management or a dedicated persistent key volume.
+## Product and architecture
 
-## V1 functional scope
+Attendance Log is a compact attendance application for a navigation school.
 
-### Authentication
+- Runtime: Node.js 22+ and Express 5.
+- UI: Express server-rendered HTML, Bootstrap 5 as the approved primary UI framework, and lightweight vanilla JavaScript for interaction.
+- Data: PostgreSQL is the only persistent application datastore; use parameterized SQL, not an ORM.
+- Schema: ordered plain-SQL migrations in `src/db/migrations`, applied by the existing migration runner and tracked in `schema_migrations`.
+- Deployment: Docker Compose on an AWS Lightsail VPS. This is not Lightsail Container Service.
+- Language: French for user-facing UI; English for code, comments, identifiers, commit messages, and technical documentation.
 
-- Provide one generic administrator account.
-- Do not provide public registration.
-- Federated authentication may be considered later but is outside V1.
+Preserve server-rendered routing and the current multi-page architecture. Do not turn the application into a SPA merely for UI work.
 
-### Students
+## Engineering and scope discipline
 
-- Support manual creation, editing, and deletion.
-- Students have an `active` status.
-- Normal student deletion in V1 means deactivation (`active = false`) so historical references can be preserved.
-- Inactive students must not appear in normal active student, class, or attendance workflows.
-- Do not implement hard-delete behavior unless explicitly requested later.
-- Support CSV import.
-- Use email as the functional unique key for matching students during imports.
-- Allow one student to belong to multiple classes.
-- Track global student activity separately from activity in each class membership.
-- An inactive class membership remains stored but excludes the student only from future active rosters for that class.
-- Deactivating or reactivating a class membership must not affect the student's other classes or historical attendance.
-- Re-importing the same email must reuse the existing student and QR code.
-- Assign each student a randomly generated, unique `student_code` that is exactly seven uppercase alphanumeric characters.
-- Exclude the visually ambiguous characters `0`, `O`, `1`, and `I`.
-- Give each student a separate stable, unique, non-guessable QR token that is independent of database IDs and class membership.
-- The QR payload may contain only an application-specific student marker and this token; never embed personal data, the student code, class data, or session data.
+- Implement the simplest solution that fully satisfies the requirement.
+- Preserve validated behavior outside the requested scope.
+- Do not opportunistically refactor unrelated code or add speculative flexibility.
+- Inspect existing helpers, patterns, and dependencies before creating another abstraction.
+- State material uncertainty and verify it rather than silently inventing project facts.
+- Never expose or commit real credentials, keys, recovery files, personal test data, or generated databases.
 
-### Classes
+## Frontend architecture
 
-- A class has a name and description.
-- Students may belong to multiple classes.
+Bootstrap 5 is the default toolkit for layout, navigation, forms, buttons, tables, alerts, badges, dropdowns, modals, offcanvas, utilities, and responsive behavior.
 
-### Course sessions
+Custom CSS remains appropriate for Attendance Log identity/theme, Quick Attendance, camera/scanner layout, genuinely application-specific components, and gaps Bootstrap cannot reasonably cover.
 
-- Associate each course session with a class.
-- Store its date, title, instructor, and optional notes.
+Do not introduce a competing frontend framework or UI system without explicit user approval. This includes React, Vue, Angular, Svelte, Tailwind CSS, shadcn/ui, another CSS framework, or a SPA architecture.
 
-### Attendance workflow
+### Progressive Bootstrap migration
 
-- A session can be `scheduled`, `open`, or `closed`.
-- New sessions are `scheduled`; this means the course is planned and attendance taking has not started.
-- A session becomes operational only when an administrator explicitly changes it from `scheduled` to `open`.
-- While a session is open, unscanned students are pending.
-- Scanning a student's QR code marks that student present.
-- Attendance must also be manually correctable.
-- Closing a session converts all remaining `pending` students to `absent`.
-- A closed session can be reopened.
-- Reopening does not reset attendance statuses: students marked `present` remain `present`, and students automatically or manually marked `absent` remain `absent`.
-- Once a session has been closed at least once, its attendance roster is permanently historical, including after reopening.
-- Build a historical roster only from that session's attendance records; later membership or student activity changes must not remove students, and later class additions must not add students.
-- Reclosing a historical session may finalize only its existing pending attendance records and must not add current class members to the roster.
-- Reopening simply allows the administrator to scan or manually correct attendance again.
-- The session may then be closed again.
-- Once any session for a class has entered `open`, class membership rows must remain permanently preserved for historical integrity.
-- Before a class session has ever entered `open`, memberships may be removed normally.
-- After a class has started, deactivate that class membership instead of deleting it when the student should no longer appear in future active workflows for the class.
-- Active rosters require both an active student and an active class membership.
-- A class membership may be reactivated without changing historical attendance.
-- Show `present count / total students`.
-- While open, the count reflects the current state; while closed, it shows the final count.
+- Prefer Bootstrap patterns on new or intentionally reworked screens.
+- When redesigning a screen, replace redundant custom patterns where this is safe and in scope.
+- Do not mechanically rewrite stable unrelated pages merely to remove custom CSS.
+- Do not maintain parallel component systems indefinitely; progressively retire obsolete custom CSS after behavior and responsive validation.
+- Any broad UI migration must be explicitly scoped.
 
-### QR handling
+## UI and UX standards
 
-- An administrator must be able to display a student's QR code.
-- QR attendance is available only to authenticated staff within an open course session; possession of a student QR is not authentication.
-- The QR image must be easy to download or share manually through apps such as WhatsApp or email.
-- Do not integrate WhatsApp or email sending in V1.
+The interface must be clean, restrained, professional, compact, data-first, accessible, and consistent. Mobile-first priority applies especially to operational attendance workflows.
 
-### Exports
+- Ground visual and copy decisions in the navigation-school operator's real task; Bootstrap is a toolkit, not a reason to produce a generic template.
+- Avoid oversized dashboard cards, decorative clutter, unnecessary icons, excessive whitespace, and cards nested inside cards.
+- Establish clear title, metadata, status, primary-action, secondary-action, and destructive-action hierarchy.
+- Same UI concept means the same canonical component/DOM structure, base classes, behavior, spacing, and hierarchy wherever reasonably possible.
+- Express genuine contextual differences through modifiers or additional child content, not page-specific parallel implementations.
+- When changing a shared concept, audit every equivalent occurrence: student rows, session rows, headers, notifications, forms, settings navigation, tables, searches, statuses, and action groups.
+- Visual resemblance alone is not harmonization. Verify reuse in source markup and rendered behavior.
+- Shared components must retain useful contextual information; consistency must not remove relevant content.
+- Optional actions must not destabilize row or grid alignment.
 
-- When a session is closed, provide a downloadable `.xlsx` attendance export.
-- Do not integrate Google Drive or OneDrive in V1.
-- Do not build a statistics dashboard in V1.
+### Installed UI skills
 
-### Backups
+For meaningful theme, navigation, form/table, responsive, accessibility, new administrative screen, or consistency work, read and apply the relevant installed project skills before editing:
 
-- Create portable ZIP backups containing a PostgreSQL custom-format logical dump and a non-secret manifest.
-- Never include the application encryption key, session data, environment files, or filesystem secrets in a backup archive.
-- Preserve encrypted provider-secret ciphertext as stored in PostgreSQL; the matching recovery key remains a separate administrator responsibility.
-- Support authenticated manual downloads plus one persisted automatic daily or weekly destination using S3-compatible storage or Azure Blob Storage.
-- Encrypt backup-provider credentials with purpose-bound authenticated encryption while retaining compatibility with existing v1 SMTP ciphertext.
-- Use provider-side encryption at rest for cloud backup objects and restrict retention cleanup to Attendance Log-owned object prefixes.
-- Restore only validated Attendance Log archives through the authenticated recovery workflow; restore into an isolated database, run normal migrations, and replace the live database only after validation succeeds.
-- A different application encryption-key fingerprint must warn but never block restoration of ordinary business data; preserve encrypted provider ciphertext for later key recovery or reconfiguration.
-- Require explicit destructive confirmation and a recoverable safety backup before replacing meaningful existing data.
-- Do not implement merge restore, selective restore, key rotation, distributed scheduling, or whole-volume copies in V1.
+- `frontend-design` — `.agents/skills/frontend-design/SKILL.md`
+- `web-design-guidelines` — `.agents/skills/web-design-guidelines/SKILL.md`
+- `dashboard-design-system` — `.agents/skills/dashboard-design-system/SKILL.md`
+- `dashboard-product-design-standard` — `.agents/skills/dashboard-product-design-standard/SKILL.md`
 
-## UI requirements
+`ui-ux-pro-max` is not currently installed in this repository and must not be cited as an available skill unless it is actually added later. Do not invoke every skill for a trivial text or spacing correction.
 
-- Design mobile-first because Attendance Log is primarily operated from a smartphone during live attendance taking.
-- Design and review phone-width layouts first; treat desktop as a responsive enhancement rather than the primary target.
-- No workflow may require desktop-only interaction.
-- Keep workflows short and clear, with primary actions reachable without excessive navigation.
-- Use comfortable touch targets.
-- Avoid horizontal scrolling and dense information on small screens when a simpler mobile layout is possible.
-- Optimize camera and scanner workflows for phone screens and one-handed use where practical.
-- Keep information density concise while retaining the details needed for the current task.
-- Review user-facing changes against the whole application and neighboring screens, not only the route being changed.
-- Equivalent UI concepts must reuse the same canonical DOM structure and base CSS classes; extend an existing pattern instead of creating a page-specific parallel implementation.
-- Express genuine contextual differences with explicit modifier classes or additional child content.
-- Preserve contextually useful information within shared components; harmonization must not remove relevant content or reduce usability merely to make screens identical.
-- Verify UI consistency at the source and rendered-markup level, not only by visual resemblance.
-- Keep optional row actions in stable layouts so state changes do not shift neighboring controls.
-- Prefer compact lists for operational data; reserve larger cards for genuinely grouped content.
-- Design mobile layouts intentionally rather than relying on desktop controls to wrap by accident.
-- Desktop support remains required as a responsive enhancement, but mobile usability takes priority.
+Skills supply design principles and review criteria. They do not override this file or authorize their framework-specific reference implementation. Translate React, Tailwind, or shadcn-oriented recommendations into the approved Bootstrap 5 plus server-rendered HTML architecture.
 
-## UI and design skills
+### Mobile, accessibility, and browser validation
 
-For user-facing UI work, consult the relevant installed project skills under `.agents/skills/` when applicable:
+- Use meaningful touch targets, visible keyboard focus, native semantics, and accessible names for icon-only controls.
+- Prefer native HTML semantics over unnecessary ARIA.
+- Give form controls meaningful labels, names, types, input modes, and autocomplete behavior; never block paste or disable browser zoom.
+- Announce relevant asynchronous feedback accessibly and respect `prefers-reduced-motion`.
+- Wrap or truncate long names and emails safely; prevent uncontrolled page-level horizontal overflow.
+- Use intentional horizontal scrolling only for genuinely wide data tables.
+- Consider the virtual keyboard for operational forms and test meaningful mobile UI around 360, 390, and 430 px.
+- For high-risk interactive UI, use browser/runtime inspection when available: Quick Attendance, camera/scanner, dialogs, mobile navigation, and responsive tables.
+- Static markup/CSS inspection alone is insufficient for claims about runtime dimensions, focus, camera, or pixel-level behavior. If a browser or physical-device check was not performed, say so.
 
-- `frontend-design`: use for layout, visual hierarchy, component appearance, responsive mobile-first presentation, and avoiding generic or low-quality generated UI.
-- `web-design-guidelines`: use for usability, accessibility, responsive behavior, forms, navigation, touch interaction, semantic HTML, and general web-interface quality.
-- `dashboard-design-system`: use when building or refining recurring application patterns such as navigation, cards, forms, status indicators, buttons, lists, and administrative screens so the interface remains visually consistent.
-- `dashboard-product-design-standard`: use for information architecture, workflow clarity, administrative UX, prioritizing primary and secondary actions, and keeping each screen focused on the user's task.
+## Navigation and specialized UX
 
-Apply these skills with the following precedence:
+### Settings
 
-1. Requirements and validated product decisions in `AGENTS.md` take priority over skill guidance.
-2. Explicit user instructions take priority over generic skill recommendations.
-3. Apply skills proportionally to the task.
-4. Do not introduce React, Vue, Tailwind, component libraries, build tooling, or other dependencies merely because a skill uses or recommends them.
-5. Apply the skills' UX and design principles even when their reference implementation uses another framework, translating them into the existing vanilla HTML, CSS, and JavaScript architecture.
-6. Check visual changes against adjacent screens so equivalent concepts do not drift.
-7. Do not perform unrelated visual redesigns while implementing a targeted feature.
+- Access Settings from a compact, accessible gear/icon control in the top-right application header.
+- All settings sections share one Settings shell.
+- Desktop uses compact left navigation with content on the right; mobile uses intentional compact responsive navigation.
+- E-mail, Security, Backups, and future administration/security sections must not invent separate settings navigation.
 
-## Development rules
+### Students and Import
 
-- Use the simplest solution that works and avoid unnecessary abstractions.
-- Do not add a frontend framework.
-- Do not add an ORM unless it is explicitly approved later.
-- Do not perform unrelated refactoring.
-- Use English for code, comments, variable names, commit messages, and technical documentation.
-- Use French for user-facing UI.
-- Supply secrets only through environment variables; never commit real credentials.
-- Preserve the application encryption key across deployments and back it up with the corresponding database; losing or replacing it makes encrypted provider credentials unreadable.
-- VPS Docker Compose uses persistent `postgres_data` and `app_secrets` named volumes across builds, container replacement, image upgrades, and host reboots.
-- Set `NODE_ENV=production` in the VPS deployment environment while retaining the persistent named volumes.
-- Never run `docker compose down -v` unless explicit destruction of PostgreSQL data and the application encryption key is intended.
-- Bind every new provider-secret category to its intended purpose/context while retaining compatibility with existing v1 SMTP ciphertext.
-- Treat PostgreSQL as persistent and every application container filesystem as disposable.
-- Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it.
-- Do not run `docker compose down` as routine cleanup; remove only isolated validation containers, databases, files, and test data when appropriate.
-- Validate changes before considering them complete.
-- Do not create Git commits automatically.
+CSV Import belongs to student management and is accessed contextually from Students, not as a primary global navigation concept. Navigation work must not change CSV matching or lifecycle semantics.
+
+### Quick Attendance
+
+`Prise de présence rapide` is a specialized operational screen, not a normal administrative page. Its primary target is a 360–430 px smartphone, often used one-handed with the virtual keyboard open.
+
+- Remove the normal global header/navigation from this workflow.
+- Keep only essential context: live `X / Y présents`, a compact close/back control, and a compact mutually exclusive `Recherche` / `QR` switch.
+- Never show complete manual and QR workflows simultaneously.
+- Keep search as high as practical; retain accessible clear, refocus after successful manual attendance, and preserve the query after failure.
+- Give the QR camera useful stable viewport space.
+- Routine feedback, count changes, and Undo state must not cause disruptive layout jumps.
+- Keep Undo secondary.
+- Preserve the existing live polling and concurrency guards. QR scan outcomes retain distinct visual/audio/haptic feedback without affecting manual actions, polling, or Undo.
+- Omit class/session/instructor/date exposition unless a concrete safety requirement calls for it.
+- Layout simplification must never alter attendance, eligibility, concurrency, polling, QR, or Undo semantics.
+
+## Business integrity
+
+### Authentication and administration
+
+- The current model is one authenticated administrator account with no public registration.
+- Do not invent roles, OTP, or federated authentication until explicitly scoped.
+- Administrative, Settings, Reporting, Backup, Restore, and key-management routes require authentication.
+
+### Students, memberships, sessions, and attendance
+
+- Students have a global activity state; class memberships have a separate activity state.
+- Students may belong to multiple classes. Changing one membership must not affect other classes.
+- CSV import matches by email; re-importing an existing email reuses the student and existing QR identity.
+- A `student_code` is a unique random seven-character uppercase alphanumeric code excluding `0`, `O`, `1`, and `I`.
+- Preserve inactive students and memberships when required for history; never let current activity retroactively change historical attendance.
+- Before a class has ever started a session, a membership may be removed; afterward preserve the row and deactivate it for future rosters.
+- A session is `scheduled`, `open`, or `closed`. Only an explicit transition to `open` starts attendance.
+- Active rosters require an active student and active membership until the session becomes historical.
+- Closing changes remaining `pending` records to `absent` and sets the first `closed_at` once.
+- Once closed at least once, the roster is permanently historical, including after reopening. Its source is strictly that session's `attendance_records`, never current class membership.
+- Reopening preserves statuses and permits corrections only within the historical roster. Reclosing must not introduce later class members.
+- Closed sessions reject attendance writes unless explicitly reopened.
+- Manual and QR attendance use the same authoritative eligibility and persistence logic.
+- Concurrent updates must remain idempotent and safe; client filtering is never the authority.
+- Student QR identity is stable, non-guessable, independent of membership/database IDs, and contains no personal data.
+
+## Reporting and Excel
+
+- Official reports and Excel exports include only closed sessions.
+- Scheduled and open sessions never contribute to official rates.
+- Use stored historical attendance records, including currently inactive students or memberships.
+- HTML reports and Excel files must share the same backend datasets and calculations.
+- Avoid division-by-zero output such as `NaN` or `Infinity`.
+
+## Mail
+
+- All mail uses the central provider-agnostic SMTP service.
+- Amazon SES is supported through standard SMTP; do not create provider-specific delivery paths without an explicit decision.
+- Business features reuse the central transport and safe error normalization.
+- Never render or log provider passwords, credentials, or authentication payloads.
+
+## Secret encryption and recovery
+
+- Encrypt recoverable provider secrets before PostgreSQL storage. The application master key lives outside PostgreSQL.
+- Use the central secret service and Node's built-in AES-256-GCM implementation; do not create feature-local or homemade cryptography.
+- The raw recovery key appears only after an explicit authenticated Security action and never in normal HTML, logs, URLs, browser storage, or backup archives.
+- Wrong-key conditions degrade provider integrations but must not block core business data.
+- Recovery-key import must validate existing encrypted secrets before replacing the active key.
+- Existing legacy SMTP v1 ciphertext remains supported.
+- Every new secret category must use purpose/context-bound encryption, update the central recovery-key validation enumeration, and preserve backward compatibility.
+
+## Backup
+
+- Back up PostgreSQL logically with custom-format `pg_dump`; never copy the raw Docker volume.
+- A backup ZIP contains exactly `database.dump` and non-secret `manifest.json` under the current format.
+- The archive itself is not application-encrypted. Provider-secret ciphertext remains encrypted inside the dump; the recovery key is never included.
+- Supported destinations are manual download, S3/S3-compatible private object storage, and Azure Blob Storage.
+- Cloud objects remain private and use provider-side encryption at rest.
+- Scheduling is managed inside Attendance Log: persisted daily/weekly configuration, next-run state, and a single-instance scheduler. Do not add VPS cron, Redis, or a distributed job system.
+- Serialize backup and restore operations. Retention may delete only exact Attendance Log-owned objects under the configured prefix.
+
+## Restore and disaster recovery
+
+- Restore accepts authenticated local ZIP or configured S3/Azure sources.
+- Validate archive structure, manifest/version, dump integrity, and migration compatibility before touching production data.
+- Restore into an isolated staging database, run the normal migrations there, validate it, then swap it into production.
+- Before replacing meaningful existing data, require explicit destructive confirmation and a completed recoverable safety backup.
+- Use maintenance mode to block normal writes during the destructive phase.
+- A matching encryption key restores provider-secret usability. A mismatch never blocks business-data restore; preserve ciphertext for later key import or provider reconfiguration.
+- Do not restore session-store rows as active login sessions.
+- Recalculate scheduler state from the current time after restore; do not immediately run stale historical schedules.
+- Do not implement merge, selective-table, PITR, raw-volume, or full-VPS restore unless explicitly scoped.
+
+If the database swap fails and rollback also fails:
+
+- raise the distinct `RESTORE_SWAP_UNRECOVERABLE` condition;
+- preserve both the original and staging databases rather than guessing or cleaning them up;
+- emit an unswallowed critical diagnostic containing the controlled recovery database names and manual rename instruction, but no secrets;
+- accept that manual PostgreSQL recovery may then be required.
+
+## Security baseline
+
+- State-changing actions use POST or another appropriate non-GET method.
+- Never log secrets, keys, raw ciphertext unnecessarily, database passwords, or personal QR tokens.
+- Return safe user-facing errors; do not expose stack traces or raw subprocess/SDK output.
+- Do not create public backup, restore, QR-attendance, configuration, or recovery-key endpoints.
+- Use HTTPS in production; remote mobile camera APIs require a secure context.
+- Keep backup storage private.
+- Use subprocess argument arrays and controlled values; never build shell commands from untrusted input.
+- Validate server-side even when client validation exists.
+
+## Database migrations
+
+- Keep SQL migrations ordered and tracked through the existing runner.
+- Validate both clean-install and upgrade paths; reruns must follow existing idempotency conventions.
+- Do not casually rewrite an applied historical migration.
+- Respect backup/restore schema compatibility and never reconstruct historical attendance from current memberships.
+
+## Dependencies
+
+- Inspect existing dependencies first.
+- Add a dependency only when it materially simplifies or strengthens the implementation.
+- Prefer Node built-ins for cryptography and basic platform functions, and official provider SDKs when an external integration requires one.
+- Avoid duplicate libraries for the same task and review `npm audit` when dependencies change.
+- Never add a frontend framework competing with Bootstrap 5 without explicit approval.
+
+## Docker and VPS operations
+
+The current deployment is an AWS Lightsail VPS using Docker Compose with two critical named volumes:
+
+- `postgres_data` — PostgreSQL data;
+- `app_secrets` — the persistent generated application encryption key when file-backed storage is used.
+
+Both survive normal builds, container replacement, image upgrades, `docker compose up -d`, and host reboot.
+
+- Never run `docker compose down -v` unless the user explicitly intends to destroy persistent data and keys.
+- Do not remove either named volume as routine cleanup.
+- When validation starts or uses the normal development Compose environment, leave it running unless explicitly told to stop it.
+- Do not run `docker compose down` as routine validation cleanup. Remove only isolated temporary validation containers, databases, files, and synthetic data.
+
+Deployment/update procedure must account for migrations:
+
+```text
+git pull
+docker compose build
+docker compose run --rm app npm run migrate
+docker compose up -d
+```
+
+Run migrations from the newly built image. `docker compose run --rm app npm run migrate` does not replace `docker compose up -d`.
+
+## Git workflow
+
+- Never commit unless the user explicitly asks.
+- Never push unless the user explicitly asks.
+- Never amend, rewrite history, or force-push unless explicitly requested.
+- Preserve user changes in a dirty working tree and do not revert unrelated modifications.
+- Before a requested commit, validate the relevant changes, run `git diff --check`, and exclude temporary/debug/test artifacts, credentials, keys, recovery files, and personal data.
+- Confirm the expected working-tree state after committing or pushing.
+
+## Proportional validation
+
+Do not run every check for every trivial change. Match validation to risk and report only checks actually performed.
+
+- Small focused change: syntax or targeted test, focused regression, and `git diff --check`.
+- Backend/business/database change: also exercise relevant HTTP and database scenarios; validate migrations when affected.
+- UI change: also review shared markup/component reuse, responsive/mobile behavior, accessibility, and browser/runtime behavior when available.
+- Dependency or Docker change: also run the Docker build, `docker compose config`, and relevant dependency audit.
+- Backup, Restore, or crypto change: strongly test isolated happy paths, destructive/failure paths, cleanup, concurrency, wrong-key behavior, and recovery.
+
+Do not claim physical-device, browser, cloud-provider, or destructive-path validation that was not actually performed. Leave the normal Docker development environment running afterward.

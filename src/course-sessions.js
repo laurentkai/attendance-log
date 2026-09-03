@@ -48,7 +48,7 @@ function validateForm(values) {
 
 function renderSessionForm({ title, action, submitLabel, values, classes, error = '', edit = false }) {
   const errorMessage = error
-    ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
+    ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
   const classField = edit
     ? `<div class="form-field">
@@ -57,45 +57,45 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
        </div>`
     : `<div class="form-field">
          <label for="class_id">Classe <span aria-hidden="true">*</span></label>
-         <select id="class_id" name="class_id" required>
+         <select class="form-select" id="class_id" name="class_id" required>
            <option value="">Sélectionner une classe</option>
            ${classes.map((classRecord) => `<option value="${classRecord.id}"${String(classRecord.id) === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
          </select>
        </div>`;
 
   return renderPage(title, `
-    <header class="page-header">
+    <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
         <h1>${escapeHtml(title)}</h1>
       </div>
     </header>
     ${errorMessage}
-    <form class="form-card" method="post" action="${escapeHtml(action)}">
+    <form class="card card-body app-form" method="post" action="${escapeHtml(action)}">
       ${classField}
 
       <div class="form-field">
         <label for="date">Date <span aria-hidden="true">*</span></label>
-        <input id="date" name="date" type="date" value="${escapeHtml(formatDateForInput(values.date))}" required>
+        <input class="form-control" id="date" name="date" type="date" value="${escapeHtml(formatDateForInput(values.date))}" required>
       </div>
 
       <div class="form-field">
         <label for="title">Titre <span aria-hidden="true">*</span></label>
-        <input id="title" name="title" type="text" value="${escapeHtml(values.title)}" autocomplete="off" required>
+        <input class="form-control" id="title" name="title" type="text" value="${escapeHtml(values.title)}" autocomplete="off" required>
       </div>
 
       <div class="form-field">
         <label for="instructor">Formateur <span aria-hidden="true">*</span></label>
-        <input id="instructor" name="instructor" type="text" value="${escapeHtml(values.instructor)}" autocomplete="off" required>
+        <input class="form-control" id="instructor" name="instructor" type="text" value="${escapeHtml(values.instructor)}" autocomplete="off" required>
       </div>
 
       <div class="form-field">
         <label for="notes">Notes</label>
-        <textarea id="notes" name="notes" rows="5" autocomplete="off">${escapeHtml(values.notes ?? '')}</textarea>
+        <textarea class="form-control" id="notes" name="notes" rows="5" autocomplete="off">${escapeHtml(values.notes ?? '')}</textarea>
       </div>
 
-      <div class="form-actions">
-        <button class="button" type="submit">${escapeHtml(submitLabel)}</button>
-        <a class="button button-secondary" href="/sessions">Annuler</a>
+      <div class="form-actions d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
+        <a class="btn btn-outline-secondary" href="/sessions">Annuler</a>
       </div>
     </form>`);
 }
@@ -238,50 +238,50 @@ router.get('/', async (request, response) => {
       updated: 'La séance a été modifiée.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const sessions = result.rows.length === 0
       ? `<p class="empty-state">${searchQuery
         ? 'Aucune séance ne correspond à cette recherche.'
         : 'Aucune séance pour le moment.'}</p>`
-      : `<div class="compact-list">${result.rows.map((session) => `
-          <article class="compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.id}"` : ''}>
+      : `<div class="list-group compact-list">${result.rows.map((session) => `
+          <article class="list-group-item compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.id}"` : ''}>
             <div class="compact-identity session-identity">
               <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p>
               <p class="compact-title">${escapeHtml(session.title)}</p>
               <p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p>
             </div>
             <div class="compact-status">
-              <span class="status-badge status-${session.state}" data-session-state>${getStateLabel(session.state)}</span>
+              <span class="badge status-badge status-${session.state}" data-session-state>${getStateLabel(session.state)}</span>
             </div>
             <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(session.title)}">
-              <a class="button" href="/sessions/${session.id}">${session.state === 'scheduled' ? 'Voir la séance' : 'Présences'}</a>
+              <a class="btn btn-primary" href="/sessions/${session.id}">${session.state === 'scheduled' ? 'Voir la séance' : 'Présences'}</a>
               <span class="session-edit-slot">
-                <a class="button button-quiet" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
-                <button class="button button-quiet button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>Modifier</button>
+                <a class="btn btn-light" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
+                <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>Modifier</button>
               </span>
             </div>
           </article>`).join('')}</div>`;
 
     response.send(renderPage('Séances', `
-      <header class="page-header">
+      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>Séances</h1>
           <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : 'Planifiez les cours et gérez les présences.'}</p>
         </div>
-        <a class="button" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Nouvelle séance</a>
+        <a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Nouvelle séance</a>
       </header>
-      ${classRecord ? `<nav class="context-tabs" aria-label="Gestion de la classe ${escapeHtml(classRecord.name)}">
-        <a href="/classes/${classRecord.id}">Gérer les élèves</a>
-        <a href="/sessions?class_id=${classRecord.id}" aria-current="page">Gérer les séances</a>
+      ${classRecord ? `<nav class="nav nav-pills context-tabs" aria-label="Gestion de la classe ${escapeHtml(classRecord.name)}">
+        <a class="nav-link" href="/classes/${classRecord.id}">Gérer les élèves</a>
+        <a class="nav-link active" href="/sessions?class_id=${classRecord.id}" aria-current="page">Gérer les séances</a>
       </nav>` : ''}
       <form class="search" method="get" action="/sessions" role="search">
         <label for="session-search">Rechercher une séance</label>
         ${classId ? `<input name="class_id" type="hidden" value="${classId}">` : ''}
         <div class="search-controls">
-          <input id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Titre, classe ou formateur…">
-          <button class="button" type="submit">Rechercher</button>
-          ${searchQuery ? `<a class="button button-secondary" href="/sessions${classId ? `?class_id=${classId}` : ''}">Effacer</a>` : ''}
+          <input class="form-control" id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Titre, classe ou formateur…">
+          <button class="btn btn-primary" type="submit">Rechercher</button>
+          ${searchQuery ? `<a class="btn btn-outline-secondary" href="/sessions${classId ? `?class_id=${classId}` : ''}">Effacer</a>` : ''}
         </div>
       </form>
       ${notice}
@@ -544,76 +544,64 @@ router.get('/:id/quick-attendance', async (request, response) => {
     }
 
     const session = sessionResult.rows[0];
+    const rosterResult = await loadRoster(session);
+    const presentCount = rosterResult.rows.filter((student) => student.status === 'present').length;
     if (session.state !== 'open') {
       response.status(409).send(renderPage('Prise de présence rapide', `
-        <div class="quick-attendance">
-          <header class="page-header">
-            <div>
-              <p class="eyebrow">Prise de présence rapide</p>
-              <h1>${escapeHtml(session.title)}</h1>
-              <p class="page-description">${escapeHtml(session.class_name)} · ${escapeHtml(formatDateForDisplay(session.date))}</p>
-            </div>
-            <span class="status-badge status-${session.state}">${getStateLabel(session.state)}</span>
+        <div class="quick-attendance quick-attendance--unavailable">
+          <h1 class="visually-hidden">Prise de présence rapide</h1>
+          <header class="quick-topbar">
+            <strong class="quick-attendance-count">${presentCount} / ${rosterResult.rowCount} présents</strong>
+            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer la prise de présence rapide"><span aria-hidden="true">×</span></a>
           </header>
-          <p class="message message-warning">${session.state === 'closed'
+          <p class="alert alert-warning">${session.state === 'closed'
             ? 'Cette séance est clôturée. Réouvrez-la depuis la gestion complète avant de reprendre les présences.'
             : 'Cette séance doit être ouverte avant de prendre les présences.'}</p>
-          <a class="button button-secondary" href="/sessions/${session.id}">Retour à la séance</a>
-        </div>`));
+        </div>`, { navigation: false, pageClass: 'page--quick-attendance' }));
       return;
     }
 
-    const rosterResult = await loadRoster(session);
-    const presentCount = rosterResult.rows.filter((student) => student.status === 'present').length;
     const eligibleStudents = rosterResult.rows.filter((student) => student.status !== 'present');
     const studentRows = eligibleStudents.map((student) => `
-      <article class="compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+      <article class="list-group-item compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
         <div class="compact-identity student-identity">
           <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
           <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
         </div>
         <div class="compact-actions">
           <form method="post" action="/sessions/${session.id}/quick-attendance/${student.id}" data-quick-present-form>
-            <button class="button" type="submit">Présent</button>
+            <button class="btn btn-primary" type="submit">Présent</button>
           </form>
         </div>
       </article>`).join('');
 
     response.send(renderPage('Prise de présence rapide', `
       <div class="quick-attendance" data-quick-attendance data-session-id="${session.id}">
-        <header class="page-header quick-attendance-header">
-          <div>
-            <p class="eyebrow">Prise de présence rapide</p>
-            <h1>${escapeHtml(session.title)}</h1>
-            <p class="page-description">${escapeHtml(session.class_name)}</p>
-          </div>
-          <div class="quick-attendance-context" aria-label="État des présences">
-            <strong class="quick-attendance-count"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> présents</strong>
-            <span class="status-badge status-open" data-session-state>Séance ouverte</span>
-          </div>
+        <h1 class="visually-hidden">Prise de présence rapide</h1>
+        <header class="quick-topbar">
+          <strong class="quick-attendance-count" aria-label="Nombre de présences"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> présents</strong>
+          <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer la prise de présence rapide"><span aria-hidden="true">×</span></a>
         </header>
-        <p class="message message-warning" data-quick-readonly hidden>Cette séance vient d’être clôturée. La prise de présence est maintenant indisponible.</p>
-        <div class="quick-operation-bar">
-          <div class="view-switch quick-mode-switch" role="group" aria-label="Mode de prise de présence">
-            <button type="button" aria-pressed="true" aria-controls="quick-manual-mode" data-quick-mode="manual">Manuel</button>
-            <button type="button" aria-pressed="false" aria-controls="quick-qr-mode" data-quick-mode="qr">QR</button>
-          </div>
-          <button class="button button-quiet quick-undo" type="button" data-quick-undo disabled>Annuler la dernière action</button>
+        <p class="alert alert-warning" data-quick-readonly hidden>Cette séance vient d’être clôturée. La prise de présence est maintenant indisponible.</p>
+        <div class="nav nav-pills view-switch quick-mode-switch" role="group" aria-label="Mode de prise de présence">
+          <button class="nav-link active" type="button" aria-pressed="true" aria-controls="quick-manual-mode" data-quick-mode="manual">Recherche</button>
+          <button class="nav-link" type="button" aria-pressed="false" aria-controls="quick-qr-mode" data-quick-mode="qr">QR</button>
         </div>
-        <p class="quick-operational-feedback" role="status" aria-live="polite" aria-atomic="true" data-quick-feedback>&nbsp;</p>
         <section id="quick-manual-mode" class="quick-mode-panel" aria-label="Prise de présence manuelle" data-quick-mode-panel="manual">
           <div class="search quick-search">
-            <label for="quick-attendance-search">Rechercher un élève</label>
+            <label class="visually-hidden" for="quick-attendance-search">Rechercher un élève</label>
             <div class="search-input-action">
-              <input id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
+              <input class="form-control" id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
               <button class="search-clear" type="button" aria-label="Effacer la recherche" data-quick-search-clear hidden><span aria-hidden="true">×</span></button>
             </div>
           </div>
+          <span data-quick-feedback-anchor="manual"></span>
+          <p class="quick-operational-feedback" role="status" aria-live="polite" aria-atomic="true" data-quick-feedback>&nbsp;</p>
           <div class="quick-results-state" aria-live="polite">
             <p class="quick-attendance-state" data-quick-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
             <p class="quick-attendance-state" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>Tous les élèves sont présents.</p>
           </div>
-          <div class="compact-list" id="quick-attendance-results" data-quick-results${eligibleStudents.length === 0 ? ' hidden' : ''}>${studentRows}</div>
+          <div class="list-group compact-list" id="quick-attendance-results" data-quick-results${eligibleStudents.length === 0 ? ' hidden' : ''}>${studentRows}</div>
         </section>
         <section id="quick-qr-mode" class="quick-mode-panel qr-scanner-panel" aria-label="Scanner un QR" data-quick-mode-panel="qr" data-qr-scanner hidden>
           <div class="qr-video-frame is-inactive" data-qr-view>
@@ -621,12 +609,16 @@ router.get('/:id/quick-attendance', async (request, response) => {
             <span class="qr-scan-guide" aria-hidden="true" data-qr-guide hidden></span>
             <p class="qr-camera-placeholder" data-qr-placeholder>Activation de la caméra…</p>
           </div>
+          <span data-quick-feedback-anchor="qr"></span>
           <div class="compact-actions qr-scanner-actions">
-            <button class="button button-secondary" type="button" data-qr-start hidden>Réessayer la caméra</button>
-            <button class="button button-quiet" type="button" aria-pressed="true" data-qr-sound>Son activé</button>
+            <button class="btn btn-outline-secondary" type="button" data-qr-start hidden>Réessayer la caméra</button>
+            <button class="btn btn-light" type="button" aria-pressed="true" data-qr-sound>Son activé</button>
           </div>
         </section>
-      </div>`));
+        <div class="quick-secondary-actions">
+          <button class="btn btn-light quick-undo" type="button" data-quick-undo disabled>Annuler la dernière action</button>
+        </div>
+      </div>`, { navigation: false, pageClass: 'page--quick-attendance' }));
   } catch (error) {
     console.error('Unable to load quick attendance:', error);
     const page = renderMessagePage('Prise de présence indisponible', 'Impossible de charger la prise de présence rapide pour le moment.');
@@ -669,7 +661,7 @@ router.get('/:id', async (request, response) => {
       opened: 'La séance est ouverte.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const studentList = studentsResult.rows.length === 0
       ? `<p class="empty-state">${session.state === 'closed'
@@ -677,14 +669,14 @@ router.get('/:id', async (request, response) => {
         : session.state === 'open'
         ? 'Aucun élève actif dans cette classe.'
         : 'Aucun élève actif dans cette classe. La séance n’a pas encore commencé.'}</p>`
-      : `<div class="compact-list" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
-          <article class="compact-row compact-row-status student-row" data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+      : `<div class="list-group compact-list" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
+          <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
               <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
-              <span class="status-badge status-${student.status}" data-attendance-status>${{
+              <span class="badge status-badge status-${student.status}" data-attendance-status>${{
                 pending: 'En attente',
                 present: 'Présent',
                 absent: 'Absent',
@@ -692,37 +684,37 @@ router.get('/:id', async (request, response) => {
             </div>
             <div class="compact-actions compact-actions--attendance" data-attendance-actions${session.state === 'open' ? '' : ' hidden'}>
               ${session.state === 'open' ? `<form class="compact-actions compact-actions--split" method="post" action="/sessions/${session.id}/attendance/${student.id}" data-attendance-form>
-                <button class="button" name="status" type="submit" value="present">Présent</button>
-                <button class="button button-danger-secondary" name="status" type="submit" value="absent">Absent</button>
+                <button class="btn btn-primary" name="status" type="submit" value="present">Présent</button>
+                <button class="btn btn-outline-danger" name="status" type="submit" value="absent">Absent</button>
               </form>` : ''}
             </div>
           </article>`).join('')}</div>`;
 
     response.send(renderPage(session.title, `
-      <header class="page-header">
+      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <p class="eyebrow">${escapeHtml(session.class_name)}</p>
           <h1>${escapeHtml(session.title)}</h1>
           <p class="page-description">${escapeHtml(formatDateForDisplay(session.date))} · ${escapeHtml(session.instructor)}</p>
           ${session.notes ? `<p class="page-description session-notes">${escapeHtml(session.notes)}</p>` : ''}
         </div>
-        <div class="context-actions">
-          <a class="button" href="/sessions/${session.id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Prise de présence rapide</a>
-          <form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="button" type="submit">${session.state === 'scheduled' ? 'Ouvrir la séance' : 'Réouvrir la séance'}</button></form>
-          <a class="button button-secondary" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier la séance</a>
-          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer cette séance et marquer les élèves en attente comme absents ?"${session.state === 'open' ? '' : ' hidden'}><button class="button button-danger" type="submit">Clôturer la séance</button></form>
+        <div class="context-actions d-flex flex-wrap gap-2">
+          <a class="btn btn-primary" href="/sessions/${session.id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Prise de présence rapide</a>
+          <form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir la séance' : 'Réouvrir la séance'}</button></form>
+          <a class="btn btn-outline-secondary" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier la séance</a>
+          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer cette séance et marquer les élèves en attente comme absents ?"${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer la séance</button></form>
         </div>
       </header>
       ${notice}
-      ${session.state === 'closed' ? '<p class="message message-warning">Cette séance est clôturée et en lecture seule. Réouvrez-la pour modifier ses informations ou les présences.</p>' : ''}
-      <section class="summary-card attendance-summary" aria-label="Résumé des présences" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.id}"` : ''}>
+      ${session.state === 'closed' ? '<p class="alert alert-warning">Cette séance est clôturée et en lecture seule. Réouvrez-la pour modifier ses informations ou les présences.</p>' : ''}
+      <section class="card card-body summary-card attendance-summary" aria-label="Résumé des présences" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.id}"` : ''}>
         <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> présents</strong>
-        <span class="status-badge status-${session.state}" data-session-state aria-live="polite">${getStateLabel(session.state)}</span>
+        <span class="badge status-badge status-${session.state}" data-session-state aria-live="polite">${getStateLabel(session.state)}</span>
       </section>
-      <p class="message message-warning" data-live-readonly hidden>Cette séance vient d’être clôturée. Les présences sont maintenant en lecture seule.</p>
-      <p class="message message-error" data-live-error role="alert" hidden>La présence n’a pas pu être mise à jour. Réessayez.</p>
+      <p class="alert alert-warning" data-live-readonly hidden>Cette séance vient d’être clôturée. Les présences sont maintenant en lecture seule.</p>
+      <p class="alert alert-danger" data-live-error role="alert" hidden>La présence n’a pas pu être mise à jour. Réessayez.</p>
       <section class="page-section" aria-labelledby="attendance-title">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="attendance-title">Gestion des présences</h2>
           </div>
@@ -730,7 +722,7 @@ router.get('/:id', async (request, response) => {
         ${studentsResult.rows.length > 0 ? `<div class="search">
           <label for="attendance-search">Rechercher un élève</label>
           <div class="search-controls">
-            <input id="attendance-search" name="attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
+            <input class="form-control" id="attendance-search" name="attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
           </div>
           <p class="help-text" role="status" data-attendance-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
         </div>` : ''}

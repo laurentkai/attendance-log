@@ -61,13 +61,13 @@ function renderStudentForm({
 }) {
   const selectedIds = new Set(selectedClassIds);
   const errorMessage = error
-    ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
+    ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
   const classChoices = classes.length === 0
     ? '<p class="muted">Aucune classe disponible.</p>'
     : `<div class="checkbox-list">${classes.map((classRecord) => `
         <label class="checkbox-option">
-          <input name="class_ids" type="checkbox" value="${classRecord.id}"${selectedIds.has(classRecord.id) ? ' checked' : ''}>
+          <input class="form-check-input" name="class_ids" type="checkbox" value="${classRecord.id}"${selectedIds.has(classRecord.id) ? ' checked' : ''}>
           <span>${escapeHtml(classRecord.name)}</span>
         </label>`).join('')}</div>`;
   const codeField = editing
@@ -78,35 +78,35 @@ function renderStudentForm({
     : '';
   const activeField = editing
     ? `<label class="checkbox-option">
-        <input name="active" type="checkbox" value="true"${values.active ? ' checked' : ''}>
+        <input class="form-check-input" name="active" type="checkbox" value="true"${values.active ? ' checked' : ''}>
         <span>Élève actif</span>
       </label>`
     : '';
 
   return renderPage(title, `
-    <header class="page-header">
+    <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
         <h1>${escapeHtml(title)}</h1>
       </div>
-      ${editing ? `<div class="context-actions">
-        <a class="button button-secondary" href="/students/${escapeHtml(studentId)}/qr">Afficher le QR</a>
+      ${editing ? `<div class="context-actions d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary" href="/students/${escapeHtml(studentId)}/qr">Afficher le QR</a>
       </div>` : ''}
     </header>
     ${errorMessage}
-    <form class="form-card" method="post" action="${escapeHtml(action)}">
+    <form class="card card-body app-form" method="post" action="${escapeHtml(action)}">
       <div class="form-field">
         <label for="first_name">Prénom <span aria-hidden="true">*</span></label>
-        <input id="first_name" name="first_name" type="text" value="${escapeHtml(values.firstName || '')}" autocomplete="given-name" required>
+        <input class="form-control" id="first_name" name="first_name" type="text" value="${escapeHtml(values.firstName || '')}" autocomplete="given-name" required>
       </div>
 
       <div class="form-field">
         <label for="last_name">Nom <span aria-hidden="true">*</span></label>
-        <input id="last_name" name="last_name" type="text" value="${escapeHtml(values.lastName || '')}" autocomplete="family-name" required>
+        <input class="form-control" id="last_name" name="last_name" type="text" value="${escapeHtml(values.lastName || '')}" autocomplete="family-name" required>
       </div>
 
       <div class="form-field">
         <label for="email">Adresse e-mail <span aria-hidden="true">*</span></label>
-        <input id="email" name="email" type="email" value="${escapeHtml(values.email || '')}" autocomplete="email" spellcheck="false" required>
+        <input class="form-control" id="email" name="email" type="email" value="${escapeHtml(values.email || '')}" autocomplete="email" spellcheck="false" required>
       </div>
 
       ${codeField}
@@ -116,9 +116,9 @@ function renderStudentForm({
       </fieldset>
       ${activeField}
 
-      <div class="form-actions">
-        <button class="button" type="submit">${escapeHtml(submitLabel)}</button>
-        <a class="button button-secondary" href="/students">Annuler</a>
+      <div class="form-actions d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
+        <a class="btn btn-outline-secondary" href="/students">Annuler</a>
       </div>
     </form>`);
 }
@@ -137,18 +137,18 @@ async function addMemberships(client, studentId, classIds) {
 function renderStudentQrPage(student, feedback = null) {
   const studentName = `${student.first_name} ${student.last_name}`;
   const feedbackMessage = feedback?.message
-    ? `<p class="message message-${feedback.type === 'success' ? 'success' : 'error'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
+    ? `<p class="alert alert-${feedback.type === 'success' ? 'success' : 'danger'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
     : '';
 
   return renderPage(`QR de ${studentName}`, `
-    <header class="page-header">
+    <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
         <p class="eyebrow">QR personnel</p>
         <h1>${escapeHtml(studentName)}</h1>
         <p class="page-description">Ce QR identifie cet élève pendant la prise de présence.</p>
       </div>
-      <div class="context-actions">
-        <a class="button button-quiet" href="/students/${student.id}/edit">Retour à l’élève</a>
+      <div class="context-actions d-flex flex-wrap gap-2">
+        <a class="btn btn-light" href="/students/${student.id}/edit">Retour à l’élève</a>
       </div>
     </header>
     <div class="notification-area" aria-live="polite" aria-atomic="true">
@@ -158,13 +158,13 @@ function renderStudentQrPage(student, feedback = null) {
       <div class="compact-identity student-identity">
         <h2 class="compact-title" id="student-qr-title">${escapeHtml(studentName)}</h2>
         <p class="compact-meta">Code élève · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
-        <span class="status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
+        <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
       </div>
       <img class="student-qr-image" src="/students/${student.id}/qr.png" width="512" height="512" fetchpriority="high" alt="QR personnel de ${escapeHtml(studentName)}">
       <p class="section-description qr-instruction">Présentez ce QR lors de la prise de présence, directement sur l’écran ou en version imprimée.</p>
       <form class="form-actions qr-actions" method="post" action="/students/${student.id}/qr/email" data-submit-once>
-        <button class="button" type="submit">Envoyer le QR</button>
-        <a class="button button-secondary" href="/students/${student.id}/qr.png?download=1" download="eleve-${escapeHtml(student.student_code)}-qr.png">Télécharger le QR</a>
+        <button class="btn btn-primary" type="submit">Envoyer le QR</button>
+        <a class="btn btn-outline-secondary" href="/students/${student.id}/qr.png?download=1" download="eleve-${escapeHtml(student.student_code)}-qr.png">Télécharger le QR</a>
       </form>
     </section>`);
 }
@@ -186,7 +186,7 @@ router.get('/', async (request, response) => {
       deactivated: 'L’élève a été désactivé.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const cards = result.rows.length === 0
       ? `<p class="empty-state">Aucun élève ${showInactive ? 'inactif' : 'actif'}.</p>`
@@ -194,39 +194,42 @@ router.get('/', async (request, response) => {
           <div class="search">
             <label for="student-search">Rechercher dans le répertoire</label>
             <div class="search-controls">
-              <input id="student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="student-list" data-list-search>
+              <input class="form-control" id="student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="student-list" data-list-search>
             </div>
           </div>
           <p class="empty-state" role="status" data-list-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
-          <div class="compact-list" id="student-list" data-list-results>${result.rows.map((student) => `
-          <article class="compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <div class="list-group compact-list" id="student-list" data-list-results>${result.rows.map((student) => `
+          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
               <p class="compact-meta"><a href="mailto:${escapeHtml(student.email)}">${escapeHtml(student.email)}</a> · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
-              <span class="status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
+              <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
             </div>
             <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
-              <a class="button button-quiet" href="/students/${student.id}/edit">Modifier</a>
+              <a class="btn btn-light" href="/students/${student.id}/edit">Modifier</a>
               ${student.active ? `<form method="post" action="/students/${student.id}/deactivate" data-confirm="Désactiver cet élève ?">
-                <button class="button button-danger-quiet" type="submit">Désactiver</button>
+                <button class="btn btn-outline-danger" type="submit">Désactiver</button>
               </form>` : ''}
             </div>
           </article>`).join('')}</div>
         </section>`;
 
     response.send(renderPage('Élèves', `
-      <header class="page-header">
+      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>Élèves</h1>
           <p class="page-description">${showInactive ? 'Élèves globalement inactifs.' : 'Répertoire des élèves actifs.'}</p>
         </div>
-        <a class="button" href="/students/new">Ajouter un élève</a>
+        <div class="context-actions d-flex flex-wrap gap-2">
+          <a class="btn btn-primary" href="/students/new">Ajouter un élève</a>
+          <a class="btn btn-outline-secondary" href="/students/import">Importer</a>
+        </div>
       </header>
-      <nav class="view-switch" aria-label="Filtrer les élèves par activité">
-        <a href="/students"${showInactive ? '' : ' aria-current="page"'}>Actifs</a>
-        <a href="/students?status=inactive"${showInactive ? ' aria-current="page"' : ''}>Inactifs</a>
+      <nav class="nav nav-pills view-switch" aria-label="Filtrer les élèves par activité">
+        <a class="nav-link${showInactive ? '' : ' active'}" href="/students"${showInactive ? '' : ' aria-current="page"'}>Actifs</a>
+        <a class="nav-link${showInactive ? ' active' : ''}" href="/students?status=inactive"${showInactive ? ' aria-current="page"' : ''}>Inactifs</a>
       </nav>
       ${notice}
       ${cards}`));

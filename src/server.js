@@ -23,7 +23,11 @@ const {
 const { initializeSecrets } = require('./secrets');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
-const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
+const {
+  escapeHtml,
+  renderMessagePage,
+  renderPage,
+} = require('./ui');
 
 const app = express();
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -48,6 +52,13 @@ if (process.env.NODE_ENV === 'production') {
 }
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use('/vendor/bootstrap', express.static(path.join(
+  __dirname,
+  '..',
+  'node_modules',
+  'bootstrap',
+  'dist',
+)));
 
 app.get('/health', async (_request, response) => {
   if (isMaintenanceActive()) {
@@ -80,6 +91,7 @@ app.use(session({
 
 app.use(authRouter);
 app.use(requireAuthentication);
+app.get('/settings', (_request, response) => response.redirect(303, '/settings/email'));
 app.get('/vendor/qr-scanner/qr-scanner.min.js', (_request, response) => {
   response.sendFile(path.join(
     __dirname,
@@ -133,8 +145,8 @@ app.get('/', async (_request, response) => {
     );
     const openSessions = result.rows.length === 0
       ? ''
-      : `<div class="compact-list" data-live-session-list>${result.rows.map((sessionRecord) => `
-          <article class="compact-row compact-row-status session-row" data-live-session-card data-session-id="${sessionRecord.id}">
+      : `<div class="list-group compact-list" data-live-session-list>${result.rows.map((sessionRecord) => `
+          <article class="list-group-item compact-row compact-row-status session-row" data-live-session-card data-session-id="${sessionRecord.id}">
             <div class="compact-identity session-identity">
               <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(sessionRecord.date))}</p>
               <p class="compact-title">${escapeHtml(sessionRecord.title)}</p>
@@ -142,37 +154,39 @@ app.get('/', async (_request, response) => {
             </div>
             <div class="compact-status">
               <strong class="compact-count"><span data-present-count>${sessionRecord.present_count}</span> / <span data-total-count>${sessionRecord.total_students}</span> présents</strong>
-              <span class="status-badge status-open" data-session-state>Séance ouverte</span>
+              <span class="badge status-badge status-open" data-session-state>Séance ouverte</span>
             </div>
             <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(sessionRecord.title)}">
-              <a class="button" href="/sessions/${sessionRecord.id}">Présences</a>
+              <a class="btn btn-primary" href="/sessions/${sessionRecord.id}">Présences</a>
               <span class="session-edit-slot">
-                <a class="button button-quiet" href="/sessions/${sessionRecord.id}/edit" data-session-edit>Modifier</a>
-                <button class="button button-quiet button-unavailable" type="button" data-session-edit-disabled disabled hidden>Modifier</button>
+                <a class="btn btn-light" href="/sessions/${sessionRecord.id}/edit" data-session-edit>Modifier</a>
+                <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled hidden>Modifier</button>
               </span>
             </div>
           </article>`).join('')}</div>`;
 
     response.send(renderPage('Accueil', `
-      <header class="page-header">
+      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>Tableau de bord</h1>
           <p class="page-description">Accédez aux tâches courantes et aux séances actuellement ouvertes.</p>
         </div>
       </header>
       <nav class="dashboard-actions" aria-label="Accès rapides">
-        <a class="dashboard-link" href="/classes"><strong>Classes</strong><span>Gérer les groupes</span></a>
-        <a class="dashboard-link" href="/students"><strong>Élèves</strong><span>Consulter les élèves actifs</span></a>
-        <a class="dashboard-link" href="/sessions"><strong>Séances</strong><span>Planifier et prendre les présences</span></a>
-        <a class="dashboard-link" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a>
+        <div class="row g-2 row-cols-1 row-cols-md-2">
+          <div class="col"><a class="card card-body dashboard-link h-100" href="/classes"><strong>Classes</strong><span>Gérer les groupes</span></a></div>
+          <div class="col"><a class="card card-body dashboard-link h-100" href="/students"><strong>Élèves</strong><span>Consulter les élèves actifs</span></a></div>
+          <div class="col"><a class="card card-body dashboard-link h-100" href="/sessions"><strong>Séances</strong><span>Planifier et prendre les présences</span></a></div>
+          <div class="col"><a class="card card-body dashboard-link h-100" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a></div>
+        </div>
       </nav>
       <section class="page-section" aria-labelledby="open-sessions-title" data-live-dashboard>
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="open-sessions-title">Séances ouvertes</h2>
             <p class="section-description">Suivi des présences en cours.</p>
           </div>
-          <a class="button button-quiet" href="/sessions">Voir toutes les séances</a>
+          <a class="btn btn-light" href="/sessions">Voir toutes les séances</a>
         </div>
         ${openSessions}
         <p class="empty-state" data-live-empty-state${result.rows.length > 0 ? ' hidden' : ''}>Aucune séance ouverte. Les séances planifiées apparaissent dans la rubrique Séances.</p>

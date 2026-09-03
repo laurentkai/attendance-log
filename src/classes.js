@@ -8,12 +8,12 @@ function renderMessagePage(title, message, status = 500) {
   return {
     status,
     html: renderPage(title, `
-      <header class="page-header">
+      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>${escapeHtml(title)}</h1>
         </div>
       </header>
-      <p class="message message-error">${escapeHtml(message)}</p>`),
+      <p class="alert alert-danger">${escapeHtml(message)}</p>`),
   };
 }
 
@@ -28,30 +28,30 @@ function getFormValues(body = {}) {
 
 function renderClassForm({ title, action, submitLabel, values, error = '' }) {
   const errorMessage = error
-    ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
+    ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
 
   return renderPage(title, `
-    <header class="page-header">
+    <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
         <h1>${escapeHtml(title)}</h1>
       </div>
     </header>
     ${errorMessage}
-    <form class="form-card" method="post" action="${escapeHtml(action)}">
+    <form class="card card-body app-form" method="post" action="${escapeHtml(action)}">
       <div class="form-field">
         <label for="name">Nom <span aria-hidden="true">*</span></label>
-        <input id="name" name="name" type="text" value="${escapeHtml(values.name || '')}" autocomplete="off" required>
+        <input class="form-control" id="name" name="name" type="text" value="${escapeHtml(values.name || '')}" autocomplete="off" required>
       </div>
 
       <div class="form-field">
         <label for="description">Description</label>
-        <textarea id="description" name="description" rows="5" autocomplete="off">${escapeHtml(values.description || '')}</textarea>
+        <textarea class="form-control" id="description" name="description" rows="5" autocomplete="off">${escapeHtml(values.description || '')}</textarea>
       </div>
 
-      <div class="form-actions">
-        <button class="button" type="submit">${escapeHtml(submitLabel)}</button>
-        <a class="button button-secondary" href="/classes">Annuler</a>
+      <div class="form-actions d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
+        <a class="btn btn-outline-secondary" href="/classes">Annuler</a>
       </div>
     </form>`);
 }
@@ -79,12 +79,12 @@ router.get('/', async (request, response) => {
       deleted: 'La classe a été supprimée.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const classList = result.rows.length === 0
       ? '<p class="empty-state">Aucune classe pour le moment.</p>'
-      : `<div class="compact-list">${result.rows.map((classRecord) => `
-          <article class="compact-row class-management-row">
+      : `<div class="list-group compact-list">${result.rows.map((classRecord) => `
+          <article class="list-group-item compact-row class-management-row">
             <div class="compact-identity class-identity">
               <p class="compact-title">${escapeHtml(classRecord.name)}</p>
               <p class="compact-meta class-description">${classRecord.description
@@ -93,25 +93,25 @@ router.get('/', async (request, response) => {
             </div>
             <div class="row-action-stack">
               <div class="compact-actions compact-actions--split" aria-label="Gérer ${escapeHtml(classRecord.name)}">
-                <a class="button button-secondary" href="/classes/${classRecord.id}">Gérer les élèves</a>
-                <a class="button button-secondary" href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
+                <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}">Gérer les élèves</a>
+                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
               </div>
               <div class="compact-actions" aria-label="Administration de ${escapeHtml(classRecord.name)}">
-                <a class="button button-quiet" href="/classes/${classRecord.id}/edit">Modifier</a>
+                <a class="btn btn-light" href="/classes/${classRecord.id}/edit">Modifier</a>
                 <form method="post" action="/classes/${classRecord.id}/delete" data-confirm="Supprimer cette classe ?">
-                  <button class="button button-danger-quiet" type="submit">Supprimer</button>
+                  <button class="btn btn-outline-danger" type="submit">Supprimer</button>
                 </form>
               </div>
             </div>
           </article>`).join('')}</div>`;
 
     response.send(renderPage('Classes', `
-      <header class="page-header">
+      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>Classes</h1>
           <p class="page-description">Accédez directement aux élèves ou aux séances de chaque classe.</p>
         </div>
-        <a class="button" href="/classes/new">Ajouter une classe</a>
+        <a class="btn btn-primary" href="/classes/new">Ajouter une classe</a>
       </header>
       ${notice}
       ${classList}`));
@@ -229,7 +229,7 @@ router.get('/:id', async (request, response) => {
       membership_reactivated: 'L’affectation de l’élève a été réactivée pour cette classe.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="message message-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
       : '';
     const assignedStudents = assignedResult.rows.length === 0
       ? '<p class="empty-state">Aucune affectation d’élève dans cette classe.</p>'
@@ -237,26 +237,26 @@ router.get('/:id', async (request, response) => {
           <div class="search">
             <label for="class-roster-search">Rechercher dans les affectations</label>
             <div class="search-controls">
-              <input id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="class-roster-list" data-list-search>
+              <input class="form-control" id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="class-roster-list" data-list-search>
             </div>
           </div>
           <p class="empty-state" role="status" data-list-no-results hidden>Aucune affectation ne correspond à cette recherche.</p>
-          <div class="compact-list" id="class-roster-list" data-list-results>${assignedResult.rows.map((student) => `
-          <article class="compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <div class="list-group compact-list" id="class-roster-list" data-list-results>${assignedResult.rows.map((student) => `
+          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
               <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
-              <span class="status-badge status-${student.membership_active ? 'active' : 'inactive'}">Dans cette classe : ${student.membership_active ? 'actif' : 'inactif'}</span>
+              <span class="badge status-badge status-${student.membership_active ? 'active' : 'inactive'}">Dans cette classe : ${student.membership_active ? 'actif' : 'inactif'}</span>
             </div>
             <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
-              <a class="button button-quiet" href="/students/${student.id}/edit">Modifier l’élève</a>
+              <a class="btn btn-light" href="/students/${student.id}/edit">Modifier l’élève</a>
               <form method="post" action="/classes/${classRecord.id}/students/${student.id}/${student.membership_active ? 'deactivate' : 'reactivate'}">
-                <button class="button button-secondary" type="submit">${student.membership_active ? 'Désactiver pour cette classe' : 'Réactiver pour cette classe'}</button>
+                <button class="btn btn-outline-secondary" type="submit">${student.membership_active ? 'Désactiver pour cette classe' : 'Réactiver pour cette classe'}</button>
               </form>
               ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.id}/students/${student.id}/remove" data-confirm="Retirer cet élève de la classe ?">
-                <button class="button button-danger-quiet" type="submit">Retirer de la classe</button>
+                <button class="btn btn-outline-danger" type="submit">Retirer de la classe</button>
               </form>`}
             </div>
           </article>`).join('')}</div>
@@ -265,48 +265,48 @@ router.get('/:id', async (request, response) => {
       ? '<p class="empty-state">Saisissez au moins 2 caractères pour rechercher un élève actif.</p>'
       : availableResult.rows.length === 0
       ? '<p class="empty-state">Aucun élève actif disponible ne correspond à cette recherche.</p>'
-      : `<form class="form-card" method="post" action="/classes/${classRecord.id}/students">
+      : `<form class="card card-body app-form" method="post" action="/classes/${classRecord.id}/students">
           <fieldset>
             <legend>Élèves à ajouter</legend>
             <div class="checkbox-list">${availableResult.rows.map((student) => `
               <label class="checkbox-option">
-                <input name="student_ids" type="checkbox" value="${student.id}">
+                <input class="form-check-input" name="student_ids" type="checkbox" value="${student.id}">
                 <span>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}<small>${escapeHtml(student.email)}</small></span>
               </label>`).join('')}</div>
           </fieldset>
-          <button class="button" type="submit">Ajouter les élèves sélectionnés</button>
+          <button class="btn btn-primary" type="submit">Ajouter les élèves sélectionnés</button>
         </form>`;
 
     response.send(renderPage(classRecord.name, `
-      <header class="page-header">
+      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>${escapeHtml(classRecord.name)}</h1>
           <p class="page-description class-description">${classRecord.description
             ? escapeHtml(classRecord.description)
             : '<span class="muted">Aucune description</span>'}</p>
         </div>
-        <a class="button button-secondary" href="/classes/${classRecord.id}/edit">Modifier la classe</a>
+        <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}/edit">Modifier la classe</a>
       </header>
-      <nav class="context-tabs" aria-label="Gestion de la classe">
-        <a href="/classes/${classRecord.id}" aria-current="page">Gérer les élèves</a>
-        <a href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
+      <nav class="nav nav-pills context-tabs" aria-label="Gestion de la classe">
+        <a class="nav-link active" href="/classes/${classRecord.id}" aria-current="page">Gérer les élèves</a>
+        <a class="nav-link" href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
       </nav>
       ${notice}
       ${classRecord.membership_locked
-        ? '<p class="message message-warning" role="status">Cette classe a déjà commencé. Ses affectations sont conservées pour protéger l’historique. Désactivez une affectation pour exclure l’élève des futures séances de cette classe.</p>'
+        ? '<p class="alert alert-warning" role="status">Cette classe a déjà commencé. Ses affectations sont conservées pour protéger l’historique. Désactivez une affectation pour exclure l’élève des futures séances de cette classe.</p>'
         : ''}
       <section class="page-section">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2>Élèves de la classe</h2>
             <p class="section-description">L’état affiché ici concerne uniquement cette classe.</p>
           </div>
-          <a class="button button-secondary" href="/students/import?class_id=${classRecord.id}">Importer des élèves</a>
+          <a class="btn btn-outline-secondary" href="/students/import?class_id=${classRecord.id}">Importer des élèves</a>
         </div>
         ${assignedStudents}
       </section>
       <section class="page-section">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2>Ajouter des élèves existants</h2>
           </div>
@@ -314,9 +314,9 @@ router.get('/:id', async (request, response) => {
         <form class="search" method="get" action="/classes/${classRecord.id}" role="search">
           <label for="membership-search">Rechercher un élève actif</label>
           <div class="search-controls">
-            <input id="membership-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…">
-            <button class="button" type="submit">Rechercher</button>
-            ${searchQuery ? `<a class="button button-secondary" href="/classes/${classRecord.id}">Effacer</a>` : ''}
+            <input class="form-control" id="membership-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…">
+            <button class="btn btn-primary" type="submit">Rechercher</button>
+            ${searchQuery ? `<a class="btn btn-outline-secondary" href="/classes/${classRecord.id}">Effacer</a>` : ''}
           </div>
         </form>
         ${availableStudents}

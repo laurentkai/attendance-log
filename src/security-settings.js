@@ -13,7 +13,7 @@ const {
   importRecoveryKey,
   isEncryptedSecret,
 } = require('./secrets');
-const { escapeHtml, renderPage, renderSettingsNavigation } = require('./ui');
+const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
 const upload = multer({
@@ -51,31 +51,21 @@ function sourceLabel(source) {
 function renderSecurityPage({ feedback = null, secretStatus = 'available' } = {}) {
   const keyInfo = getKeyInfo();
   const feedbackMessage = feedback?.message
-    ? `<p class="message message-${feedback.type === 'success' ? 'success' : 'error'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
+    ? `<p class="alert alert-${feedback.type === 'success' ? 'success' : 'danger'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
     : '';
   const mismatchMessage = secretStatus === 'mismatch'
-    ? '<p class="message message-error" role="alert">La clé est configurée, mais elle est incompatible avec les secrets chiffrés actuellement stockés. Importez la clé de récupération correspondant à cette base de données.</p>'
+    ? '<p class="alert alert-danger" role="alert">La clé est configurée, mais elle est incompatible avec les secrets chiffrés actuellement stockés. Importez la clé de récupération correspondant à cette base de données.</p>'
     : '';
 
-  return renderPage('Configuration de sécurité', `
-    <div class="settings-page">
-      <header class="page-header">
-        <div>
-          <p class="eyebrow">Configuration</p>
-          <h1>Sécurité</h1>
-          <p class="page-description">Gérez la clé de récupération utilisée pour protéger les secrets sauvegardés.</p>
-        </div>
-        <span class="status-badge status-${secretStatus === 'available' ? 'active' : 'inactive'}">${secretStatus === 'available' ? 'Chiffrement actif' : 'Clé à vérifier'}</span>
-      </header>
-      ${renderSettingsNavigation('security')}
-      <div class="notification-area" aria-live="polite" aria-atomic="true">
-        ${feedbackMessage}
-        ${mismatchMessage}
-        <p class="message message-error" role="alert" data-security-client-feedback hidden></p>
-      </div>
-
-      <section class="form-card" aria-labelledby="encryption-title">
-        <div class="section-header">
+  return renderPage('Configuration de sécurité', renderSettingsLayout({
+    activeSection: 'security',
+    title: 'Sécurité',
+    description: 'Gérez la clé de récupération utilisée pour protéger les secrets sauvegardés.',
+    status: `<span class="badge status-badge status-${secretStatus === 'available' ? 'active' : 'inactive'}">${secretStatus === 'available' ? 'Chiffrement actif' : 'Clé à vérifier'}</span>`,
+    notifications: `${feedbackMessage}${mismatchMessage}<p class="alert alert-danger" role="alert" data-security-client-feedback hidden></p>`,
+    content: `
+      <section class="card card-body app-form" aria-labelledby="encryption-title">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="encryption-title">Chiffrement des données sensibles</h2>
             <p class="section-description">Conservez une copie de cette clé avec vos sauvegardes. Elle est nécessaire pour restaurer les secrets chiffrés.</p>
@@ -86,51 +76,52 @@ function renderSecurityPage({ feedback = null, secretStatus = 'available' } = {}
           <div><dt>Identifiant de clé</dt><dd class="student-code">${escapeHtml(keyInfo.fingerprint)}</dd></div>
           <div><dt>Source</dt><dd>${escapeHtml(sourceLabel(keyInfo.source))}</dd></div>
         </dl>
-        <div class="form-actions">
-          <button class="button" type="button" data-show-recovery-key>Afficher la clé</button>
+        <div class="form-actions d-flex flex-wrap gap-2">
+          <button class="btn btn-primary" type="button" data-show-recovery-key>Afficher la clé</button>
           <form method="post" action="/settings/security/key/export">
-            <button class="button button-quiet" type="submit">Exporter la clé</button>
+            <button class="btn btn-light" type="submit">Exporter la clé</button>
           </form>
         </div>
       </section>
 
       <section class="page-section" aria-labelledby="import-title">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="import-title">Importer une clé</h2>
             <p class="section-description">Utilisez le fichier de récupération associé à une base restaurée. La clé ne sera remplacée que si elle correspond aux secrets existants.</p>
           </div>
         </div>
-        <form class="form-card" method="post" action="/settings/security/key/import" enctype="multipart/form-data">
+        <form class="card card-body app-form" method="post" action="/settings/security/key/import" enctype="multipart/form-data">
           <div class="form-field">
             <label for="recovery-key-file">Fichier de clé de récupération</label>
-            <input id="recovery-key-file" name="recovery_key" type="file" accept=".txt,text/plain" required>
+            <input class="form-control" id="recovery-key-file" name="recovery_key" type="file" accept=".txt,text/plain" required>
           </div>
           <label class="checkbox-option">
-            <input name="confirm_import" type="checkbox" value="yes" required>
+            <input class="form-check-input" name="confirm_import" type="checkbox" value="yes" required>
             <span>Je confirme vouloir activer cette clé de récupération.</span>
           </label>
-          <div class="form-actions">
-            <button class="button button-secondary" type="submit">Importer la clé</button>
+          <div class="form-actions d-flex flex-wrap gap-2">
+            <button class="btn btn-outline-secondary" type="submit">Importer la clé</button>
           </div>
         </form>
       </section>
-    </div>
-
+    `,
+    after: `
     <dialog class="security-key-dialog" data-recovery-key-dialog aria-labelledby="recovery-key-title">
       <div class="dialog-content">
         <h2 id="recovery-key-title">Clé de récupération</h2>
         <p>Toute personne possédant cette clé peut déchiffrer les secrets sauvegardés par Attendance Log.</p>
         <label for="recovery-key-value">Clé Base64</label>
-        <textarea id="recovery-key-value" class="recovery-key-output" rows="3" wrap="off" readonly spellcheck="false" data-recovery-key-value></textarea>
+        <textarea id="recovery-key-value" class="form-control recovery-key-output" rows="3" wrap="off" readonly spellcheck="false" data-recovery-key-value></textarea>
         <p class="compact-meta" role="status" aria-live="polite" data-copy-feedback></p>
-        <div class="form-actions">
-          <button class="button" type="button" data-copy-recovery-key>Copier la clé</button>
-          <button class="button button-quiet" type="button" data-close-recovery-key>Fermer</button>
+        <div class="form-actions d-flex flex-wrap gap-2">
+          <button class="btn btn-primary" type="button" data-copy-recovery-key>Copier la clé</button>
+          <button class="btn btn-light" type="button" data-close-recovery-key>Fermer</button>
         </div>
       </div>
     </dialog>
-    <script src="/js/security.js" defer></script>`);
+    <script src="/js/security.js" defer></script>`,
+  }));
 }
 
 async function renderCurrentSecurity(response, options = {}) {

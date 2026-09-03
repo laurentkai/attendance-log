@@ -22,10 +22,10 @@ async function loadClasses() {
 
 function renderImportPage({ classes, selectedClassId = '', error = '', summary = null }) {
   const errorMessage = error
-    ? `<p class="message message-error" role="alert">${escapeHtml(error)}</p>`
+    ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
   const summaryContent = summary
-    ? `<section class="summary-card import-summary" aria-labelledby="import-summary-title">
+    ? `<section class="card card-body summary-card import-summary" aria-labelledby="import-summary-title">
         <h2 id="import-summary-title">Résumé de l’import</h2>
         <dl class="summary-list">
           <div><dt>Créés</dt><dd>${summary.created}</dd></div>
@@ -40,26 +40,26 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
   const selectedClass = classes.find((classRecord) => classRecord.id === selectedClassId);
 
   return renderPage('Importer des élèves', `
-    <header class="page-header">
+    <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
         <h1>Importer des élèves</h1>
         <p class="page-description">Ajoutez des élèves à une classe à partir d’un fichier CSV.</p>
       </div>
       ${selectedClass
-        ? `<a class="button button-secondary" href="/classes/${selectedClass.id}">Retour à la classe</a>`
+        ? `<a class="btn btn-outline-secondary" href="/classes/${selectedClass.id}">Retour à la classe</a>`
         : ''}
     </header>
     ${errorMessage}
     ${summaryContent}
-    <section class="instruction-panel" aria-labelledby="import-instructions-title">
+    <section class="card card-body instruction-panel" aria-labelledby="import-instructions-title">
       <h2 id="import-instructions-title">Préparer le fichier</h2>
       <p>Utilisez les colonnes <span class="student-code" translate="no">first_name</span>, <span class="student-code" translate="no">last_name</span> et <span class="student-code" translate="no">email</span>. Taille maximale : 1 Mo.</p>
     </section>
-    ${classes.length === 0 ? '<p class="message message-warning" role="status">Créez une classe avant d’importer des élèves.</p>' : ''}
-    <form class="form-card import-form" method="post" action="/students/import" enctype="multipart/form-data">
+    ${classes.length === 0 ? '<p class="alert alert-warning" role="status">Créez une classe avant d’importer des élèves.</p>' : ''}
+    <form class="card card-body app-form import-form" method="post" action="/students/import" enctype="multipart/form-data">
       <div class="form-field">
         <label for="class_id">Classe cible <span aria-hidden="true">*</span></label>
-        <select id="class_id" name="class_id" required>
+        <select class="form-select" id="class_id" name="class_id" required>
           <option value="">Choisir une classe</option>
           ${classOptions}
         </select>
@@ -67,12 +67,12 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
 
       <div class="form-field">
         <label for="csv_file">Fichier CSV <span aria-hidden="true">*</span></label>
-        <input id="csv_file" name="csv_file" type="file" accept=".csv,text/csv" required>
+        <input class="form-control" id="csv_file" name="csv_file" type="file" accept=".csv,text/csv" required>
         <p class="help-text">Un seul fichier CSV, jusqu’à 2 000 lignes.</p>
       </div>
 
-      <div class="form-actions">
-        <button class="button" type="submit"${classes.length === 0 ? ' disabled' : ''}>Importer les élèves</button>
+      <div class="form-actions d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" type="submit"${classes.length === 0 ? ' disabled' : ''}>Importer les élèves</button>
       </div>
     </form>`);
 }

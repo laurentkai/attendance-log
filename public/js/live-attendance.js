@@ -191,6 +191,7 @@ if (quickAttendance) {
   const searchClearButton = quickAttendance.querySelector('[data-quick-search-clear]');
   const modeButtons = [...quickAttendance.querySelectorAll('[data-quick-mode]')];
   const modePanels = [...quickAttendance.querySelectorAll('[data-quick-mode-panel]')];
+  const feedbackAnchors = [...quickAttendance.querySelectorAll('[data-quick-feedback-anchor]')];
   const qrStartButton = quickAttendance.querySelector('[data-qr-start]');
   const qrView = quickAttendance.querySelector('[data-qr-view]');
   const qrVideo = quickAttendance.querySelector('[data-qr-video]');
@@ -640,11 +641,17 @@ if (quickAttendance) {
     if (mode === 'manual') stopScanner();
 
     modeButtons.forEach((button) => {
-      button.setAttribute('aria-pressed', String(button.dataset.quickMode === mode));
+      const selected = button.dataset.quickMode === mode;
+      button.setAttribute('aria-pressed', String(selected));
+      button.classList.toggle('active', selected);
     });
     modePanels.forEach((panel) => {
       panel.hidden = panel.dataset.quickModePanel !== mode;
     });
+    const feedbackAnchor = feedbackAnchors.find(
+      (anchor) => anchor.dataset.quickFeedbackAnchor === mode,
+    );
+    if (feedbackAnchor && feedbackMessage) feedbackAnchor.after(feedbackMessage);
     setFeedback();
 
     if (mode === 'manual') {

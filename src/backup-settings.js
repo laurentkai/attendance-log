@@ -11,7 +11,7 @@ const {
   validateProviderConfiguration,
 } = require('./backup');
 const { encryptSecret } = require('./secrets');
-const { escapeHtml, renderPage, renderSettingsNavigation } = require('./ui');
+const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 const restoreSettingsRouter = require('./restore-settings');
 
 const router = express.Router();
@@ -91,16 +91,17 @@ function getFormValues(body = {}) {
 function validateSchedule(values) {
   if (!providers.has(values.provider)) return new BackupError('PROVIDER_UNSUPPORTED');
   if (values.enabled && !values.provider) return new BackupError('PROVIDER_REQUIRED');
+  const retentionDays = Number(values.retentionDays);
+  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+    return new BackupError('RETENTION_INVALID');
+  }
+  if (!values.enabled) return null;
   if (!frequencies.has(values.frequency)) return new BackupError('FREQUENCY_INVALID');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(values.executionTime)) {
     return new BackupError('EXECUTION_TIME_INVALID');
   }
   if (values.frequency === 'weekly' && !/^[0-6]$/.test(values.weekday)) {
     return new BackupError('WEEKDAY_INVALID');
-  }
-  const retentionDays = Number(values.retentionDays);
-  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
-    return new BackupError('RETENTION_INVALID');
   }
   return null;
 }
@@ -160,125 +161,136 @@ function historyLabel(value) {
 function renderBackupPage({ values, history = [], feedback = null, nextRunAt = null }) {
   const configured = Boolean(values.provider);
   const feedbackMessage = feedback?.message
-    ? `<p class="message message-${feedback.type === 'success' ? 'success' : 'error'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
+    ? `<p class="alert alert-${feedback.type === 'success' ? 'success' : 'danger'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
     : '';
   const historyRows = history.length === 0
     ? '<p class="empty-state">Aucune sauvegarde n’a encore été exécutée.</p>'
-    : `<div class="data-table-scroll" tabindex="0" role="region" aria-label="Historique des sauvegardes">
-        <table class="data-table backup-history-table">
-          <thead><tr><th>Date</th><th>Type</th><th>Destination</th><th>Taille</th><th>Statut</th></tr></thead>
+    : `<div class="table-responsive data-table-scroll" tabindex="0" role="region" aria-label="Historique des sauvegardes">
+        <table class="table table-sm table-hover align-middle mb-0 data-table backup-history-table">
+          <thead class="table-light"><tr><th>Date</th><th>Type</th><th>Destination</th><th>Taille</th><th>Statut</th></tr></thead>
           <tbody>${history.map((entry) => `<tr>
             <td>${escapeHtml(formatTimestamp(entry.started_at))}</td>
             <td>${escapeHtml(historyLabel(entry.run_type))}</td>
             <td>${escapeHtml(historyLabel(entry.provider))}</td>
             <td class="numeric">${escapeHtml(formatSize(entry.size_bytes))}</td>
-            <td><span class="status-badge status-${entry.status === 'success' ? 'active' : 'absent'}">${entry.status === 'success' ? 'Réussie' : 'Échec'}</span>${entry.error_summary ? `<p class="compact-meta">${escapeHtml(errorMessage(entry.error_summary))}</p>` : ''}</td>
+            <td><span class="badge status-badge status-${entry.status === 'success' ? 'active' : 'absent'}">${entry.status === 'success' ? 'Réussie' : 'Échec'}</span>${entry.error_summary ? `<p class="compact-meta">${escapeHtml(errorMessage(entry.error_summary))}</p>` : ''}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>`;
   const latestFailure = history[0]?.status === 'failed'
-    ? `<p class="message message-error" role="alert">Dernière sauvegarde : échec le ${escapeHtml(formatTimestamp(history[0].started_at))}. ${escapeHtml(errorMessage(history[0].error_summary))}</p>`
+    ? `<p class="alert alert-danger" role="alert">Dernière sauvegarde : échec le ${escapeHtml(formatTimestamp(history[0].started_at))}. ${escapeHtml(errorMessage(history[0].error_summary))}</p>`
     : '';
 
-  return renderPage('Configuration des sauvegardes', `
-    <div class="settings-page backup-settings" data-backup-settings>
-      <header class="page-header">
-        <div>
-          <p class="eyebrow">Configuration</p>
-          <h1>Sauvegardes</h1>
-          <p class="page-description">Téléchargez une sauvegarde ou automatisez son envoi vers un stockage cloud.</p>
-        </div>
-        <span class="status-badge status-${values.enabled ? 'active' : 'inactive'}">${values.enabled ? 'Sauvegardes automatiques actives' : 'Sauvegardes automatiques désactivées'}</span>
-      </header>
-      ${renderSettingsNavigation('backups')}
-      <div class="notification-area" aria-live="polite" aria-atomic="true">${feedbackMessage}</div>
-
+  return renderPage('Configuration des sauvegardes', renderSettingsLayout({
+    activeSection: 'backups',
+    title: 'Sauvegardes',
+    description: 'Téléchargez une sauvegarde ou automatisez son envoi vers un stockage cloud.',
+    status: `<span class="badge status-badge status-${values.enabled ? 'active' : 'inactive'}">${values.enabled ? 'Sauvegardes automatiques actives' : 'Sauvegardes automatiques désactivées'}</span>`,
+    notifications: feedbackMessage,
+    content: `<div class="backup-settings" data-backup-settings>
       <section class="page-section" aria-labelledby="manual-backup-title">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="manual-backup-title">Sauvegarde manuelle</h2>
             <p class="section-description">Le fichier contient la base PostgreSQL et un manifeste, mais jamais la clé de récupération.</p>
           </div>
         </div>
-        <div class="form-card">
+        <div class="card card-body app-form">
           <p class="help-text">Les secrets fournisseur restent chiffrés dans la sauvegarde. Conservez séparément la clé de récupération correspondante.</p>
           <form method="post" action="/settings/backups/download">
-            <button class="button" type="submit">Télécharger une sauvegarde</button>
+            <button class="btn btn-primary" type="submit">Télécharger une sauvegarde</button>
           </form>
         </div>
       </section>
 
       <section class="page-section" aria-labelledby="automatic-backup-title">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="automatic-backup-title">Sauvegardes automatiques</h2>
             <p class="section-description">Planification selon le fuseau ${escapeHtml(process.env.BACKUP_TIMEZONE || 'Europe/Brussels')}${nextRunAt ? ` · prochaine exécution ${escapeHtml(formatTimestamp(nextRunAt))}` : ''}.</p>
           </div>
         </div>
-        <form class="form-card" method="post" action="/settings/backups" autocomplete="off">
-          <label class="checkbox-option">
-            <input name="enabled" type="checkbox" value="yes"${values.enabled ? ' checked' : ''}>
-            <span>Activer les sauvegardes automatiques</span>
-          </label>
-          <div class="form-field">
-            <label for="backup-provider">Destination</label>
-            <select id="backup-provider" name="provider" data-backup-provider>
-              <option value=""${values.provider === '' ? ' selected' : ''}>Sélectionner…</option>
-              <option value="s3"${values.provider === 's3' ? ' selected' : ''}>Amazon S3 / S3-compatible</option>
-              <option value="azure"${values.provider === 'azure' ? ' selected' : ''}>Azure Blob Storage</option>
-            </select>
-          </div>
+        <form class="card card-body app-form" method="post" action="/settings/backups" autocomplete="off">
+          <section class="backup-form-section" aria-labelledby="backup-destination-title">
+            <div>
+              <h3 id="backup-destination-title">Destination cloud</h3>
+              <p class="section-description">Utilisée par les sauvegardes immédiates et planifiées.</p>
+            </div>
+            <div class="form-field">
+              <label for="backup-provider">Destination</label>
+              <select class="form-select" id="backup-provider" name="provider" data-backup-provider>
+                <option value=""${values.provider === '' ? ' selected' : ''}>Sélectionner…</option>
+                <option value="s3"${values.provider === 's3' ? ' selected' : ''}>Amazon S3 / S3-compatible</option>
+                <option value="azure"${values.provider === 'azure' ? ' selected' : ''}>Azure Blob Storage</option>
+              </select>
+            </div>
 
-          <fieldset data-provider-fields="s3"${values.provider !== 's3' ? ' hidden' : ''}>
-            <legend>S3-compatible</legend>
-            <div class="form-field"><label for="s3-bucket">Compartiment</label><input id="s3-bucket" name="s3_bucket" value="${escapeHtml(values.s3.bucket)}" autocomplete="off" spellcheck="false"></div>
-            <div class="form-field"><label for="s3-region">Région</label><input id="s3-region" name="s3_region" value="${escapeHtml(values.s3.region)}" autocomplete="off" spellcheck="false" placeholder="eu-west-1"></div>
-            <div class="form-field"><label for="s3-endpoint">Point de terminaison personnalisé</label><input id="s3-endpoint" name="s3_endpoint" type="url" value="${escapeHtml(values.s3.endpoint)}" autocomplete="off" spellcheck="false" placeholder="https://stockage.example.com"></div>
-            <div class="form-field"><label for="s3-prefix">Préfixe</label><input id="s3-prefix" name="s3_prefix" value="${escapeHtml(values.s3.prefix)}" autocomplete="off" spellcheck="false" placeholder="sauvegardes"></div>
-            <div class="form-field"><label for="s3-access-key">Identifiant de clé d’accès</label><input id="s3-access-key" name="s3_access_key_id" value="${escapeHtml(values.s3.accessKeyId)}" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
-            <div class="form-field"><label for="s3-secret-key">Clé d’accès secrète</label><input id="s3-secret-key" name="s3_secret_access_key" type="password" value="" autocomplete="new-password" placeholder="Laisser vide pour conserver la clé…"><p class="help-text">Laissez vide pour conserver la clé lorsque l’identifiant ne change pas.</p></div>
-            <label class="checkbox-option"><input name="s3_force_path_style" type="checkbox" value="yes"${values.s3.forcePathStyle ? ' checked' : ''}><span>Utiliser l’adressage par chemin</span></label>
-          </fieldset>
+            <fieldset data-provider-fields="s3"${values.provider !== 's3' ? ' hidden' : ''}>
+              <legend>S3-compatible</legend>
+              <div class="form-field"><label for="s3-bucket">Compartiment</label><input class="form-control" id="s3-bucket" name="s3_bucket" value="${escapeHtml(values.s3.bucket)}" autocomplete="off" spellcheck="false"></div>
+              <div class="form-field"><label for="s3-region">Région</label><input class="form-control" id="s3-region" name="s3_region" value="${escapeHtml(values.s3.region)}" autocomplete="off" spellcheck="false" placeholder="eu-west-1"></div>
+              <div class="form-field"><label for="s3-endpoint">Point de terminaison personnalisé</label><input class="form-control" id="s3-endpoint" name="s3_endpoint" type="url" value="${escapeHtml(values.s3.endpoint)}" autocomplete="off" spellcheck="false" placeholder="https://stockage.example.com"></div>
+              <div class="form-field"><label for="s3-prefix">Préfixe</label><input class="form-control" id="s3-prefix" name="s3_prefix" value="${escapeHtml(values.s3.prefix)}" autocomplete="off" spellcheck="false" placeholder="sauvegardes"></div>
+              <div class="form-field"><label for="s3-access-key">Identifiant de clé d’accès</label><input class="form-control" id="s3-access-key" name="s3_access_key_id" value="${escapeHtml(values.s3.accessKeyId)}" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+              <div class="form-field"><label for="s3-secret-key">Clé d’accès secrète</label><input class="form-control" id="s3-secret-key" name="s3_secret_access_key" type="password" value="" autocomplete="new-password" placeholder="Laisser vide pour conserver la clé…"><p class="help-text">Laissez vide pour conserver la clé lorsque l’identifiant ne change pas.</p></div>
+              <label class="checkbox-option"><input class="form-check-input" name="s3_force_path_style" type="checkbox" value="yes"${values.s3.forcePathStyle ? ' checked' : ''}><span>Utiliser l’adressage par chemin</span></label>
+            </fieldset>
 
-          <fieldset data-provider-fields="azure"${values.provider !== 'azure' ? ' hidden' : ''}>
-            <legend>Azure Blob Storage</legend>
-            <div class="form-field"><label for="azure-account">Compte de stockage</label><input id="azure-account" name="azure_account_name" value="${escapeHtml(values.azure.accountName)}" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
-            <div class="form-field"><label for="azure-container">Conteneur</label><input id="azure-container" name="azure_container_name" value="${escapeHtml(values.azure.containerName)}" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
-            <div class="form-field"><label for="azure-key">Clé du compte</label><input id="azure-key" name="azure_account_key" type="password" value="" autocomplete="new-password" placeholder="Laisser vide pour conserver la clé…"><p class="help-text">Laissez vide pour conserver la clé lorsque le compte ne change pas.</p></div>
-          </fieldset>
+            <fieldset data-provider-fields="azure"${values.provider !== 'azure' ? ' hidden' : ''}>
+              <legend>Azure Blob Storage</legend>
+              <div class="form-field"><label for="azure-account">Compte de stockage</label><input class="form-control" id="azure-account" name="azure_account_name" value="${escapeHtml(values.azure.accountName)}" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+              <div class="form-field"><label for="azure-container">Conteneur</label><input class="form-control" id="azure-container" name="azure_container_name" value="${escapeHtml(values.azure.containerName)}" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+              <div class="form-field"><label for="azure-key">Clé du compte</label><input class="form-control" id="azure-key" name="azure_account_key" type="password" value="" autocomplete="new-password" placeholder="Laisser vide pour conserver la clé…"><p class="help-text">Laissez vide pour conserver la clé lorsque le compte ne change pas.</p></div>
+            </fieldset>
 
-          <div class="backup-schedule-grid">
-            <div class="form-field"><label for="backup-frequency">Fréquence</label><select id="backup-frequency" name="frequency" data-backup-frequency><option value="daily"${values.frequency === 'daily' ? ' selected' : ''}>Quotidienne</option><option value="weekly"${values.frequency === 'weekly' ? ' selected' : ''}>Hebdomadaire</option></select></div>
-            <div class="form-field"><label for="backup-time">Heure</label><input id="backup-time" name="execution_time" type="time" value="${escapeHtml(values.executionTime)}" required></div>
-            <div class="form-field" data-weekday-field${values.frequency !== 'weekly' ? ' hidden' : ''}><label for="backup-weekday">Jour</label><select id="backup-weekday" name="weekday">${weekdays.map((day, index) => `<option value="${index}"${String(values.weekday) === String(index) ? ' selected' : ''}>${day}</option>`).join('')}</select></div>
-            <div class="form-field"><label for="retention-days">Durée de rétention (jours)</label><input id="retention-days" name="retention_days" type="number" min="1" max="3650" inputmode="numeric" value="${escapeHtml(values.retentionDays)}" required></div>
-          </div>
+            <div class="form-field"><label for="retention-days">Durée de rétention (jours)</label><input class="form-control" id="retention-days" name="retention_days" type="number" min="1" max="3650" inputmode="numeric" value="${escapeHtml(values.retentionDays)}" required></div>
+            <p class="help-text">La rétention s’applique à toutes les sauvegardes envoyées vers le cloud, manuelles ou planifiées.</p>
+          </section>
+
+          <section class="backup-form-section backup-schedule-section" aria-labelledby="backup-schedule-title">
+            <div>
+              <h3 id="backup-schedule-title">Planification</h3>
+              <p class="section-description">Programmez une exécution quotidienne ou hebdomadaire.</p>
+            </div>
+            <div class="form-check form-switch backup-schedule-switch">
+              <input class="form-check-input" id="backup-enabled" name="enabled" type="checkbox" role="switch" value="yes" data-backup-enabled aria-controls="backup-schedule-controls"${values.enabled ? ' checked' : ''}>
+              <label class="form-check-label" for="backup-enabled">Activer les sauvegardes automatiques</label>
+            </div>
+            <div class="backup-schedule-controls${values.enabled ? '' : ' is-disabled'}" id="backup-schedule-controls" data-backup-schedule-controls aria-disabled="${values.enabled ? 'false' : 'true'}">
+              <div class="backup-schedule-grid">
+                <div class="form-field"><label for="backup-frequency">Fréquence</label><select class="form-select" id="backup-frequency" name="frequency" data-backup-frequency data-saved-value="${escapeHtml(values.frequency || 'daily')}" required${values.enabled ? '' : ' disabled'}><option value=""${values.enabled ? '' : ' selected'}>Sélectionner…</option><option value="daily"${values.enabled && values.frequency === 'daily' ? ' selected' : ''}>Quotidienne</option><option value="weekly"${values.enabled && values.frequency === 'weekly' ? ' selected' : ''}>Hebdomadaire</option></select></div>
+                <div class="form-field"><label for="backup-time">Heure</label><input class="form-control" id="backup-time" name="execution_time" type="time" value="${values.enabled ? escapeHtml(values.executionTime) : ''}" data-saved-value="${escapeHtml(values.executionTime || '02:00')}" required${values.enabled ? '' : ' disabled'}></div>
+                <div class="form-field" data-weekday-field${!values.enabled || values.frequency !== 'weekly' ? ' hidden' : ''}><label for="backup-weekday">Jour</label><select class="form-select" id="backup-weekday" name="weekday" data-saved-value="${escapeHtml(String(values.weekday === '' ? 1 : values.weekday))}"${values.enabled && values.frequency === 'weekly' ? '' : ' disabled'}><option value=""${values.enabled ? '' : ' selected'}>Sélectionner…</option>${weekdays.map((day, index) => `<option value="${index}"${values.enabled && String(values.weekday) === String(index) ? ' selected' : ''}>${day}</option>`).join('')}</select></div>
+              </div>
+            </div>
+          </section>
           <p class="help-text">Les secrets sont chiffrés par Attendance Log dans la base. Le stockage cloud protège également le fichier sauvegardé au repos.</p>
-          <div class="form-actions"><button class="button" type="submit">Enregistrer la configuration</button></div>
+          <div class="form-actions d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">Enregistrer la configuration</button></div>
         </form>
         <div class="form-actions backup-cloud-actions">
-          <form method="post" action="/settings/backups/test"><button class="button button-quiet" type="submit"${configured ? '' : ' disabled'}>Tester la destination</button></form>
-          <form method="post" action="/settings/backups/run"><button class="button button-secondary" type="submit"${configured ? '' : ' disabled'}>Sauvegarder maintenant</button></form>
+          <form method="post" action="/settings/backups/test"><button class="btn btn-light" type="submit"${configured ? '' : ' disabled'}>Tester la destination</button></form>
+          <form method="post" action="/settings/backups/run"><button class="btn btn-outline-secondary" type="submit"${configured ? '' : ' disabled'}>Sauvegarder maintenant</button></form>
         </div>
       </section>
 
       <section class="page-section" aria-labelledby="restore-backup-title">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="restore-backup-title">Restauration</h2>
             <p class="section-description">Inspectez puis restaurez une sauvegarde locale ou cloud dans un parcours séparé.</p>
           </div>
-          <a class="button button-danger-secondary" href="/settings/backups/restore">Restaurer une sauvegarde</a>
+          <a class="btn btn-outline-danger" href="/settings/backups/restore">Restaurer une sauvegarde</a>
         </div>
       </section>
 
       <section class="page-section" aria-labelledby="backup-history-title">
-        <div class="section-header"><div><h2 id="backup-history-title">Historique</h2><p class="section-description">Dernières exécutions enregistrées.</p></div></div>
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="backup-history-title">Historique</h2><p class="section-description">Dernières exécutions enregistrées.</p></div></div>
         ${latestFailure}
         ${historyRows}
       </section>
-    </div>
-    <script src="/js/backup-settings.js" defer></script>`);
+    </div>`,
+    after: '<script src="/js/backup-settings.js" defer></script>',
+  }));
 }
 
 async function loadHistory() {
@@ -322,9 +334,17 @@ router.get('/', async (request, response) => {
 });
 
 router.post('/', async (request, response) => {
-  const values = getFormValues(request.body);
+  let values = getFormValues(request.body);
   try {
     const existing = await loadBackupConfiguration();
+    if (!values.enabled) {
+      values = {
+        ...values,
+        frequency: existing?.frequency || 'daily',
+        executionTime: existing?.executionTime || '02:00',
+        weekday: existing?.weekday ?? '',
+      };
+    }
     const scheduleError = validateSchedule(values);
     if (scheduleError) throw scheduleError;
 

@@ -1,76 +1,117 @@
-# CLAUDE.md
+# Attendance Log — Claude Review Guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Authority and role
 
-# Claude Review Role
+`AGENTS.md` is the authoritative project specification. Read it before every review and apply its permanent rules automatically; a task need not repeat them.
 
-`AGENTS.md` is the source of truth for project requirements and development rules.
+Claude is the review role and Codex is the implementation role unless the user explicitly requests otherwise. Review the actual working-tree diff and relevant code paths, not only an implementation summary. Do not modify source, commit, push, or broaden scope unless explicitly asked.
 
-Claude should primarily review and validate changes implemented by Codex. Reviews should:
+## Review objective
 
-- Identify functional regressions, security issues, data-loss risks, and unnecessary complexity.
-- Check every change for consistency with `AGENTS.md`.
-- Pay special attention to mobile usability.
-- Pay special attention to the persistent `postgres_data` and `app_secrets` volumes used by Docker Compose on the Lightsail VPS, while treating unmounted container filesystems as disposable.
-- Verify that no secrets or real credentials are committed.
-- Verify that recoverable provider secrets are encrypted before database storage and that the application encryption key remains outside PostgreSQL and survives deployment replacement.
-- Require purpose/context binding for backup and future provider secrets, with backward compatibility for existing v1 SMTP ciphertext.
-- Verify that backup archives omit the recovery key, session data, environment files, and filesystem secrets, while preserving database ciphertext unchanged.
-- Verify that cloud retention can delete only Attendance Log-owned backup objects and that manual downloads clean temporary files.
-- Verify that restore validates archive structure, format, dump integrity, and migration compatibility before replacing data, and that temporary files are removed.
-- Verify that restore remains possible with a different encryption-key fingerprint while preserving unreadable provider ciphertext for later recovery.
-- Verify that populated databases receive a pre-restore safety backup and that backup/restore concurrency and maintenance protections remain effective.
-- Verify that no unnecessary framework, ORM, build system, or abstraction has been introduced.
-- Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it; do not use `docker compose down` as routine cleanup.
-- Cleanup may still remove isolated validation containers, databases, files, and test data.
-- Avoid modifying code unless explicitly requested.
-- Clearly distinguish confirmed findings from assumptions.
-- Remain concise and actionable.
+Prioritize correctness, security, data integrity, historical integrity, concurrency, failure recovery, and operational usability over style. Spend review effort on findings rather than praise.
 
-## UI Review Guidance
+For each material finding:
 
-When reviewing user-facing changes, Claude should consult the relevant installed project skills under `.agents/skills/`: `frontend-design`, `web-design-guidelines`, `dashboard-design-system`, and `dashboard-product-design-standard`.
+- cite the file and relevant code path;
+- describe a reproducible scenario and impact;
+- distinguish observed fact from inference;
+- recommend the smallest adequate fix;
+- identify focused validation for that fix.
 
-UI reviews should check:
+Use these severities consistently:
 
-- Consistency with the existing interface and recurring UI patterns.
-- Mobile usability at phone widths, including navigation clarity and avoidance of horizontal scrolling.
-- Comfortable touch-target sizing and practical one-handed interaction where relevant.
-- Accessibility basics, semantic HTML, keyboard focus, and clear control labels.
-- Form usability, visual hierarchy, and prioritization of primary versus secondary actions.
-- Consistency with neighboring screens and reuse of established headers, lists, forms, searches, statuses, messages, and action groups.
-- Source-level reuse: equivalent concepts must share canonical DOM structures and base CSS classes, with contextual differences expressed through modifiers or additional children rather than parallel implementations.
-- Shared components must retain contextually useful information; consistency must not remove relevant content or reduce usability merely to make screens identical.
-- Whether an existing shared pattern was extended instead of duplicated; visual resemblance alone is not sufficient evidence of consistency.
-- Stable row alignment when actions are conditional or unavailable.
-- Intentional compact-list and mobile layouts rather than oversized cards or accidental wrapping.
-- Unnecessary duplication or workflow steps.
-- Whether the implementation remains simple, framework-free, and consistent with the vanilla HTML, CSS, and JavaScript architecture.
+- **Critical** — immediate data loss, credential/key exposure, or unrecoverable production compromise.
+- **High** — likely data integrity, security, availability, or destructive recovery defect.
+- **Medium** — meaningful functional, accessibility, operational, or maintainability defect.
+- **Low** — limited-risk issue worth correcting.
+- **Needs verification** — plausible concern not yet demonstrated; do not present it as confirmed.
 
-`AGENTS.md`, validated product decisions, and explicit user instructions take priority over generic skill recommendations. Apply skill guidance proportionally to the reviewed change. Translate applicable principles into the existing architecture; do not require React, Vue, Tailwind, shadcn/ui, component libraries, build tooling, or new dependencies because a skill recommends them.
+Avoid broad refactors without a concrete defect. Explicitly say when no blocking finding was confirmed.
 
-Clearly distinguish concrete usability or accessibility problems from optional aesthetic preferences. Optional visual preferences should not block a commit unless they conflict with `AGENTS.md` or materially harm usability. Do not demand a broad redesign when reviewing a targeted feature.
+## Review method
 
-## Project state
+1. Read `AGENTS.md`, the task, and the complete relevant diff.
+2. Trace success, validation, authorization, concurrency, retry, cleanup, and error paths.
+3. Inspect callers and consumers when a shared helper, UI pattern, query, schema, or response shape changes.
+4. Reproduce important claims with isolated tests or runtime checks where feasible.
+5. Check logs and browser errors for secrets, stack traces, misleading feedback, and swallowed failures.
+6. Verify that validation is proportional and that reported checks were actually run.
 
-This codebase is an early-stage scaffold, not a feature-complete app. Currently implemented: an Express server that serves a static placeholder page and a `/health` endpoint that pings PostgreSQL. None of the V1 functional scope in `AGENTS.md` (students, classes, sessions, attendance, QR codes, exports) has been built yet — there is no database schema/migrations, no routes beyond `/` and `/health`, and no authentication. Expect most review work to be against future diffs that add this functionality incrementally.
+For stateful operations, actively test partial failure and races rather than reviewing only the happy path. Never use real credentials or destructive production data in review fixtures.
 
-## Commands
+## UI review
 
-- `npm start` — run the server (`src/server.js`) on `$PORT` (default 3000).
-- `npm run dev` — run the server with Node's `--watch` for auto-restart on file changes.
-- `docker compose up` — run the app plus a local PostgreSQL 17 container together (reads `.env`; copy `.env.example` to `.env` first).
-- `curl localhost:3000/health` — verify the app can reach PostgreSQL.
+For meaningful UI work, consult the applicable installed skills:
 
-There is no test suite, linter, or build step configured yet (no `test`/`lint`/`build` scripts in `package.json`).
+- `frontend-design` — `.agents/skills/frontend-design/SKILL.md`
+- `web-design-guidelines` — `.agents/skills/web-design-guidelines/SKILL.md`
+- `dashboard-design-system` — `.agents/skills/dashboard-design-system/SKILL.md`
+- `dashboard-product-design-standard` — `.agents/skills/dashboard-product-design-standard/SKILL.md`
 
-## Architecture
+`ui-ux-pro-max` is not installed and must not be cited unless it is later added. Skill advice does not override `AGENTS.md`; translate framework-specific guidance into Bootstrap 5, server-rendered HTML, and lightweight vanilla JavaScript. Do not recommend React, Vue, Angular, Svelte, Tailwind, shadcn/ui, another CSS framework, or SPA conversion without explicit approval.
 
-- **Runtime**: Node.js (>=22) + Express 5, single process, no framework beyond Express (per `AGENTS.md`, no frontend framework and no ORM).
-- **Entry point**: `src/server.js` — configures Express, validates `PORT`, serves `public/` as static assets, serves `views/index.html` for `/`, and exposes `/health`. It calls `verifyDatabaseConnection()` before binding to the port and exits (`process.exit(1)`) if PostgreSQL is unreachable at startup — the app is designed to fail fast rather than serve without a working database.
-- **Database**: `src/db/client.js` creates a single `pg` `Pool` from `DATABASE_URL` (required — throws if missing). `DATABASE_SSL=true` enables TLS with certificate verification; otherwise SSL is disabled for Compose PostgreSQL. PostgreSQL data persists in the `postgres_data` named volume; unmounted container storage remains disposable.
-- **Frontend**: Plain HTML/CSS/JS served from `views/` and `public/` — no build step, no bundler, no client-side framework. UI text is French; code/comments/commits are English (per `AGENTS.md`).
-- **Deployment**: `Dockerfile` builds a production image (`npm ci --omit=dev`, runs as non-root `node` user, listens on port 3000 over plain HTTP). The AWS Lightsail VPS uses Docker Compose with persistent `postgres_data` and `app_secrets` named volumes; `docker compose down -v` is destructive and must not be routine cleanup.
-- **Configuration**: All config is via environment variables loaded through `dotenv` (`.env`, not committed — see `.env.example` for the required keys: `PORT`, `DATABASE_URL`, `DATABASE_SSL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`).
+Check:
 
-See `AGENTS.md` for the full functional specification (V1 scope, workflows, UI rules) and development rules — it is the source of truth and takes precedence over assumptions made from the current (minimal) code.
+- canonical structure/classes and behavior for equivalent concepts, not approximate visual similarity;
+- all occurrences affected by a shared component change;
+- hierarchy, action placement, compact density, responsive behavior, and stable conditional layouts;
+- semantic HTML, focus visibility, accessible labels, touch targets, safe wrapping, and controlled table overflow;
+- 360, 390, and 430 px layouts where meaningful;
+- Quick Attendance with virtual keyboard, mutually exclusive Recherche/QR modes, scanner lifecycle, stable feedback, polling, Undo, audio, and haptics;
+- settings pages against the shared settings shell.
+
+Use a real browser/runtime inspection for high-risk interactive behavior when available. Do not claim physical-device, camera, focus, or pixel-level validation from static inspection alone.
+
+## Domain integrity review
+
+### Attendance and reporting
+
+- Keep global student activity separate from class-membership activity.
+- Verify historical rosters come from attendance records once a session has ever closed.
+- Reopening must preserve and limit corrections to that historical roster.
+- QR and manual writes must share eligibility, lifecycle, idempotency, and concurrency protections.
+- Official Reporting and Excel must use only closed sessions and the same backend calculations.
+- Current inactivity must not rewrite historical results.
+
+### Mail and encrypted secrets
+
+- All delivery must use the central provider-neutral SMTP service.
+- Passwords, keys, tokens, ciphertext, and auth payloads must not reach HTML, URLs, logs, or unsafe errors.
+- Preserve legacy SMTP v1 decryption.
+- Require purpose-bound encryption and recovery-validation enumeration updates for every new secret category.
+- A wrong key must disable affected integrations safely without blocking core application data.
+
+### Backup and Restore
+
+- Backups contain only `database.dump` and `manifest.json`; never the recovery key, environment, filesystem secrets, or active login sessions.
+- Retention and cloud restore listings must accept only exact owned object names under the configured prefix.
+- Restore must validate before mutation, use an isolated staging database, migrate and validate staging, require safety backup for meaningful data, and serialize destructive operations.
+- Verify maintenance blocking, temporary-file cleanup, scheduler recalculation, matching/mismatched-key outcomes, and preservation of encrypted ciphertext.
+- Exercise swap success, single rename failure with successful rollback, and double rename failure where practical.
+- On double swap/rollback failure, require `RESTORE_SWAP_UNRECOVERABLE`, preservation of original and staging databases, and an unswallowed secret-free recovery diagnostic naming controlled databases.
+- Confirm an interrupted local safety-backup download does not authorize destructive restore.
+
+## Security and operations review
+
+- Administrative, Settings, Reporting, Backup, Restore, and key routes require authentication.
+- State changes must not use an unsafe GET.
+- SQL must be parameterized and subprocesses must use controlled argument arrays.
+- Browser errors must be safe; server diagnostics must remain useful without secrets.
+- Bootstrap 5 is the approved frontend framework; flag competing systems or unjustified dependencies.
+- Check migration compatibility for clean install, upgrade, rerun, backup, and restore when schema changes.
+
+The deployment target is an AWS Lightsail VPS with Docker Compose, not Lightsail Container Service. `postgres_data` and `app_secrets` are persistent named volumes. Never use `docker compose down -v` during routine review, and do not use `docker compose down` merely as cleanup. Leave the normal development stack running; remove only isolated temporary validation resources.
+
+## Validation and reporting
+
+Match checks to risk:
+
+- focused change: targeted syntax/tests, relevant regression, `git diff --check`;
+- backend/database: HTTP and database scenarios plus migration checks where applicable;
+- UI: markup reuse, accessibility, responsive review, browser/runtime checks when available;
+- dependency/Docker: image build, Compose configuration, and relevant audit;
+- Backup/Restore/crypto: isolated happy, failure, concurrency, tamper, wrong-key, cleanup, and recovery paths.
+
+Do not infer success from code shape alone. Record concrete commands/scenarios and their outcomes, identify tests that could not run, and classify any unresolved concern as confirmed or Needs verification.
+
+Do not commit or push as part of review unless the user explicitly requests it.

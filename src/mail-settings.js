@@ -6,7 +6,7 @@ const {
   sendMail,
 } = require('./mail');
 const { decryptSecret, encryptSecret } = require('./secrets');
-const { escapeHtml, renderPage, renderSettingsNavigation } = require('./ui');
+const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -76,35 +76,28 @@ function renderSettingsPage({
     password: hasPassword ? 'stored' : '',
   });
   const feedbackMessage = feedback?.message
-    ? `<p class="message message-${feedback.type === 'success' ? 'success' : 'error'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
+    ? `<p class="alert alert-${feedback.type === 'success' ? 'success' : 'danger'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
     : '';
 
-  return renderPage('Configuration e-mail', `
-    <div class="settings-page">
-      <header class="page-header">
-        <div>
-          <p class="eyebrow">Administration</p>
-          <h1>Configuration e-mail</h1>
-          <p class="page-description">Configurez un fournisseur SMTP standard pour les futurs envois de l’application.</p>
-        </div>
-        <span class="status-badge status-${complete ? 'active' : 'inactive'}">${complete ? 'E-mail configuré' : 'Configuration e-mail incomplète'}</span>
-      </header>
-      ${renderSettingsNavigation('email')}
-      <div class="notification-area" aria-live="polite" aria-atomic="true">
-        ${feedbackMessage}
-      </div>
-      <form class="form-card" method="post" action="/settings/email" autocomplete="off">
+  return renderPage('Configuration e-mail', renderSettingsLayout({
+    activeSection: 'email',
+    title: 'Configuration e-mail',
+    description: 'Configurez un fournisseur SMTP standard pour les futurs envois de l’application.',
+    status: `<span class="badge status-badge status-${complete ? 'active' : 'inactive'}">${complete ? 'E-mail configuré' : 'Configuration e-mail incomplète'}</span>`,
+    notifications: feedbackMessage,
+    content: `
+      <form class="card card-body app-form" method="post" action="/settings/email" autocomplete="off">
         <div class="form-field">
           <label for="smtp-host">Serveur SMTP <span aria-hidden="true">*</span></label>
-          <input id="smtp-host" name="smtp_host" type="text" value="${escapeHtml(values.host)}" autocomplete="off" spellcheck="false" required>
+          <input class="form-control" id="smtp-host" name="smtp_host" type="text" value="${escapeHtml(values.host)}" autocomplete="off" spellcheck="false" required>
         </div>
         <div class="form-field">
           <label for="smtp-port">Port <span aria-hidden="true">*</span></label>
-          <input id="smtp-port" name="smtp_port" type="number" min="1" max="65535" inputmode="numeric" value="${escapeHtml(values.port)}" autocomplete="off" required>
+          <input class="form-control" id="smtp-port" name="smtp_port" type="number" min="1" max="65535" inputmode="numeric" value="${escapeHtml(values.port)}" autocomplete="off" required>
         </div>
         <div class="form-field">
           <label for="security-mode">Sécurité <span aria-hidden="true">*</span></label>
-          <select id="security-mode" name="security_mode" required>
+          <select class="form-select" id="security-mode" name="security_mode" required>
             <option value="starttls"${values.securityMode === 'starttls' ? ' selected' : ''}>STARTTLS</option>
             <option value="tls"${values.securityMode === 'tls' ? ' selected' : ''}>TLS implicite / SMTPS</option>
             <option value="none"${values.securityMode === 'none' ? ' selected' : ''}>Aucun chiffrement</option>
@@ -112,49 +105,50 @@ function renderSettingsPage({
         </div>
         <div class="form-field">
           <label for="smtp-username">Nom d’utilisateur</label>
-          <input id="smtp-username" name="smtp_username" type="text" value="${escapeHtml(values.username)}" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <input class="form-control" id="smtp-username" name="smtp_username" type="text" value="${escapeHtml(values.username)}" autocomplete="off" autocapitalize="none" spellcheck="false">
         </div>
         <div class="form-field">
           <label for="smtp-password">Mot de passe</label>
-          <input id="smtp-password" name="smtp_password" type="password" value="" autocomplete="new-password"${hasPassword ? ' placeholder="Laisser vide pour conserver le mot de passe…"' : ''}>
+          <input class="form-control" id="smtp-password" name="smtp_password" type="password" value="" autocomplete="new-password"${hasPassword ? ' placeholder="Laisser vide pour conserver le mot de passe…"' : ''}>
           <p class="help-text">${hasPassword ? 'Un mot de passe est enregistré. Laissez ce champ vide pour le conserver.' : 'Laissez les identifiants vides si votre relais SMTP n’exige pas d’authentification.'}</p>
         </div>
         <div class="form-field">
           <label for="sender-email">Adresse d’expéditeur <span aria-hidden="true">*</span></label>
-          <input id="sender-email" name="sender_email" type="email" value="${escapeHtml(values.senderEmail)}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+          <input class="form-control" id="sender-email" name="sender_email" type="email" value="${escapeHtml(values.senderEmail)}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
         </div>
         <div class="form-field">
           <label for="sender-name">Nom d’expéditeur <span aria-hidden="true">*</span></label>
-          <input id="sender-name" name="sender_name" type="text" value="${escapeHtml(values.senderName)}" autocomplete="off" required>
+          <input class="form-control" id="sender-name" name="sender_name" type="text" value="${escapeHtml(values.senderName)}" autocomplete="off" required>
         </div>
         <div class="form-field">
           <label for="reply-to">Reply-To</label>
-          <input id="reply-to" name="reply_to" type="email" value="${escapeHtml(values.replyTo)}" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <input class="form-control" id="reply-to" name="reply_to" type="email" value="${escapeHtml(values.replyTo)}" autocomplete="off" autocapitalize="none" spellcheck="false">
         </div>
         <p class="help-text">Utilisez les paramètres et identifiants SMTP fournis par votre prestataire.</p>
-        <div class="form-actions">
-          <button class="button" type="submit">Enregistrer la configuration</button>
+        <div class="form-actions d-flex flex-wrap gap-2">
+          <button class="btn btn-primary" type="submit">Enregistrer la configuration</button>
         </div>
       </form>
 
       <section class="page-section" aria-labelledby="test-email-title">
-        <div class="section-header">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="test-email-title">Tester la configuration</h2>
             <p class="section-description">Le test utilise uniquement la configuration enregistrée ci-dessus.</p>
           </div>
         </div>
-        <form class="form-card" method="post" action="/settings/email/test" autocomplete="off">
+        <form class="card card-body app-form" method="post" action="/settings/email/test" autocomplete="off">
           <div class="form-field">
             <label for="test-recipient">Adresse de destination</label>
-            <input id="test-recipient" name="test_recipient" type="email" value="${escapeHtml(testRecipient)}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+            <input class="form-control" id="test-recipient" name="test_recipient" type="email" value="${escapeHtml(testRecipient)}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
           </div>
-          <div class="form-actions">
-            <button class="button" type="submit">Envoyer un e-mail de test</button>
+          <div class="form-actions d-flex flex-wrap gap-2">
+            <button class="btn btn-primary" type="submit">Envoyer un e-mail de test</button>
           </div>
         </form>
       </section>
-    </div>`);
+    `,
+  }));
 }
 
 function publicValues(configuration) {

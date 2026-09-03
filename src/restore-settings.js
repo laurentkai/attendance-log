@@ -13,7 +13,7 @@ const {
   prepareCloudRestore,
 } = require('./restore');
 const { getKeyInfo } = require('./secrets');
-const { escapeHtml, renderPage, renderSettingsNavigation } = require('./ui');
+const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
 const configuredUploadMb = Number.parseInt(process.env.BACKUP_RESTORE_MAX_MB || '512', 10);
@@ -69,64 +69,66 @@ function formatSize(value) {
 
 function renderRestorePage({ cloud = null, feedback = null, history = [] }) {
   const cloudContent = cloud?.backups?.length
-    ? `<form class="form-card" method="post" action="/settings/backups/restore/cloud">
+    ? `<form class="card card-body app-form" method="post" action="/settings/backups/restore/cloud">
         <div class="form-field">
           <label for="cloud-backup">Sauvegarde disponible</label>
-          <select id="cloud-backup" name="object_key" required>
+          <select class="form-select" id="cloud-backup" name="object_key" required>
             ${cloud.backups.map((backup) => `<option value="${escapeHtml(backup.key)}">${escapeHtml(formatTimestamp(backup.lastModified))} · ${escapeHtml(path.basename(backup.key))} · ${escapeHtml(formatSize(backup.size))}</option>`).join('')}
           </select>
         </div>
-        <button class="button button-secondary" type="submit">Inspecter la sauvegarde cloud</button>
+        <button class="btn btn-outline-secondary" type="submit">Inspecter la sauvegarde cloud</button>
       </form>`
     : `<p class="empty-state">${cloud?.error ? escapeHtml(errorMessage(cloud.error)) : 'Aucune sauvegarde Attendance Log disponible sur la destination configurée.'}</p>`;
   const notification = feedback
-    ? `<div class="notification-area"><p class="message message-error" role="alert">${escapeHtml(feedback)}</p></div>` : '<div class="notification-area"></div>';
+    ? `<p class="alert alert-danger" role="alert">${escapeHtml(feedback)}</p>` : '';
   const historyContent = history.length === 0
     ? '<p class="empty-state">Aucune restauration n’a encore été exécutée.</p>'
-    : `<div class="compact-list">${history.map((entry) => `<article class="compact-row compact-row-status"><div class="compact-identity"><p class="compact-title">${escapeHtml(entry.filename)}</p><p class="compact-meta">${escapeHtml(formatTimestamp(entry.started_at))} · ${escapeHtml(entry.source.toUpperCase())}</p></div><div class="compact-status"><span class="status-badge status-${entry.status === 'success' ? 'active' : 'absent'}">${entry.status === 'success' ? 'Réussie' : 'Échec'}</span>${entry.error_summary ? `<p class="compact-meta">${escapeHtml(errorMessage(entry.error_summary))}</p>` : ''}</div></article>`).join('')}</div>`;
-  return renderPage('Restaurer une sauvegarde', `
-    <div class="settings-page backup-settings restore-settings">
-      <header class="page-header">
-        <div><p class="eyebrow">Configuration · Sauvegardes</p><h1>Restaurer une sauvegarde</h1><p class="page-description">Inspectez une sauvegarde avant de remplacer les données de l’installation.</p></div>
-        <a class="button button-quiet" href="/settings/backups">Retour aux sauvegardes</a>
-      </header>
-      ${renderSettingsNavigation('backups')}
-      ${notification}
-      <p class="message message-warning">Une restauration remplace entièrement la base actuelle. Les données métier restent restaurables même si la clé de chiffrement est différente.</p>
+    : `<div class="list-group compact-list">${history.map((entry) => `<article class="list-group-item compact-row compact-row-status"><div class="compact-identity"><p class="compact-title">${escapeHtml(entry.filename)}</p><p class="compact-meta">${escapeHtml(formatTimestamp(entry.started_at))} · ${escapeHtml(entry.source.toUpperCase())}</p></div><div class="compact-status"><span class="badge status-badge status-${entry.status === 'success' ? 'active' : 'absent'}">${entry.status === 'success' ? 'Réussie' : 'Échec'}</span>${entry.error_summary ? `<p class="compact-meta">${escapeHtml(errorMessage(entry.error_summary))}</p>` : ''}</div></article>`).join('')}</div>`;
+  return renderPage('Restaurer une sauvegarde', renderSettingsLayout({
+    activeSection: 'backups',
+    title: 'Restaurer une sauvegarde',
+    description: 'Inspectez une sauvegarde avant de remplacer les données de l’installation.',
+    status: '<a class="btn btn-light" href="/settings/backups">Retour aux sauvegardes</a>',
+    notifications: notification,
+    content: `<div class="backup-settings restore-settings">
+      <p class="alert alert-warning">Une restauration remplace entièrement la base actuelle. Les données métier restent restaurables même si la clé de chiffrement est différente.</p>
       <section class="page-section" aria-labelledby="local-restore-title">
-        <div class="section-header"><div><h2 id="local-restore-title">Depuis un fichier</h2><p class="section-description">Archive ZIP créée par Attendance Log, jusqu’à ${maximumUploadMb} Mo.</p></div></div>
-        <form class="form-card" method="post" action="/settings/backups/restore/local" enctype="multipart/form-data">
-          <div class="form-field"><label for="restore-file">Fichier de sauvegarde</label><input id="restore-file" name="backup" type="file" accept=".zip,application/zip" required></div>
-          <button class="button" type="submit">Inspecter le fichier</button>
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="local-restore-title">Depuis un fichier</h2><p class="section-description">Archive ZIP créée par Attendance Log, jusqu’à ${maximumUploadMb} Mo.</p></div></div>
+        <form class="card card-body app-form" method="post" action="/settings/backups/restore/local" enctype="multipart/form-data">
+          <div class="form-field"><label for="restore-file">Fichier de sauvegarde</label><input class="form-control" id="restore-file" name="backup" type="file" accept=".zip,application/zip" required></div>
+          <button class="btn btn-primary" type="submit">Inspecter le fichier</button>
         </form>
       </section>
       <section class="page-section" aria-labelledby="cloud-restore-title">
-        <div class="section-header"><div><h2 id="cloud-restore-title">Depuis le cloud</h2><p class="section-description">Sauvegardes du préfixe Attendance Log de la destination actuellement configurée.</p></div></div>
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="cloud-restore-title">Depuis le cloud</h2><p class="section-description">Sauvegardes du préfixe Attendance Log de la destination actuellement configurée.</p></div></div>
         ${cloudContent}
       </section>
       <section class="page-section" aria-labelledby="restore-history-title">
-        <div class="section-header"><div><h2 id="restore-history-title">Historique des restaurations</h2><p class="section-description">Dernières tentatives enregistrées dans la base actuelle.</p></div></div>
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="restore-history-title">Historique des restaurations</h2><p class="section-description">Dernières tentatives enregistrées dans la base actuelle.</p></div></div>
         ${historyContent}
       </section>
-    </div>`);
+    </div>`,
+  }));
 }
 
 function renderPreview(prepared, feedback = null) {
   const manifest = prepared.manifest;
   const currentFingerprint = getKeyInfo().fingerprint;
   const keyStatus = prepared.fingerprintMatch
-    ? '<p class="message message-success">Clé compatible — les secrets chiffrés devraient rester utilisables.</p>'
-    : '<p class="message message-warning">La clé actuelle ne correspond pas à celle de cette sauvegarde. Les données métier seront restaurées, mais les identifiants chiffrés devront être récupérés avec la clé correspondante ou reconfigurés.</p>';
+    ? '<p class="alert alert-success">Clé compatible — les secrets chiffrés devraient rester utilisables.</p>'
+    : '<p class="alert alert-warning">La clé actuelle ne correspond pas à celle de cette sauvegarde. Les données métier seront restaurées, mais les identifiants chiffrés devront être récupérés avec la clé correspondante ou reconfigurés.</p>';
   const safety = prepared.currentDatabasePopulated
-    ? `<div class="form-card"><h2>Données actuelles détectées</h2><p>Avant leur remplacement, Attendance Log tentera une sauvegarde cloud. Si elle est indisponible, téléchargez obligatoirement cette sauvegarde de sécurité.</p>
-        <form method="post" action="/settings/backups/restore/${escapeHtml(prepared.token)}/safety-download"><button class="button button-secondary" type="submit">Télécharger la sauvegarde de sécurité</button></form>
-        ${prepared.safetyDownloaded ? '<span class="status-badge status-active">Sauvegarde de sécurité générée</span>' : ''}</div>` : '';
-  return renderPage('Confirmer la restauration', `
-    <div class="settings-page backup-settings restore-settings">
-      <header class="page-header"><div><p class="eyebrow">Restauration</p><h1>Confirmer la restauration</h1><p class="page-description">Vérifiez l’origine et la compatibilité avant de continuer.</p></div><a class="button button-quiet" href="/settings/backups/restore">Changer de sauvegarde</a></header>
-      ${renderSettingsNavigation('backups')}
-      <div class="notification-area">${feedback ? `<p class="message message-error" role="alert">${escapeHtml(feedback)}</p>` : ''}</div>
-      <section class="form-card restore-summary" aria-labelledby="backup-summary-title">
+    ? `<div class="card card-body app-form"><h2>Données actuelles détectées</h2><p>Avant leur remplacement, Attendance Log tentera une sauvegarde cloud. Si elle est indisponible, téléchargez obligatoirement cette sauvegarde de sécurité.</p>
+        <form method="post" action="/settings/backups/restore/${escapeHtml(prepared.token)}/safety-download"><button class="btn btn-outline-secondary" type="submit">Télécharger la sauvegarde de sécurité</button></form>
+        ${prepared.safetyDownloaded ? '<span class="badge status-badge status-active">Sauvegarde de sécurité générée</span>' : ''}</div>` : '';
+  return renderPage('Confirmer la restauration', renderSettingsLayout({
+    activeSection: 'backups',
+    title: 'Confirmer la restauration',
+    description: 'Vérifiez l’origine et la compatibilité avant de continuer.',
+    status: '<a class="btn btn-light" href="/settings/backups/restore">Changer de sauvegarde</a>',
+    notifications: feedback ? `<p class="alert alert-danger" role="alert">${escapeHtml(feedback)}</p>` : '',
+    content: `<div class="backup-settings restore-settings">
+      <section class="card card-body app-form restore-summary" aria-labelledby="backup-summary-title">
         <h2 id="backup-summary-title">${escapeHtml(prepared.filename)}</h2>
         <dl class="security-key-summary">
           <div><dt>Date de sauvegarde</dt><dd>${escapeHtml(formatTimestamp(manifest.generatedAt))}</dd></div>
@@ -140,14 +142,15 @@ function renderPreview(prepared, feedback = null) {
       </section>
       ${safety}
       <section class="page-section" aria-labelledby="restore-confirm-title">
-        <div class="section-header"><div><h2 id="restore-confirm-title">Confirmation destructive</h2><p class="section-description">La base actuelle sera remplacée après validation complète dans une base temporaire.</p></div></div>
-        <form class="form-card" method="post" action="/settings/backups/restore/${escapeHtml(prepared.token)}/confirm" autocomplete="off">
-          <label class="checkbox-option"><input name="understood" type="checkbox" value="yes" required><span>Je comprends que les données actuelles seront remplacées.</span></label>
-          <div class="form-field"><label for="restore-confirmation">Saisissez RESTAURER</label><input id="restore-confirmation" name="confirmation" required autocomplete="off" spellcheck="false"></div>
-          <button class="button button-danger" type="submit">Restaurer cette sauvegarde</button>
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="restore-confirm-title">Confirmation destructive</h2><p class="section-description">La base actuelle sera remplacée après validation complète dans une base temporaire.</p></div></div>
+        <form class="card card-body app-form" method="post" action="/settings/backups/restore/${escapeHtml(prepared.token)}/confirm" autocomplete="off">
+          <label class="checkbox-option"><input class="form-check-input" name="understood" type="checkbox" value="yes" required><span>Je comprends que les données actuelles seront remplacées.</span></label>
+          <div class="form-field"><label for="restore-confirmation">Saisissez RESTAURER</label><input class="form-control" id="restore-confirmation" name="confirmation" required autocomplete="off" spellcheck="false"></div>
+          <button class="btn btn-danger" type="submit">Restaurer cette sauvegarde</button>
         </form>
       </section>
-    </div>`);
+    </div>`,
+  }));
 }
 
 async function loadCloudListing() {
@@ -247,10 +250,13 @@ router.post('/:token/confirm', async (request, response) => {
       throw new RestoreError('CONFIRMATION_REQUIRED');
     }
     const result = await performRestore(request.params.token);
-    response.status(200).send(renderPage('Restauration terminée', `
-      <div class="settings-page"><header class="page-header"><div><h1>Restauration terminée</h1><p class="page-description">Attendance Log redémarre avec les données restaurées.</p></div></header>
-      <p class="message message-success">La restauration a réussi.${result.fingerprintMatch ? '' : ' Certaines connexions externes devront être récupérées avec la clé correspondante ou reconfigurées.'}</p>
-      <p>Vous devrez vous reconnecter après le redémarrage.</p></div>`));
+    response.status(200).send(renderPage('Restauration terminée', renderSettingsLayout({
+      activeSection: 'backups',
+      title: 'Restauration terminée',
+      description: 'Attendance Log redémarre avec les données restaurées.',
+      notifications: `<p class="alert alert-success">La restauration a réussi.${result.fingerprintMatch ? '' : ' Certaines connexions externes devront être récupérées avec la clé correspondante ou reconfigurées.'}</p>`,
+      content: '<p>Vous devrez vous reconnecter après le redémarrage.</p>',
+    })));
     response.once('finish', () => setTimeout(() => process.exit(0), 250));
   } catch (error) {
     console.error('Restore failed:', error.code || 'RESTORE_FAILED');
