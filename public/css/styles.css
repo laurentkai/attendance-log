@@ -984,6 +984,114 @@ legend,
   font-variant-numeric: tabular-nums;
 }
 
+.report-navigation-row {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.report-navigation-row:hover {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.report-rate,
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.report-rate {
+  font-size: 1rem;
+}
+
+.report-summary {
+  margin: 0 0 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.report-summary div {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.report-summary div:nth-child(odd) {
+  border-right: 1px solid var(--border);
+}
+
+.report-summary div:last-child {
+  grid-column: 1 / -1;
+  border-bottom: 0;
+  border-right: 0;
+}
+
+.report-summary dt {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+
+.report-summary dd {
+  margin: 0.2rem 0 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.data-table-scroll:focus-visible {
+  outline: 0.15rem solid #38bdf8;
+  outline-offset: 0.12rem;
+}
+
+.data-table {
+  width: 100%;
+  min-width: 44rem;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.data-table th {
+  color: var(--ink-muted);
+  background: var(--surface-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.data-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.data-table .numeric {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.report-filter-form {
+  grid-template-columns: 1fr;
+}
+
 .summary-card {
   margin-bottom: 1rem;
   border: 1px solid var(--border);
@@ -1187,6 +1295,26 @@ a:focus-visible,
   .compact-actions > .button,
   .compact-actions > form {
     flex: 0 1 auto;
+  }
+
+  .report-summary {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .report-summary div,
+  .report-summary div:nth-child(odd) {
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+  }
+
+  .report-summary div:last-child {
+    grid-column: auto;
+    border-right: 0;
+  }
+
+  .report-filter-form {
+    grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 0.7fr) minmax(10rem, 0.7fr) auto;
+    align-items: end;
   }
 
 }

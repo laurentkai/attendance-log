@@ -30,6 +30,8 @@ let currentSection = 'home';
 
 if (path.startsWith('/students/import')) {
   currentSection = 'import';
+} else if (path.startsWith('/reporting')) {
+  currentSection = 'reporting';
 } else if (path.startsWith('/settings/email')) {
   currentSection = 'email';
 } else if (path.startsWith('/students')) {
