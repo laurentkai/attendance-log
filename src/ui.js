@@ -38,6 +38,7 @@ function renderSettingsNavigation(activeSection) {
   return `<nav class="context-tabs" aria-label="Configuration">
     <a href="/settings/email"${activeSection === 'email' ? ' aria-current="page"' : ''}>E-mail</a>
     <a href="/settings/security"${activeSection === 'security' ? ' aria-current="page"' : ''}>Sécurité</a>
+    <a href="/settings/backups"${activeSection === 'backups' ? ' aria-current="page"' : ''}>Sauvegardes</a>
   </nav>`;
 }
 

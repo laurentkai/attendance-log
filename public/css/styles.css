@@ -874,6 +874,45 @@ select {
   max-width: 44rem;
 }
 
+.backup-settings {
+  max-width: 56rem;
+}
+
+.backup-settings fieldset {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.backup-settings fieldset[hidden],
+.backup-settings [hidden] {
+  display: none;
+}
+
+.backup-schedule-grid {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.backup-cloud-actions {
+  margin-top: 0.75rem;
+}
+
+.backup-history-table {
+  min-width: 40rem;
+}
+
+.restore-settings {
+  max-width: 48rem;
+}
+
+.restore-summary {
+  margin-bottom: 1rem;
+}
+
+.restore-settings input[type="file"] {
+  max-width: 100%;
+}
+
 .security-key-summary {
   display: grid;
   gap: 0.65rem;
@@ -1370,6 +1409,10 @@ a:focus-visible,
   .report-filter-form {
     grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 0.7fr) minmax(10rem, 0.7fr) auto;
     align-items: end;
+  }
+
+  .backup-schedule-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
 }

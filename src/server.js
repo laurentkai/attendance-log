@@ -6,11 +6,15 @@ const session = require('express-session');
 const connectPgSimple = require('connect-pg-simple');
 const { pool, verifyDatabaseConnection } = require('./db/client');
 const { router: authRouter, requireAuthentication } = require('./auth');
+const backupSettingsRouter = require('./backup-settings');
+const { getStoredBackupSecretStatus, startBackupScheduler } = require('./backup');
 const classesRouter = require('./classes');
 const courseSessionsRouter = require('./course-sessions');
 const { formatDateForDisplay } = require('./date-format');
 const mailSettingsRouter = require('./mail-settings');
+const { isMaintenanceActive, maintenanceMiddleware } = require('./maintenance');
 const reportingRouter = require('./reporting');
+const { cleanupStaleRestoreWorkspaces } = require('./restore');
 const securitySettingsRouter = require('./security-settings');
 const {
   getStoredMailSecretStatus,
@@ -46,6 +50,9 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.get('/health', async (_request, response) => {
+  if (isMaintenanceActive()) {
+    return response.status(503).json({ status: 'maintenance', database: 'restoring' });
+  }
   try {
     await pool.query('SELECT 1');
     response.json({ status: 'ok', database: 'connected' });
@@ -53,6 +60,8 @@ app.get('/health', async (_request, response) => {
     response.status(503).json({ status: 'error', database: 'unavailable' });
   }
 });
+
+app.use(maintenanceMiddleware);
 
 const PostgreSqlSessionStore = connectPgSimple(session);
 app.use(session({
@@ -93,6 +102,7 @@ app.use('/classes', classesRouter);
 app.use('/sessions', courseSessionsRouter);
 app.use('/settings/email', mailSettingsRouter);
 app.use('/settings/security', securitySettingsRouter);
+app.use('/settings/backups', backupSettingsRouter);
 app.use('/reporting', reportingRouter);
 app.use('/students/import', studentImportRouter);
 app.use('/students', studentsRouter);
@@ -177,6 +187,7 @@ app.get('/', async (_request, response) => {
 async function start() {
   try {
     await verifyDatabaseConnection();
+    await cleanupStaleRestoreWorkspaces();
     const keyInfo = await initializeSecrets();
     if (process.env.NODE_ENV === 'production' && keyInfo.source === 'persistent-file') {
       console.warn('Application encryption key is stored in persistent application storage. Losing that storage makes encrypted provider secrets unrecoverable; export and securely store the recovery key.');
@@ -187,7 +198,11 @@ async function start() {
       console.error('Unable to protect the stored SMTP credential:', error.code || 'MIGRATION_FAILED');
     }
     try {
-      if (await getStoredMailSecretStatus() === 'mismatch') {
+      const secretStatuses = await Promise.all([
+        getStoredMailSecretStatus(),
+        getStoredBackupSecretStatus(),
+      ]);
+      if (secretStatuses.includes('mismatch')) {
         console.warn('WARNING: The active application encryption key does not match stored encrypted data. Provider secrets are unavailable until the matching recovery key is restored.');
       }
     } catch (error) {
@@ -195,6 +210,7 @@ async function start() {
     }
     app.listen(port, '0.0.0.0', () => {
       console.log(`Attendance Log listening on port ${port}`);
+      startBackupScheduler();
     });
   } catch (error) {
     console.error('Unable to start Attendance Log:', error.code || error.message);

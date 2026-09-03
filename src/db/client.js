@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { isMaintenanceActive } = require('../maintenance');
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -14,6 +15,7 @@ const pool = new Pool({
 });
 
 pool.on('error', (error) => {
+  if (isMaintenanceActive()) return;
   console.error('Unexpected PostgreSQL client error:', error);
 });
 

@@ -14,7 +14,12 @@ Claude should primarily review and validate changes implemented by Codex. Review
 - Pay special attention to the persistent `postgres_data` and `app_secrets` volumes used by Docker Compose on the Lightsail VPS, while treating unmounted container filesystems as disposable.
 - Verify that no secrets or real credentials are committed.
 - Verify that recoverable provider secrets are encrypted before database storage and that the application encryption key remains outside PostgreSQL and survives deployment replacement.
-- Before a second encrypted provider-secret category is introduced, require purpose/context binding with backward compatibility for existing v1 SMTP ciphertext.
+- Require purpose/context binding for backup and future provider secrets, with backward compatibility for existing v1 SMTP ciphertext.
+- Verify that backup archives omit the recovery key, session data, environment files, and filesystem secrets, while preserving database ciphertext unchanged.
+- Verify that cloud retention can delete only Attendance Log-owned backup objects and that manual downloads clean temporary files.
+- Verify that restore validates archive structure, format, dump integrity, and migration compatibility before replacing data, and that temporary files are removed.
+- Verify that restore remains possible with a different encryption-key fingerprint while preserving unreadable provider ciphertext for later recovery.
+- Verify that populated databases receive a pre-restore safety backup and that backup/restore concurrency and maintenance protections remain effective.
 - Verify that no unnecessary framework, ORM, build system, or abstraction has been introduced.
 - Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it; do not use `docker compose down` as routine cleanup.
 - Cleanup may still remove isolated validation containers, databases, files, and test data.

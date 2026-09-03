@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { pool } = require('./db/client');
+const { getStoredBackupSecretStatus } = require('./backup');
 const {
   getStoredMailSecretStatus,
   loadStoredMailConfiguration,
@@ -21,14 +22,24 @@ const upload = multer({
 });
 
 async function getEncryptedSecrets() {
+  // New encrypted secret purposes must also be added here for recovery-key validation.
   const configuration = await loadStoredMailConfiguration();
-  return configuration?.password && isEncryptedSecret(configuration.password)
-    ? [configuration.password]
-    : [];
+  const result = await pool.query(
+    'SELECT s3_secret_access_key, azure_account_key FROM backup_configuration WHERE id = 1',
+  );
+  return [
+    configuration?.password,
+    result.rows[0]?.s3_secret_access_key,
+    result.rows[0]?.azure_account_key,
+  ].filter((value) => value && isEncryptedSecret(value));
 }
 
 async function getSecretStatus() {
-  return getStoredMailSecretStatus();
+  const statuses = await Promise.all([
+    getStoredMailSecretStatus(),
+    getStoredBackupSecretStatus(),
+  ]);
+  return statuses.includes('mismatch') ? 'mismatch' : 'available';
 }
 
 function sourceLabel(source) {

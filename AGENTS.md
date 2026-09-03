@@ -88,6 +88,19 @@ Attendance Log is a lightweight, mobile-first attendance application for a navig
 - Do not integrate Google Drive or OneDrive in V1.
 - Do not build a statistics dashboard in V1.
 
+### Backups
+
+- Create portable ZIP backups containing a PostgreSQL custom-format logical dump and a non-secret manifest.
+- Never include the application encryption key, session data, environment files, or filesystem secrets in a backup archive.
+- Preserve encrypted provider-secret ciphertext as stored in PostgreSQL; the matching recovery key remains a separate administrator responsibility.
+- Support authenticated manual downloads plus one persisted automatic daily or weekly destination using S3-compatible storage or Azure Blob Storage.
+- Encrypt backup-provider credentials with purpose-bound authenticated encryption while retaining compatibility with existing v1 SMTP ciphertext.
+- Use provider-side encryption at rest for cloud backup objects and restrict retention cleanup to Attendance Log-owned object prefixes.
+- Restore only validated Attendance Log archives through the authenticated recovery workflow; restore into an isolated database, run normal migrations, and replace the live database only after validation succeeds.
+- A different application encryption-key fingerprint must warn but never block restoration of ordinary business data; preserve encrypted provider ciphertext for later key recovery or reconfiguration.
+- Require explicit destructive confirmation and a recoverable safety backup before replacing meaningful existing data.
+- Do not implement merge restore, selective restore, key rotation, distributed scheduling, or whole-volume copies in V1.
+
 ## UI requirements
 
 - Design mobile-first because Attendance Log is primarily operated from a smartphone during live attendance taking.
@@ -140,7 +153,7 @@ Apply these skills with the following precedence:
 - VPS Docker Compose uses persistent `postgres_data` and `app_secrets` named volumes across builds, container replacement, image upgrades, and host reboots.
 - Set `NODE_ENV=production` in the VPS deployment environment while retaining the persistent named volumes.
 - Never run `docker compose down -v` unless explicit destruction of PostgreSQL data and the application encryption key is intended.
-- Before adding a second encrypted provider-secret category, bind ciphertext to its intended purpose/context while retaining compatibility with existing v1 SMTP ciphertext.
+- Bind every new provider-secret category to its intended purpose/context while retaining compatibility with existing v1 SMTP ciphertext.
 - Treat PostgreSQL as persistent and every application container filesystem as disposable.
 - Leave the normal development Docker Compose environment running after validation unless the user explicitly asks to stop it.
 - Do not run `docker compose down` as routine cleanup; remove only isolated validation containers, databases, files, and test data when appropriate.

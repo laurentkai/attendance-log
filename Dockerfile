@@ -4,7 +4,9 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN apk add --no-cache postgresql17-client \
+    && npm ci --omit=dev \
+    && npm cache clean --force
 
 COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public
