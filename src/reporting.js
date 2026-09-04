@@ -19,13 +19,10 @@ const {
   sendWorkbook,
 } = require('./reporting-excel');
 const { getTerm } = require('./terminology');
+const { isValidPublicId } = require('./public-id');
 const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
-
-function isValidId(value) {
-  return /^[1-9]\d*$/.test(value || '');
-}
 
 function isValidDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
@@ -100,7 +97,7 @@ function getGlobalFilters(query) {
   const classId = typeof query.class_id === 'string' ? query.class_id : '';
   const dateFrom = typeof query.date_from === 'string' ? query.date_from : '';
   const dateTo = typeof query.date_to === 'string' ? query.date_to : '';
-  const error = classId && !isValidId(classId)
+  const error = classId && !isValidPublicId(classId)
     ? 'La sélection contient une valeur invalide.'
     : dateFrom && !isValidDate(dateFrom)
     ? 'La date de début n’est pas valide.'
@@ -153,7 +150,7 @@ router.get('/', async (_request, response) => {
             <label for="report-class">${businessTerm('class')}</label>
             <select class="form-select" id="report-class" name="class_id">
               <option value="">Sans filtre</option>
-              ${classes.map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`).join('')}
+              ${classes.map((course) => `<option value="${course.public_id}">${escapeHtml(course.name)}</option>`).join('')}
             </select>
           </div>
           <div class="form-field">
@@ -189,7 +186,7 @@ router.get('/courses', async (_request, response) => {
             <article class="list-group-item compact-row compact-row-status report-row" data-list-row data-search="${escapeHtml(course.name.toLocaleLowerCase('fr'))}">
               <div class="compact-identity"><p class="compact-title">${escapeHtml(course.name)}</p><p class="compact-meta">${businessTerm('session', 'plural')} clôturées : ${course.closedSessionCount} · ${businessTerm('attendance', 'plural')} : ${course.opportunities}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(course.attendanceRate)}</strong><span class="compact-meta">${course.present} présents · ${course.absent} absents</span></div>
-              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/courses/${course.id}">Voir le rapport</a></div>
+              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/courses/${course.public_id}">Voir le rapport</a></div>
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage(`Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`, `
@@ -204,7 +201,7 @@ router.get('/courses', async (_request, response) => {
 });
 
 router.get('/courses/:id/export', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderBusinessNotFoundPage('class');
     response.status(page.status).send(page.html);
     return;
@@ -229,7 +226,7 @@ router.get('/courses/:id/export', async (request, response) => {
 });
 
 router.get('/courses/:id', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderBusinessNotFoundPage('class');
     response.status(page.status).send(page.html);
     return;
@@ -243,12 +240,12 @@ router.get('/courses/:id', async (request, response) => {
     }
     const sessionRows = report.sessions.map((session) => `<tr>
       <td>${escapeHtml(formatDateForDisplay(session.date))}</td>
-      <td><a href="/sessions/${session.id}">${escapeHtml(session.title)}</a></td>
+      <td><a href="/sessions/${session.public_id}">${escapeHtml(session.title)}</a></td>
       <td>${escapeHtml(session.instructor)}</td>
       <td class="numeric">${session.opportunities}</td><td class="numeric">${session.present}</td><td class="numeric">${session.absent}</td><td class="numeric">${formatRate(session.attendanceRate)}</td>
     </tr>`);
     const studentRows = report.students.map((student) => `<tr>
-      <td><a href="/reporting/students/${student.id}">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</a></td>
+      <td><a href="/reporting/students/${student.public_id}">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</a></td>
       <td><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></td>
       <td class="numeric">${student.closedSessionCount}</td><td class="numeric">${student.present}</td><td class="numeric">${student.absent}</td><td class="numeric">${formatRate(student.attendanceRate)}</td>
     </tr>`);
@@ -258,7 +255,7 @@ router.get('/courses/:id', async (request, response) => {
         eyebrow: `Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`,
         title: report.course.name,
         description: `Données officielles issues uniquement des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.`,
-        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/courses">Retour à la liste</a></div>`,
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.public_id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/courses">Retour à la liste</a></div>`,
       })}
       ${renderReportingNavigation('courses')}
       ${renderSummary(report.summary)}
@@ -287,7 +284,7 @@ router.get('/sessions', async (_request, response) => {
             <article class="list-group-item compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase('fr'))}">
               <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p><p class="compact-title">${escapeHtml(session.title)}</p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
               <div class="compact-status"><span class="badge status-badge status-closed">État : clôturé</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents</span></div>
-              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.id}">Voir la session</a><a class="btn btn-primary" href="/reporting/sessions/${session.id}/export">Exporter en Excel</a></div>
+              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.public_id}">Voir la session</a><a class="btn btn-primary" href="/reporting/sessions/${session.public_id}/export">Exporter en Excel</a></div>
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage(`Reporting par ${getTerm('session').toLocaleLowerCase('fr')}`, `
@@ -302,7 +299,7 @@ router.get('/sessions', async (_request, response) => {
 });
 
 router.get('/sessions/:id/export', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderBusinessNotFoundPage('session');
     response.status(page.status).send(page.html);
     return;
@@ -344,7 +341,7 @@ router.get('/students', async (_request, response) => {
             <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
               <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p><p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ${student.closedSessionCount} ${businessTerm('session', student.closedSessionCount === 1 ? 'singular' : 'plural').toLocaleLowerCase('fr')} clôturée${student.closedSessionCount > 1 ? 's' : ''}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(student.attendanceRate)}</strong><span class="compact-meta">${student.present} présents · ${student.absent} absents</span></div>
-              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.id}">Voir le rapport</a></div>
+              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.public_id}">Voir le rapport</a></div>
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage(`Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, `
@@ -359,7 +356,7 @@ router.get('/students', async (_request, response) => {
 });
 
 router.get('/students/:id/export', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderBusinessNotFoundPage('student');
     response.status(page.status).send(page.html);
     return;
@@ -384,7 +381,7 @@ router.get('/students/:id/export', async (request, response) => {
 });
 
 router.get('/students/:id', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderBusinessNotFoundPage('student');
     response.status(page.status).send(page.html);
     return;
@@ -398,14 +395,14 @@ router.get('/students/:id', async (request, response) => {
     }
     const studentName = `${report.student.first_name} ${report.student.last_name}`;
     const rows = report.details.map((row) => `<tr>
-      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td>
+      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_public_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td>
     </tr>`);
     response.send(renderPage(`Rapport de ${studentName}`, `
       ${renderReportHeader({
         eyebrow: `Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`,
         title: studentName,
         description: `Code d’identification · ${report.student.student_code}`,
-        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/students/${report.student.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/students">Retour à la liste</a></div>`,
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/students/${report.student.public_id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/students">Retour à la liste</a></div>`,
       })}
       ${renderReportingNavigation('students')}
       ${renderSummary(report.summary)}
@@ -429,7 +426,7 @@ router.get('/export', async (request, response) => {
   try {
     if (filters.classId) {
       const classes = await getClassesForFilters();
-      if (!classes.some((course) => String(course.id) === filters.classId)) {
+      if (!classes.some((course) => course.public_id === filters.classId)) {
         const page = renderBusinessNotFoundPage('class');
         response.status(page.status).send(page.html);
         return;

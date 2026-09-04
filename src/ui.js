@@ -25,7 +25,7 @@ function renderNavigation() {
   const canViewReporting = hasPermission(currentUser, permissions.viewReporting);
   const canManageSettings = hasPermission(currentUser, permissions.manageSettings);
 
-  return `<nav class="navbar navbar-expand-lg app-header" aria-label="Navigation principale">
+  return `<nav class="navbar navbar-expand-lg sticky-top app-header" aria-label="Navigation principale">
     <div class="container-xl app-frame">
       <a class="navbar-brand app-brand" href="/" aria-label="Attendance Log — Accueil">
         <svg class="app-brand-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false">
@@ -65,6 +65,17 @@ function renderNavigation() {
       </div>
     </div>
   </nav>`;
+}
+
+function renderFooter() {
+  return `<footer class="app-footer">
+    <div class="app-frame">
+      <a class="app-footer-brand" href="https://labs.elinaka.lu">
+        <img src="https://labs.elinaka.lu/elinaka-labs-icon.png" width="16" height="16" alt="" loading="lazy" referrerpolicy="no-referrer">
+        <span>Powered by <span translate="no">Elinaka Labs</span></span>
+      </a>
+    </div>
+  </footer>`;
 }
 
 function renderSettingsNavigation(activeSection) {
@@ -128,12 +139,13 @@ function renderPage(title, content, {
     <script src="/js/classes.js" defer></script>
     <script src="/js/live-attendance.js" defer></script>
   </head>
-  <body class="bg-body-tertiary" data-term-session="${businessTerm('session')}" data-term-attendance="${businessTerm('attendance')}">
+  <body class="bg-body-tertiary${authenticated && navigation ? ' app-shell' : ''}" data-term-session="${businessTerm('session')}" data-term-attendance="${businessTerm('attendance')}">
     <a class="skip-link visually-hidden-focusable" href="#main-content">Aller au contenu</a>
     ${authenticated && navigation ? renderNavigation() : ''}
     <main class="app-main${navigation ? ' app-frame' : ''}${pageClass ? ` ${escapeHtml(pageClass)}` : ''}" id="main-content" tabindex="-1">
       ${content}
     </main>
+    ${authenticated && navigation ? renderFooter() : ''}
   </body>
 </html>`;
 }

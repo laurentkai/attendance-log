@@ -4,6 +4,7 @@ const { pool } = require('./db/client');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const { parseStudentQrPayload } = require('./student-qr');
 const { hasPermission, permissions } = require('./permissions');
+const { isValidPublicId } = require('./public-id');
 const { getTerm } = require('./terminology');
 const { businessTerm, escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
@@ -21,10 +22,6 @@ function renderSessionReadOnlyPage() {
     'Réouverture requise avant modification.',
     409,
   );
-}
-
-function isValidId(value) {
-  return /^[1-9]\d*$/.test(value);
 }
 
 function isValidDate(value) {
@@ -48,7 +45,7 @@ function getFormValues(body = {}) {
 }
 
 function validateForm(values) {
-  if (!isValidId(values.class_id)) {
+  if (!isValidPublicId(values.class_id)) {
     return `Sélectionnez une ${getTerm('class').toLocaleLowerCase('fr')}.`;
   }
   if (!isValidDate(values.date)) {
@@ -76,7 +73,7 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
          <label for="class_id">${businessTerm('class')} <span aria-hidden="true">*</span></label>
          <select class="form-select" id="class_id" name="class_id" required>
            <option value="">Sélectionner dans la liste</option>
-           ${classes.map((classRecord) => `<option value="${classRecord.id}"${String(classRecord.id) === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
+           ${classes.map((classRecord) => `<option value="${classRecord.public_id}"${classRecord.public_id === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
          </select>
        </div>`;
 
@@ -118,14 +115,14 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
 }
 
 async function getClasses() {
-  const result = await pool.query('SELECT id, name FROM classes ORDER BY LOWER(name), id');
+  const result = await pool.query('SELECT public_id, name FROM classes ORDER BY LOWER(name), id');
   return result.rows;
 }
 
 async function loadRoster(session) {
   if (session.closed_at) {
     return pool.query(
-      `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code, ar.status
+      `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code, ar.status
        FROM attendance_records ar
        INNER JOIN students s ON s.id = ar.student_id
        WHERE ar.session_id = $1
@@ -135,7 +132,7 @@ async function loadRoster(session) {
   }
 
   return pool.query(
-    `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code,
+    `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code,
             COALESCE(ar.status, 'pending') AS status
      FROM student_classes sc
      INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
@@ -213,6 +210,12 @@ async function markStudentPresent(client, sessionId, studentId) {
   };
 }
 
+async function resolveStudentId(client, publicId) {
+  if (!isValidPublicId(publicId)) return null;
+  const result = await client.query('SELECT id FROM students WHERE public_id = $1', [publicId]);
+  return result.rows[0]?.id || null;
+}
+
 function getStateLabel(state) {
   return {
     scheduled: 'État : planifié',
@@ -221,18 +224,30 @@ function getStateLabel(state) {
   }[state];
 }
 
+router.param('id', async (request, _response, next, value) => {
+  request.courseSessionId = null;
+  if (!isValidPublicId(value)) return next();
+  try {
+    const result = await pool.query('SELECT id FROM course_sessions WHERE public_id = $1', [value]);
+    request.courseSessionId = result.rows[0]?.id || null;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get('/', async (request, response) => {
   const searchQuery = typeof request.query.q === 'string' ? request.query.q.trim().slice(0, 100) : '';
   const searchPattern = `%${searchQuery}%`;
-  const classId = isValidId(request.query.class_id || '') ? request.query.class_id : '';
+  const classId = isValidPublicId(request.query.class_id || '') ? request.query.class_id : '';
 
   try {
     const [result, classResult] = await Promise.all([
       pool.query(
-        `SELECT cs.id, cs.date, cs.title, cs.instructor, cs.state, c.name AS class_name
+        `SELECT cs.public_id, cs.date, cs.title, cs.instructor, cs.state, c.name AS class_name
          FROM course_sessions cs
          INNER JOIN classes c ON c.id = cs.class_id
-         WHERE ($1::bigint IS NULL OR cs.class_id = $1)
+         WHERE ($1::uuid IS NULL OR c.public_id = $1)
            AND ($2 = ''
             OR cs.title ILIKE $3
             OR c.name ILIKE $3
@@ -241,7 +256,7 @@ router.get('/', async (request, response) => {
         [classId || null, searchQuery, searchPattern],
       ),
       classId
-        ? pool.query('SELECT id, name FROM classes WHERE id = $1', [classId])
+        ? pool.query('SELECT public_id, name FROM classes WHERE public_id = $1', [classId])
         : Promise.resolve({ rows: [] }),
     ]);
     const classRecord = classResult.rows[0];
@@ -263,7 +278,7 @@ router.get('/', async (request, response) => {
         ? 'Aucune session ne correspond à la recherche.'
         : 'Aucune session n’est enregistrée pour le moment.'}</p>`
       : `<div class="list-group compact-list">${result.rows.map((session) => `
-          <article class="list-group-item compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.id}"` : ''}>
+          <article class="list-group-item compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.public_id}"` : ''}>
             <div class="compact-identity session-identity">
               <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p>
               <p class="compact-title">${escapeHtml(session.title)}</p>
@@ -273,9 +288,9 @@ router.get('/', async (request, response) => {
               <span class="badge status-badge status-${session.state}" data-session-state>${getStateLabel(session.state)}</span>
             </div>
             <div class="compact-actions compact-actions--split" aria-label="Actions disponibles pour « ${escapeHtml(session.title)} »">
-              <a class="btn btn-primary" href="/sessions/${session.id}">${session.state === 'scheduled' ? `Voir la ${businessTerm('session').toLocaleLowerCase('fr')}` : businessTerm('attendance', 'plural')}</a>
+              <a class="btn btn-primary" href="/sessions/${session.public_id}">${session.state === 'scheduled' ? `Voir la ${businessTerm('session').toLocaleLowerCase('fr')}` : businessTerm('attendance', 'plural')}</a>
               ${canManageSessions ? `<span class="session-edit-slot">
-                <a class="btn btn-light" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
+                <a class="btn btn-light" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
                 <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>Modifier</button>
               </span>` : ''}
             </div>
@@ -287,11 +302,11 @@ router.get('/', async (request, response) => {
           <h1>${businessTerm('session', 'plural')}</h1>
           <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : canManageSessions ? `Planifiez et gérez les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.` : `Accédez aux ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} et gérez les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`}</p>
         </div>
-        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Ajouter</a>` : ''}
+        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.public_id}` : ''}">Ajouter</a>` : ''}
       </header>
       ${classRecord && canManageSessions ? `<nav class="nav nav-pills context-tabs" aria-label="Gestion de « ${escapeHtml(classRecord.name)} »">
-        <a class="nav-link" href="/classes/${classRecord.id}">${businessTerm('student', 'plural')}</a>
-        <a class="nav-link active" href="/sessions?class_id=${classRecord.id}" aria-current="page">${businessTerm('session', 'plural')}</a>
+        <a class="nav-link" href="/classes/${classRecord.public_id}">${businessTerm('student', 'plural')}</a>
+        <a class="nav-link active" href="/sessions?class_id=${classRecord.public_id}" aria-current="page">${businessTerm('session', 'plural')}</a>
       </nav>` : ''}
       <form class="search" method="get" action="/sessions" role="search">
         <label for="session-search">Rechercher une ${businessTerm('session').toLocaleLowerCase('fr')}</label>
@@ -319,7 +334,7 @@ router.get('/new', requireSessionManagement, async (request, response) => {
       action: '/sessions',
       submitLabel: 'Créer',
       values: {
-        class_id: isValidId(request.query.class_id || '') ? request.query.class_id : '',
+        class_id: isValidPublicId(request.query.class_id || '') ? request.query.class_id : '',
         date: '',
         title: '',
         instructor: '',
@@ -362,8 +377,8 @@ router.post('/', requireSessionManagement, async (request, response) => {
       `INSERT INTO course_sessions (class_id, date, title, instructor, notes)
        SELECT c.id, $2, $3, $4, $5
        FROM classes c
-       WHERE c.id = $1
-       RETURNING id`,
+       WHERE c.public_id = $1
+       RETURNING public_id`,
       [values.class_id, values.date, values.title, values.instructor, values.notes || null],
     );
     if (result.rowCount === 0) {
@@ -378,7 +393,7 @@ router.post('/', requireSessionManagement, async (request, response) => {
       }));
       return;
     }
-    response.redirect(303, `/sessions/${result.rows[0].id}?notice=created`);
+    response.redirect(303, `/sessions/${result.rows[0].public_id}?notice=created`);
   } catch (error) {
     console.error('Unable to create course session:', error);
     const classes = await getClasses().catch(() => []);
@@ -394,7 +409,7 @@ router.post('/', requireSessionManagement, async (request, response) => {
 });
 
 router.get('/:id/edit', requireSessionManagement, async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -402,12 +417,12 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
+      `SELECT cs.id, cs.public_id, c.public_id AS class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
               c.name AS class_name
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
        WHERE cs.id = $1`,
-      [request.params.id],
+      [request.courseSessionId],
     );
     if (result.rowCount === 0) {
       const page = renderSessionNotFoundPage();
@@ -422,7 +437,7 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
 
     response.send(renderSessionForm({
       title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
-      action: `/sessions/${result.rows[0].id}`,
+      action: `/sessions/${result.rows[0].public_id}`,
       submitLabel: 'Enregistrer',
       values: result.rows[0],
       classes: [],
@@ -436,14 +451,14 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
 });
 
 router.post('/:id', requireSessionManagement, async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
 
   try {
-    const stateResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.params.id]);
+    const stateResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.courseSessionId]);
     if (stateResult.rowCount === 0) {
       const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
@@ -464,7 +479,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   const values = getFormValues(request.body);
   const validationError = validateForm(values);
   if (validationError) {
-    const classResult = await pool.query('SELECT name FROM classes WHERE id = $1', [values.class_id]).catch(() => ({ rows: [] }));
+    const classResult = await pool.query('SELECT name FROM classes WHERE public_id = $1', [values.class_id]).catch(() => ({ rows: [] }));
     response.status(400).send(renderSessionForm({
       title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: `/sessions/${request.params.id}`,
@@ -481,12 +496,12 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
     const result = await pool.query(
       `UPDATE course_sessions
        SET date = $1, title = $2, instructor = $3, notes = $4
-       WHERE id = $5 AND class_id = $6 AND state IN ('scheduled', 'open')
+       WHERE id = $5 AND class_id = (SELECT id FROM classes WHERE public_id = $6) AND state IN ('scheduled', 'open')
        RETURNING id`,
-      [values.date, values.title, values.instructor, values.notes || null, request.params.id, values.class_id],
+      [values.date, values.title, values.instructor, values.notes || null, request.courseSessionId, values.class_id],
     );
     if (result.rowCount === 0) {
-      const sessionResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.params.id]);
+      const sessionResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.courseSessionId]);
       const page = sessionResult.rows[0]?.state === 'closed'
         ? renderSessionReadOnlyPage()
         : renderSessionNotFoundPage();
@@ -502,15 +517,15 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
 });
 
 router.get('/:id/status', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     response.status(404).json({ error: `${getTerm('session')} introuvable.` });
     return;
   }
 
   try {
     const sessionResult = await pool.query(
-      'SELECT id, class_id, state, closed_at FROM course_sessions WHERE id = $1',
-      [request.params.id],
+      'SELECT id, public_id, class_id, state, closed_at FROM course_sessions WHERE id = $1',
+      [request.courseSessionId],
     );
     if (sessionResult.rowCount === 0) {
       response.status(404).json({ error: `${getTerm('session')} introuvable.` });
@@ -520,12 +535,12 @@ router.get('/:id/status', async (request, response) => {
     const rosterResult = await loadRoster(session);
     response.set('Cache-Control', 'no-store');
     response.json({
-      id: String(session.id),
+      publicId: session.public_id,
       state: session.state,
       present: rosterResult.rows.filter((student) => student.status === 'present').length,
       total: rosterResult.rowCount,
       roster: rosterResult.rows.map((student) => ({
-        studentId: String(student.id),
+        studentId: student.public_id,
         status: student.status,
       })),
     });
@@ -536,7 +551,7 @@ router.get('/:id/status', async (request, response) => {
 });
 
 router.get('/:id/quick-attendance', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -544,12 +559,12 @@ router.get('/:id/quick-attendance', async (request, response) => {
 
   try {
     const sessionResult = await pool.query(
-      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.state, cs.closed_at,
+      `SELECT cs.id, cs.public_id, cs.class_id, cs.date, cs.title, cs.state, cs.closed_at,
               c.name AS class_name
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
        WHERE cs.id = $1`,
-      [request.params.id],
+      [request.courseSessionId],
     );
     if (sessionResult.rowCount === 0) {
       const page = renderSessionNotFoundPage();
@@ -566,7 +581,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
           <h1 class="visually-hidden">Mode rapide des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h1>
           <header class="quick-topbar">
             <strong class="quick-attendance-count">${presentCount} / ${rosterResult.rowCount} ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</strong>
-            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer le mode rapide" data-quick-close><span aria-hidden="true">×</span></a>
+            <a class="quick-close" href="/sessions/${session.public_id}" aria-label="Fermer le mode rapide" data-quick-close><span aria-hidden="true">×</span></a>
           </header>
           <p class="alert alert-warning">${session.state === 'closed'
             ? `La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Réouvrez-la avant de reprendre les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`
@@ -577,20 +592,20 @@ router.get('/:id/quick-attendance', async (request, response) => {
 
     const eligibleStudents = rosterResult.rows.filter((student) => student.status !== 'present');
     const studentRows = eligibleStudents.map((student) => `
-      <article class="list-group-item compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+      <article class="list-group-item compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
         <div class="compact-identity student-identity">
           <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
           <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
         </div>
         <div class="compact-actions">
-          <form method="post" action="/sessions/${session.id}/quick-attendance/${student.id}" data-quick-present-form>
+          <form method="post" action="/sessions/${session.public_id}/quick-attendance/${student.public_id}" data-quick-present-form>
             <button class="btn btn-primary" type="submit">Présent</button>
           </form>
         </div>
       </article>`).join('');
 
     response.send(renderPage(`Mode rapide des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, `
-      <div class="quick-attendance" data-quick-attendance data-session-id="${session.id}">
+      <div class="quick-attendance" data-quick-attendance data-session-id="${session.public_id}">
         <h1 class="visually-hidden">Mode rapide des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h1>
         <header class="quick-topbar">
           <strong class="quick-attendance-count" aria-label="Nombre de ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</strong>
@@ -602,7 +617,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
               </svg>
               <span>Annuler</span>
             </button>
-            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer le mode rapide"><span aria-hidden="true">×</span></a>
+            <a class="quick-close" href="/sessions/${session.public_id}" aria-label="Fermer le mode rapide"><span aria-hidden="true">×</span></a>
           </div>
         </header>
         <p class="alert alert-warning" data-quick-readonly hidden>La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Le mode rapide est indisponible.</p>
@@ -663,7 +678,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
 });
 
 router.get('/:id', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -671,13 +686,13 @@ router.get('/:id', async (request, response) => {
 
   try {
     const sessionResult = await pool.query(
-      `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
+      `SELECT cs.id, cs.public_id, cs.class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
               cs.closed_at,
               c.name AS class_name
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
        WHERE cs.id = $1`,
-      [request.params.id],
+      [request.courseSessionId],
     );
     if (sessionResult.rowCount === 0) {
       const page = renderSessionNotFoundPage();
@@ -706,7 +721,7 @@ router.get('/:id', async (request, response) => {
         ? `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}.`
         : `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}. La ${businessTerm('session').toLocaleLowerCase('fr')} n’a pas encore commencé.`}</p>`
       : `<div class="list-group compact-list" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
-          <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
               <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
@@ -719,7 +734,7 @@ router.get('/:id', async (request, response) => {
               }[student.status]}</span>
             </div>
             <div class="compact-actions compact-actions--attendance" data-attendance-actions${session.state === 'open' ? '' : ' hidden'}>
-              ${session.state === 'open' ? `<form class="compact-actions compact-actions--split" method="post" action="/sessions/${session.id}/attendance/${student.id}" data-attendance-form>
+              ${session.state === 'open' ? `<form class="compact-actions compact-actions--split" method="post" action="/sessions/${session.public_id}/attendance/${student.public_id}" data-attendance-form>
                 <button class="btn btn-primary" name="status" type="submit" value="present">Présent</button>
                 <button class="btn btn-outline-danger" name="status" type="submit" value="absent">Absent</button>
               </form>` : ''}
@@ -736,15 +751,15 @@ router.get('/:id', async (request, response) => {
           ${session.notes ? `<p class="page-description session-notes">${escapeHtml(session.notes)}</p>` : ''}
         </div>
         <div class="context-actions d-flex flex-wrap gap-2">
-          <a class="btn btn-primary" href="/sessions/${session.id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Mode rapide</a>
-          ${canManageSessions ? `<form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir' : 'Réouvrir'}</button></form>
-          <a class="btn btn-outline-secondary" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
-          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer la ${businessTerm('session').toLocaleLowerCase('fr')} ? Les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} en attente seront marqués absents."${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer</button></form>` : ''}
+          <a class="btn btn-primary" href="/sessions/${session.public_id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Mode rapide</a>
+          ${canManageSessions ? `<form method="post" action="/sessions/${session.public_id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir' : 'Réouvrir'}</button></form>
+          <a class="btn btn-outline-secondary" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
+          <form method="post" action="/sessions/${session.public_id}/close" data-session-close data-confirm="Clôturer la ${businessTerm('session').toLocaleLowerCase('fr')} ? Les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} en attente seront marqués absents."${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer</button></form>` : ''}
         </div>
       </header>
       ${notice}
       ${session.state === 'closed' ? `<p class="alert alert-warning">La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée et en lecture seule. ${canManageSessions ? `Réouvrez-la pour modifier ses informations ou les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.` : 'Réouverture par un gestionnaire requise avant toute correction.'}</p>` : ''}
-      <section class="card card-body summary-card attendance-summary" aria-label="Résumé des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.id}"` : ''}>
+      <section class="card card-body summary-card attendance-summary" aria-label="Résumé des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.public_id}"` : ''}>
         <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> présents</strong>
         <span class="badge status-badge status-${session.state}" data-session-state aria-live="polite">${getStateLabel(session.state)}</span>
       </section>
@@ -773,7 +788,7 @@ router.get('/:id', async (request, response) => {
 });
 
 router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
     return;
   }
@@ -786,7 +801,7 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
 
   try {
     const studentResult = await pool.query(
-      `SELECT id, first_name, last_name
+      `SELECT id, public_id, first_name, last_name
        FROM students
        WHERE qr_token = $1::uuid`,
       [qrToken],
@@ -800,11 +815,11 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const result = await markStudentPresent(client, request.params.id, student.id);
+      const result = await markStudentPresent(client, request.courseSessionId, student.id);
       if (!result.allowed) {
         const sessionResult = await client.query(
           'SELECT state FROM course_sessions WHERE id = $1',
-          [request.params.id],
+          [request.courseSessionId],
         );
         await client.query('ROLLBACK');
         if (sessionResult.rowCount === 0) {
@@ -826,10 +841,11 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
       }
 
       await client.query('COMMIT');
-      const { allowed: _allowed, ...attendanceResult } = result;
+      const { allowed: _allowed, studentId: _studentId, ...attendanceResult } = result;
       response.set('Cache-Control', 'no-store');
       response.json({
         ...attendanceResult,
+        studentId: student.public_id,
         outcome: result.changed ? 'present' : 'already_present',
         message: result.changed
           ? `${student.first_name} ${student.last_name} — présent`
@@ -851,7 +867,7 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
 });
 
 router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, async (request, response) => {
-  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+  if (!request.courseSessionId || !isValidPublicId(request.params.studentId)) {
     response.status(404).json({ error: 'Enregistrement introuvable.' });
     return;
   }
@@ -859,10 +875,16 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const studentId = await resolveStudentId(client, request.params.studentId);
+    if (!studentId) {
+      await client.query('ROLLBACK');
+      response.status(404).json({ error: 'Enregistrement introuvable.' });
+      return;
+    }
     const result = await markStudentPresent(
       client,
-      request.params.id,
-      request.params.studentId,
+      request.courseSessionId,
+      studentId,
     );
     if (!result.allowed) {
       await client.query('ROLLBACK');
@@ -873,9 +895,9 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
     }
 
     await client.query('COMMIT');
-    const { allowed: _allowed, ...attendanceResult } = result;
+    const { allowed: _allowed, studentId: _studentId, ...attendanceResult } = result;
     response.set('Cache-Control', 'no-store');
-    response.json(attendanceResult);
+    response.json({ ...attendanceResult, studentId: request.params.studentId });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to update quick attendance:', error);
@@ -886,7 +908,7 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
 });
 
 router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement, async (request, response) => {
-  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+  if (!request.courseSessionId || !isValidPublicId(request.params.studentId)) {
     response.status(404).json({ error: 'Enregistrement introuvable.' });
     return;
   }
@@ -904,10 +926,16 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const studentId = await resolveStudentId(client, request.params.studentId);
+    if (!studentId) {
+      await client.query('ROLLBACK');
+      response.status(404).json({ error: 'Enregistrement introuvable.' });
+      return;
+    }
     const allowedResult = await lockEligibleStudent(
       client,
-      request.params.id,
-      request.params.studentId,
+      request.courseSessionId,
+      studentId,
     );
     if (allowedResult.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -923,7 +951,7 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
          AND status = 'present'
          AND ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint = $4::bigint
        RETURNING status`,
-      [previousStatus, request.params.id, request.params.studentId, expectedVersion],
+      [previousStatus, request.courseSessionId, studentId, expectedVersion],
     );
     if (updateResult.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -950,7 +978,7 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
 });
 
 router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (request, response) => {
-  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+  if (!request.courseSessionId || !isValidPublicId(request.params.studentId)) {
     const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -964,10 +992,17 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const studentId = await resolveStudentId(client, request.params.studentId);
+    if (!studentId) {
+      await client.query('ROLLBACK');
+      const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
+      response.status(page.status).send(page.html);
+      return;
+    }
     const allowedResult = await lockEligibleStudent(
       client,
-      request.params.id,
-      request.params.studentId,
+      request.courseSessionId,
+      studentId,
     );
     if (allowedResult.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -985,7 +1020,7 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
        VALUES ($1, $2, $3)
        ON CONFLICT (session_id, student_id)
        DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP`,
-      [request.params.id, request.params.studentId, request.body.status],
+      [request.courseSessionId, studentId, request.body.status],
     );
     await client.query('COMMIT');
     response.redirect(303, `/sessions/${request.params.id}?notice=attendance_updated`);
@@ -1000,7 +1035,7 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
 });
 
 router.post('/:id/close', requireSessionManagement, async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -1011,7 +1046,7 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
     await client.query('BEGIN');
     const sessionResult = await client.query(
       'SELECT id, class_id, state, closed_at FROM course_sessions WHERE id = $1 FOR UPDATE',
-      [request.params.id],
+      [request.courseSessionId],
     );
     if (sessionResult.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -1035,7 +1070,7 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
         `UPDATE attendance_records
          SET status = 'absent', updated_at = CURRENT_TIMESTAMP
          WHERE session_id = $1 AND status = 'pending'`,
-        [request.params.id],
+        [request.courseSessionId],
       );
     } else {
       await client.query(
@@ -1047,14 +1082,14 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
          ON CONFLICT (session_id, student_id)
          DO UPDATE SET status = 'absent', updated_at = CURRENT_TIMESTAMP
          WHERE attendance_records.status = 'pending'`,
-        [request.params.id, sessionResult.rows[0].class_id],
+        [request.courseSessionId, sessionResult.rows[0].class_id],
       );
     }
     await client.query(
       `UPDATE course_sessions
        SET state = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP)
        WHERE id = $1`,
-      [request.params.id],
+      [request.courseSessionId],
     );
     await client.query('COMMIT');
     response.redirect(303, `/sessions/${request.params.id}?notice=closed`);
@@ -1069,7 +1104,7 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
 });
 
 router.post('/:id/open', requireSessionManagement, async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!request.courseSessionId) {
     const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -1080,7 +1115,7 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
     await client.query('BEGIN');
     const sessionResult = await client.query(
       'SELECT id, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
-      [request.params.id],
+      [request.courseSessionId],
     );
     if (sessionResult.rowCount > 0) {
       await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [sessionResult.rows[0].class_id]);
@@ -1090,7 +1125,7 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
        SET state = 'open', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
        WHERE id = $1 AND state IN ('scheduled', 'closed')
        RETURNING id`,
-      [request.params.id],
+      [request.courseSessionId],
     );
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');

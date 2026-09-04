@@ -8,6 +8,7 @@ const {
 } = require('./student-data');
 const { createStudentQrEmail } = require('./student-qr-email');
 const { createStudentQrPng } = require('./student-qr');
+const { isValidPublicId } = require('./public-id');
 const { getTerm } = require('./terminology');
 const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
@@ -25,27 +26,23 @@ function studentQrMailErrorMessage(code) {
   }[code] || 'Le QR n’a pas pu être envoyé par e-mail pour le moment.';
 }
 
-function isValidId(id) {
-  return /^[1-9]\d*$/.test(id);
-}
-
 function getSelectedClassIds(body = {}) {
   const rawClassIds = Array.isArray(body.class_ids)
     ? body.class_ids
     : body.class_ids ? [body.class_ids] : [];
 
-  return [...new Set(rawClassIds.filter((classId) => isValidId(classId)))];
+  return [...new Set(rawClassIds.filter((classId) => isValidPublicId(classId)))];
 }
 
 async function loadClasses(client = pool) {
   const result = await client.query(
-    'SELECT id, name FROM classes ORDER BY LOWER(name), id',
+    'SELECT public_id, name FROM classes ORDER BY LOWER(name), id',
   );
   return result.rows;
 }
 
 function classIdsAreValid(classIds, classes) {
-  const availableIds = new Set(classes.map((classRecord) => classRecord.id));
+  const availableIds = new Set(classes.map((classRecord) => classRecord.public_id));
   return classIds.every((classId) => availableIds.has(classId));
 }
 
@@ -68,7 +65,7 @@ function renderStudentForm({
     ? '<p class="muted">Aucun choix disponible.</p>'
     : `<div class="checkbox-list">${classes.map((classRecord) => `
         <label class="checkbox-option">
-          <input class="form-check-input" name="class_ids" type="checkbox" value="${classRecord.id}"${selectedIds.has(classRecord.id) ? ' checked' : ''}>
+          <input class="form-check-input" name="class_ids" type="checkbox" value="${classRecord.public_id}"${selectedIds.has(classRecord.public_id) ? ' checked' : ''}>
           <span>${escapeHtml(classRecord.name)}</span>
         </label>`).join('')}</div>`;
   const codeField = editing
@@ -128,7 +125,7 @@ async function addMemberships(client, studentId, classIds) {
   for (const classId of classIds) {
     await client.query(
       `INSERT INTO student_classes (student_id, class_id)
-       VALUES ($1, $2)
+       SELECT $1, c.id FROM classes c WHERE c.public_id = $2
        ON CONFLICT (student_id, class_id) DO NOTHING`,
       [studentId, classId],
     );
@@ -149,7 +146,7 @@ function renderStudentQrPage(student, feedback = null) {
         <p class="page-description">Ce QR permet d’identifier la personne pendant l’enregistrement des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.</p>
       </div>
       <div class="context-actions d-flex flex-wrap gap-2">
-        <a class="btn btn-light" href="/students/${student.id}/edit">Retour à la fiche</a>
+        <a class="btn btn-light" href="/students/${student.public_id}/edit">Retour à la fiche</a>
       </div>
     </header>
     <div class="notification-area" aria-live="polite" aria-atomic="true">
@@ -161,11 +158,11 @@ function renderStudentQrPage(student, feedback = null) {
         <p class="compact-meta">Code d’identification · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
         <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Statut : ${student.active ? 'actif' : 'inactif'}</span>
       </div>
-      <img class="student-qr-image" src="/students/${student.id}/qr.png" width="512" height="512" fetchpriority="high" alt="QR personnel de ${escapeHtml(studentName)}">
+      <img class="student-qr-image" src="/students/${student.public_id}/qr.png" width="512" height="512" fetchpriority="high" alt="QR personnel de ${escapeHtml(studentName)}">
       <p class="section-description qr-instruction">Présentez ce QR lors de l’enregistrement des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}, directement sur l’écran ou en version imprimée.</p>
-      <form class="form-actions qr-actions" method="post" action="/students/${student.id}/qr/email" data-submit-once>
+      <form class="form-actions qr-actions" method="post" action="/students/${student.public_id}/qr/email" data-submit-once>
         <button class="btn btn-primary" type="submit">Envoyer le QR</button>
-        <a class="btn btn-outline-secondary" href="/students/${student.id}/qr.png?download=1" download="eleve-${escapeHtml(student.student_code)}-qr.png">Télécharger le QR</a>
+        <a class="btn btn-outline-secondary" href="/students/${student.public_id}/qr.png?download=1" download="eleve-${escapeHtml(student.student_code)}-qr.png">Télécharger le QR</a>
       </form>
     </section>`);
 }
@@ -175,7 +172,7 @@ router.get('/', async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code, s.active
+      `SELECT s.public_id, s.first_name, s.last_name, s.email, s.student_code, s.active
        FROM students s
        WHERE s.active = $1
        ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
@@ -209,8 +206,8 @@ router.get('/', async (request, response) => {
               <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Statut : ${student.active ? 'actif' : 'inactif'}</span>
             </div>
             <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
-              <a class="btn btn-light" href="/students/${student.id}/edit">Modifier</a>
-              ${student.active ? `<form method="post" action="/students/${student.id}/deactivate" data-confirm="Désactiver cette fiche ?">
+              <a class="btn btn-light" href="/students/${student.public_id}/edit">Modifier</a>
+              ${student.active ? `<form method="post" action="/students/${student.public_id}/deactivate" data-confirm="Désactiver cette fiche ?">
                 <button class="btn btn-outline-danger" type="submit">Désactiver</button>
               </form>` : ''}
             </div>
@@ -293,7 +290,7 @@ router.post('/', async (request, response) => {
     await client.query('BEGIN');
     if (selectedClassIds.length > 0) {
       await client.query(
-        'SELECT id FROM classes WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE',
+        'SELECT id FROM classes WHERE public_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
         [selectedClassIds],
       );
     }
@@ -322,14 +319,14 @@ router.post('/', async (request, response) => {
 });
 
 router.get('/:id/qr.png', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     response.status(404).end();
     return;
   }
 
   try {
     const result = await pool.query(
-      'SELECT qr_token, student_code FROM students WHERE id = $1',
+      'SELECT qr_token, student_code FROM students WHERE public_id = $1',
       [request.params.id],
     );
     if (result.rowCount === 0) {
@@ -354,7 +351,7 @@ router.get('/:id/qr.png', async (request, response) => {
 });
 
 router.get('/:id/qr', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -362,9 +359,9 @@ router.get('/:id/qr', async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, first_name, last_name, email, student_code, qr_token, active
+      `SELECT id, public_id, first_name, last_name, email, student_code, qr_token, active
        FROM students
-       WHERE id = $1`,
+       WHERE public_id = $1`,
       [request.params.id],
     );
     if (result.rowCount === 0) {
@@ -385,7 +382,7 @@ router.get('/:id/qr', async (request, response) => {
 });
 
 router.post('/:id/qr/email', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -394,9 +391,9 @@ router.post('/:id/qr/email', async (request, response) => {
   let student;
   try {
     const result = await pool.query(
-      `SELECT id, first_name, last_name, email, student_code, qr_token, active
+      `SELECT id, public_id, first_name, last_name, email, student_code, qr_token, active
        FROM students
-       WHERE id = $1`,
+       WHERE public_id = $1`,
       [request.params.id],
     );
     if (result.rowCount === 0) {
@@ -445,7 +442,7 @@ router.post('/:id/qr/email', async (request, response) => {
       to: student.email,
       ...message,
     });
-    response.redirect(303, `/students/${student.id}/qr?notice=qr_sent`);
+    response.redirect(303, `/students/${student.public_id}/qr?notice=qr_sent`);
   } catch (error) {
     console.error('Unable to send student QR email:', error.code || 'DELIVERY_FAILED');
     response.status(error.code === 'NOT_CONFIGURED' ? 409 : 502).send(renderStudentQrPage(student, {
@@ -456,7 +453,7 @@ router.post('/:id/qr/email', async (request, response) => {
 });
 
 router.get('/:id/edit', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -464,9 +461,9 @@ router.get('/:id/edit', async (request, response) => {
 
   try {
     const [studentResult, classes, membershipResult] = await Promise.all([
-      pool.query('SELECT id, first_name, last_name, email, student_code, active FROM students WHERE id = $1', [request.params.id]),
+      pool.query('SELECT id, public_id, first_name, last_name, email, student_code, active FROM students WHERE public_id = $1', [request.params.id]),
       loadClasses(),
-      pool.query('SELECT class_id FROM student_classes WHERE student_id = $1', [request.params.id]),
+      pool.query('SELECT c.public_id FROM student_classes sc INNER JOIN classes c ON c.id = sc.class_id WHERE sc.student_id = (SELECT id FROM students WHERE public_id = $1)', [request.params.id]),
     ]);
 
     if (studentResult.rowCount === 0) {
@@ -478,7 +475,7 @@ router.get('/:id/edit', async (request, response) => {
     const student = studentResult.rows[0];
     response.send(renderStudentForm({
       title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
-      action: `/students/${student.id}`,
+      action: `/students/${student.public_id}`,
       submitLabel: 'Enregistrer',
       values: {
         firstName: student.first_name,
@@ -488,9 +485,9 @@ router.get('/:id/edit', async (request, response) => {
         active: student.active,
       },
       classes,
-      selectedClassIds: membershipResult.rows.map((membership) => membership.class_id),
+      selectedClassIds: membershipResult.rows.map((membership) => membership.public_id),
       editing: true,
-      studentId: student.id,
+      studentId: student.public_id,
     }));
   } catch (error) {
     console.error('Unable to load student:', error);
@@ -500,7 +497,7 @@ router.get('/:id/edit', async (request, response) => {
 });
 
 router.post('/:id', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -510,7 +507,7 @@ router.post('/:id', async (request, response) => {
   values.active = request.body.active === 'true';
   const selectedClassIds = getSelectedClassIds(request.body);
   const classes = await loadClasses();
-  const currentResult = await pool.query('SELECT student_code FROM students WHERE id = $1', [request.params.id]);
+  const currentResult = await pool.query('SELECT id, student_code FROM students WHERE public_id = $1', [request.params.id]);
 
   if (currentResult.rowCount === 0) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
@@ -540,20 +537,20 @@ router.post('/:id', async (request, response) => {
   try {
     await client.query('BEGIN');
     const membershipResult = await client.query(
-      'SELECT class_id FROM student_classes WHERE student_id = $1 ORDER BY class_id',
-      [request.params.id],
+      'SELECT c.public_id FROM student_classes sc INNER JOIN classes c ON c.id = sc.class_id WHERE sc.student_id = $1 ORDER BY c.id',
+      [currentResult.rows[0].id],
     );
     const selectedIds = new Set(selectedClassIds);
     const removedClassIds = membershipResult.rows
-      .map((membership) => String(membership.class_id))
+      .map((membership) => membership.public_id)
       .filter((classId) => !selectedIds.has(classId));
     const affectedClassIds = [...new Set([
       ...selectedClassIds,
-      ...membershipResult.rows.map((membership) => String(membership.class_id)),
+      ...membershipResult.rows.map((membership) => membership.public_id),
     ])];
     if (affectedClassIds.length > 0) {
       await client.query(
-        'SELECT id FROM classes WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE',
+        'SELECT id FROM classes WHERE public_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
         [affectedClassIds],
       );
     }
@@ -561,7 +558,7 @@ router.post('/:id', async (request, response) => {
       const protectedResult = await client.query(
         `SELECT c.name
          FROM classes c
-         WHERE c.id = ANY($1::bigint[])
+         WHERE c.public_id = ANY($1::uuid[])
            AND EXISTS (
              SELECT 1 FROM course_sessions cs
              WHERE cs.class_id = c.id AND cs.started_at IS NOT NULL
@@ -590,16 +587,16 @@ router.post('/:id', async (request, response) => {
       `UPDATE students
        SET first_name = $1, last_name = $2, email = $3, active = $4
        WHERE id = $5`,
-      [values.firstName, values.lastName, values.email, values.active, request.params.id],
+      [values.firstName, values.lastName, values.email, values.active, currentResult.rows[0].id],
     );
     if (removedClassIds.length > 0) {
       await client.query(
         `DELETE FROM student_classes
-         WHERE student_id = $1 AND class_id = ANY($2::bigint[])`,
-        [request.params.id, removedClassIds],
+         WHERE student_id = $1 AND class_id IN (SELECT id FROM classes WHERE public_id = ANY($2::uuid[]))`,
+        [currentResult.rows[0].id, removedClassIds],
       );
     }
-    await addMemberships(client, request.params.id, selectedClassIds);
+    await addMemberships(client, currentResult.rows[0].id, selectedClassIds);
     await client.query('COMMIT');
     response.redirect(
       303,
@@ -630,7 +627,7 @@ router.post('/:id', async (request, response) => {
 });
 
 router.post('/:id/deactivate', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -643,13 +640,13 @@ router.post('/:id/deactivate', async (request, response) => {
       `SELECT c.id
        FROM classes c
        INNER JOIN student_classes sc ON sc.class_id = c.id
-       WHERE sc.student_id = $1
+       WHERE sc.student_id = (SELECT id FROM students WHERE public_id = $1)
        ORDER BY c.id
        FOR UPDATE`,
       [request.params.id],
     );
     const result = await client.query(
-      'UPDATE students SET active = FALSE WHERE id = $1 AND active = TRUE RETURNING id',
+      'UPDATE students SET active = FALSE WHERE public_id = $1 AND active = TRUE RETURNING id',
       [request.params.id],
     );
     if (result.rowCount === 0) {

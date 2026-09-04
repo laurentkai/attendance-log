@@ -28,6 +28,12 @@ Preserve server-rendered routing and the current multi-page architecture. Do not
 - State material uncertainty and verify it rather than silently inventing project facts.
 - Never expose or commit real credentials, keys, recovery files, personal test data, or generated databases.
 
+## Public entity identifiers
+
+- User-facing entity URLs use stable opaque UUID `public_id` values; PostgreSQL numeric `id` values remain the internal primary and foreign keys.
+- Validate public UUIDs before querying, then resolve them to numeric IDs server-side. Malformed and unknown UUIDs must use the same safe not-found behavior.
+- UUID opacity never replaces authentication or authorization. New user-facing routes for entities with public IDs must not expose their numeric IDs in URLs, forms, links, redirects, or client data.
+
 ## Frontend architecture
 
 Bootstrap 5 is the default toolkit for layout, navigation, forms, buttons, tables, alerts, badges, dropdowns, modals, offcanvas, utilities, and responsive behavior.
@@ -119,6 +125,11 @@ CSV Import belongs to student management and is accessed contextually from Stude
 - Preserve the existing live polling and concurrency guards. QR scan outcomes retain distinct visual/audio/haptic feedback without affecting manual actions, polling, or Undo.
 - Omit class/session/instructor/date exposition unless a concrete safety requirement calls for it.
 - Layout simplification must never alter attendance, eligibility, concurrency, polling, QR, or Undo semantics.
+
+### Shared footer
+
+- Standard authenticated pages share one discreet `Powered by Elinaka Labs` footer inside the canonical application frame; Quick Attendance remains excluded.
+- Keep its visual footprint approximately 20–25 px high where practical, with a small icon, subtle typography, and minimal vertical padding. Do not turn it into a card, panel, or competing content area.
 
 ## Business integrity
 

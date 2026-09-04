@@ -17,7 +17,7 @@ const upload = multer({
 });
 
 async function loadClasses() {
-  const result = await pool.query('SELECT id, name FROM classes ORDER BY LOWER(name), id');
+  const result = await pool.query('SELECT id, public_id, name FROM classes ORDER BY LOWER(name), id');
   return result.rows;
 }
 
@@ -37,8 +37,8 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
       </section>`
     : '';
   const classOptions = classes.map((classRecord) => `
-    <option value="${classRecord.id}"${classRecord.id === selectedClassId ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('');
-  const selectedClass = classes.find((classRecord) => classRecord.id === selectedClassId);
+    <option value="${classRecord.public_id}"${classRecord.public_id === selectedClassId ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('');
+  const selectedClass = classes.find((classRecord) => classRecord.public_id === selectedClassId);
 
   return renderPage(`Importer des ${getTerm('student', 'plural').toLocaleLowerCase('fr')}`, `
     <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
@@ -47,7 +47,7 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
         <p class="page-description">Ajoutez des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} à une ${businessTerm('class').toLocaleLowerCase('fr')} depuis un fichier CSV.</p>
       </div>
       ${selectedClass
-        ? `<a class="btn btn-outline-secondary" href="/classes/${selectedClass.id}">Retour</a>`
+        ? `<a class="btn btn-outline-secondary" href="/classes/${selectedClass.public_id}">Retour</a>`
         : ''}
     </header>
     ${errorMessage}
@@ -84,7 +84,7 @@ router.get('/', async (request, response) => {
     const requestedClassId = typeof request.query.class_id === 'string'
       ? request.query.class_id
       : '';
-    const selectedClassId = classes.some((classRecord) => classRecord.id === requestedClassId)
+    const selectedClassId = classes.some((classRecord) => classRecord.public_id === requestedClassId)
       ? requestedClassId
       : '';
     response.send(renderImportPage({ classes, selectedClassId }));
@@ -133,7 +133,8 @@ router.post('/', receiveCsvFile, async (request, response) => {
   const selectedClassId = typeof request.body.class_id === 'string'
     ? request.body.class_id
     : '';
-  const selectedClassExists = classes.some((classRecord) => classRecord.id === selectedClassId);
+  const selectedClass = classes.find((classRecord) => classRecord.public_id === selectedClassId);
+  const selectedClassExists = Boolean(selectedClass);
   if (!selectedClassExists || !request.file) {
     response.status(400).send(renderImportPage({
       classes,
@@ -187,7 +188,7 @@ router.post('/', receiveCsvFile, async (request, response) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [selectedClassId]);
+      await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [selectedClass.id]);
       const existingResult = await client.query(
         'SELECT id FROM students WHERE LOWER(email) = LOWER($1) FOR UPDATE',
         [values.email],
@@ -208,7 +209,7 @@ router.post('/', receiveCsvFile, async (request, response) => {
          ON CONFLICT (student_id, class_id)
          DO UPDATE SET active = TRUE
          WHERE student_classes.active = FALSE`,
-        [studentId, selectedClassId],
+        [studentId, selectedClass.id],
       );
       summary.newlyAssigned += membershipResult.rowCount;
       await client.query('COMMIT');

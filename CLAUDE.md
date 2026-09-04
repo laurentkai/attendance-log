@@ -59,6 +59,7 @@ Check:
 - 360, 390, and 430 px layouts where meaningful;
 - Quick Attendance with virtual keyboard, mutually exclusive Recherche/QR modes, scanner lifecycle, stable feedback, polling, Undo, audio, and haptics;
 - settings pages against the shared settings shell.
+- the shared Elinaka Labs footer remains a discreet 20–25 px convention on standard pages and is absent from Quick Attendance.
 
 Use a real browser/runtime inspection for high-risk interactive behavior when available. Do not claim physical-device, camera, focus, or pixel-level validation from static inspection alone.
 
@@ -101,6 +102,7 @@ Consult the skill before tracing or reporting those security paths. It supplemen
 
 ## Security and operations review
 
+- Verify user-facing entity routes accept validated opaque public UUIDs, resolve them to internal numeric IDs server-side, retain authorization checks, and do not expose numeric IDs through new public URLs or client data.
 - Authentication uses active PostgreSQL `admin_users`, never environment credentials. Normal users use hashed, expiring, single-use e-mail OTP challenges; the sole local break-glass administrator uses bcrypt password authentication without SMTP behind the unified, enumeration-safe identifier flow. Verify generic identifier responses, OTP resend/attempt/rate limits, break-glass username/IP lockout and reset, session-version revocation, 30-day sliding and 90-day absolute lifetimes, immediate role/activity enforcement, break-glass immutability, and transactionally safe normal-user deletion.
 - Verify fixed role boundaries: administrators have full access; managers cannot access Settings or user management; attendance operators can use session attendance workflows but cannot administer students, classes, Reporting, Settings, Backup, or Restore.
 - State changes must not use an unsafe GET.

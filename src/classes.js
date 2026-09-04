@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('./db/client');
 const { getTerm } = require('./terminology');
+const { isValidPublicId } = require('./public-id');
 const { businessTerm, escapeHtml, renderPage } = require('./ui');
 
 const router = express.Router();
@@ -61,22 +62,18 @@ function renderClassForm({ title, action, submitLabel, values, error = '' }) {
     </form>`);
 }
 
-function isValidId(id) {
-  return /^[1-9]\d*$/.test(id);
-}
-
 function getStudentIds(body = {}) {
   const rawStudentIds = Array.isArray(body.student_ids)
     ? body.student_ids
     : body.student_ids ? [body.student_ids] : [];
 
-  return [...new Set(rawStudentIds.filter((studentId) => isValidId(studentId)))];
+  return [...new Set(rawStudentIds.filter((studentId) => isValidPublicId(studentId)))];
 }
 
 router.get('/', async (request, response) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, description FROM classes ORDER BY LOWER(name), id',
+      'SELECT public_id, name, description FROM classes ORDER BY LOWER(name), id',
     );
     const notices = {
       created: 'La fiche a été créée.',
@@ -98,12 +95,12 @@ router.get('/', async (request, response) => {
             </div>
             <div class="row-action-stack">
               <div class="compact-actions compact-actions--split" aria-label="Gérer ${escapeHtml(classRecord.name)}">
-                <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}">${businessTerm('student', 'plural')}</a>
-                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.id}">${businessTerm('session', 'plural')}</a>
+                <a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}">${businessTerm('student', 'plural')}</a>
+                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.public_id}">${businessTerm('session', 'plural')}</a>
               </div>
               <div class="compact-actions" aria-label="Administration de ${escapeHtml(classRecord.name)}">
-                <a class="btn btn-light" href="/classes/${classRecord.id}/edit">Modifier</a>
-                <form method="post" action="/classes/${classRecord.id}/delete" data-confirm="Supprimer cette fiche ?">
+                <a class="btn btn-light" href="/classes/${classRecord.public_id}/edit">Modifier</a>
+                <form method="post" action="/classes/${classRecord.public_id}/delete" data-confirm="Supprimer cette fiche ?">
                   <button class="btn btn-outline-danger" type="submit">Supprimer</button>
                 </form>
               </div>
@@ -172,7 +169,7 @@ router.post('/', async (request, response) => {
 });
 
 router.get('/:id', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -184,31 +181,31 @@ router.get('/:id', async (request, response) => {
   try {
     const [classResult, assignedResult, availableResult] = await Promise.all([
       pool.query(
-        `SELECT c.id, c.name, c.description,
+        `SELECT c.id, c.public_id, c.name, c.description,
                 EXISTS (
                   SELECT 1 FROM course_sessions cs
                   WHERE cs.class_id = c.id AND cs.started_at IS NOT NULL
                 ) AS membership_locked
          FROM classes c
-         WHERE c.id = $1`,
+         WHERE c.public_id = $1`,
         [request.params.id],
       ),
       pool.query(
-        `SELECT s.id, s.first_name, s.last_name, s.email, s.student_code,
+        `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code,
                 sc.active AS membership_active
          FROM students s
          INNER JOIN student_classes sc ON sc.student_id = s.id
-         WHERE sc.class_id = $1 AND s.active = TRUE
+         WHERE sc.class_id = (SELECT id FROM classes WHERE public_id = $1) AND s.active = TRUE
          ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
         [request.params.id],
       ),
       canSearch ? pool.query(
-        `SELECT s.id, s.first_name, s.last_name, s.email
+        `SELECT s.public_id, s.first_name, s.last_name, s.email
          FROM students s
          WHERE s.active = TRUE
            AND NOT EXISTS (
              SELECT 1 FROM student_classes sc
-             WHERE sc.student_id = s.id AND sc.class_id = $1
+             WHERE sc.student_id = s.id AND sc.class_id = (SELECT id FROM classes WHERE public_id = $1)
            )
            AND (s.first_name ILIKE $2
              OR s.last_name ILIKE $2
@@ -256,11 +253,11 @@ router.get('/:id', async (request, response) => {
               <span class="badge status-badge status-${student.membership_active ? 'active' : 'inactive'}">${businessTerm('membership')} : ${student.membership_active ? 'active' : 'inactive'}</span>
             </div>
             <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
-              <a class="btn btn-light" href="/students/${student.id}/edit">Modifier la fiche</a>
-              <form method="post" action="/classes/${classRecord.id}/students/${student.id}/${student.membership_active ? 'deactivate' : 'reactivate'}">
+              <a class="btn btn-light" href="/students/${student.public_id}/edit">Modifier la fiche</a>
+              <form method="post" action="/classes/${classRecord.public_id}/students/${student.public_id}/${student.membership_active ? 'deactivate' : 'reactivate'}">
                 <button class="btn btn-outline-secondary" type="submit">${student.membership_active ? 'Désactiver' : 'Réactiver'}</button>
               </form>
-              ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.id}/students/${student.id}/remove" data-confirm="Retirer ce ${businessTerm('student').toLocaleLowerCase('fr')} de cette ${businessTerm('class').toLocaleLowerCase('fr')} ?">
+              ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.public_id}/students/${student.public_id}/remove" data-confirm="Retirer ce ${businessTerm('student').toLocaleLowerCase('fr')} de cette ${businessTerm('class').toLocaleLowerCase('fr')} ?">
                 <button class="btn btn-outline-danger" type="submit">Retirer</button>
               </form>`}
             </div>
@@ -270,12 +267,12 @@ router.get('/:id', async (request, response) => {
       ? `<p class="empty-state">Saisissez au moins 2 caractères pour rechercher un ${businessTerm('student').toLocaleLowerCase('fr')} actif.</p>`
       : availableResult.rows.length === 0
       ? '<p class="empty-state">Aucun résultat disponible.</p>'
-      : `<form class="card card-body app-form" method="post" action="/classes/${classRecord.id}/students">
+      : `<form class="card card-body app-form" method="post" action="/classes/${classRecord.public_id}/students">
           <fieldset>
             <legend>${businessTerm('student', 'plural')} à ajouter</legend>
             <div class="checkbox-list">${availableResult.rows.map((student) => `
               <label class="checkbox-option">
-                <input class="form-check-input" name="student_ids" type="checkbox" value="${student.id}">
+                <input class="form-check-input" name="student_ids" type="checkbox" value="${student.public_id}">
                 <span>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}<small>${escapeHtml(student.email)}</small></span>
               </label>`).join('')}</div>
           </fieldset>
@@ -290,11 +287,11 @@ router.get('/:id', async (request, response) => {
             ? escapeHtml(classRecord.description)
             : '<span class="muted">Aucune description</span>'}</p>
         </div>
-        <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}/edit">Modifier la fiche</a>
+        <a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}/edit">Modifier la fiche</a>
       </header>
       <nav class="nav nav-pills context-tabs" aria-label="Gestion de « ${escapeHtml(classRecord.name)} »">
-        <a class="nav-link active" href="/classes/${classRecord.id}" aria-current="page">${businessTerm('student', 'plural')}</a>
-        <a class="nav-link" href="/sessions?class_id=${classRecord.id}">${businessTerm('session', 'plural')}</a>
+        <a class="nav-link active" href="/classes/${classRecord.public_id}" aria-current="page">${businessTerm('student', 'plural')}</a>
+        <a class="nav-link" href="/sessions?class_id=${classRecord.public_id}">${businessTerm('session', 'plural')}</a>
       </nav>
       ${notice}
       ${classRecord.membership_locked
@@ -306,7 +303,7 @@ router.get('/:id', async (request, response) => {
             <h2>${businessTerm('membership', 'plural')}</h2>
             <p class="section-description">L’état affiché concerne uniquement cette ${businessTerm('class').toLocaleLowerCase('fr')}.</p>
           </div>
-          <a class="btn btn-outline-secondary" href="/students/import?class_id=${classRecord.id}">Importer</a>
+          <a class="btn btn-outline-secondary" href="/students/import?class_id=${classRecord.public_id}">Importer</a>
         </div>
         ${assignedStudents}
       </section>
@@ -316,12 +313,12 @@ router.get('/:id', async (request, response) => {
             <h2>Ajouter des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</h2>
           </div>
         </div>
-        <form class="search" method="get" action="/classes/${classRecord.id}" role="search">
+        <form class="search" method="get" action="/classes/${classRecord.public_id}" role="search">
           <label for="membership-search">Rechercher un ${businessTerm('student').toLocaleLowerCase('fr')} actif</label>
           <div class="search-controls">
             <input class="form-control" id="membership-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…">
             <button class="btn btn-primary" type="submit">Rechercher</button>
-            ${searchQuery ? `<a class="btn btn-outline-secondary" href="/classes/${classRecord.id}">Effacer</a>` : ''}
+            ${searchQuery ? `<a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}">Effacer</a>` : ''}
           </div>
         </form>
         ${availableStudents}
@@ -334,7 +331,7 @@ router.get('/:id', async (request, response) => {
 });
 
 router.post('/:id/students', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -345,7 +342,7 @@ router.post('/:id/students', async (request, response) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
+    const classResult = await client.query('SELECT id, public_id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
     if (classResult.rowCount === 0) {
       await client.query('ROLLBACK');
       const page = renderClassNotFoundPage();
@@ -363,9 +360,9 @@ router.post('/:id/students', async (request, response) => {
       `INSERT INTO student_classes (student_id, class_id)
        SELECT s.id, $1
        FROM students s
-       WHERE s.active = TRUE AND s.id = ANY($2::bigint[])
+       WHERE s.active = TRUE AND s.public_id = ANY($2::uuid[])
        ON CONFLICT DO NOTHING`,
-      [request.params.id, studentIds],
+      [classResult.rows[0].id, studentIds],
     );
     await client.query('COMMIT');
     response.redirect(
@@ -383,7 +380,7 @@ router.post('/:id/students', async (request, response) => {
 });
 
 router.post('/:id/students/:studentId/remove', async (request, response) => {
-  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+  if (!isValidPublicId(request.params.id) || !isValidPublicId(request.params.studentId)) {
     const page = renderMessagePage('Affectation introuvable', 'Cette affectation n’existe pas.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -392,7 +389,7 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
+    const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
     if (classResult.rowCount === 0) {
       await client.query('ROLLBACK');
       const page = renderClassNotFoundPage();
@@ -401,7 +398,7 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
     }
     const startedResult = await client.query(
       'SELECT 1 FROM course_sessions WHERE class_id = $1 AND started_at IS NOT NULL LIMIT 1',
-      [request.params.id],
+      [classResult.rows[0].id],
     );
     if (startedResult.rowCount > 0) {
       await client.query('ROLLBACK');
@@ -417,11 +414,11 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
       `DELETE FROM student_classes sc
        USING students s
        WHERE sc.class_id = $1
-         AND sc.student_id = $2
+         AND s.public_id = $2
          AND s.id = sc.student_id
          AND s.active = TRUE
        RETURNING sc.student_id`,
-      [request.params.id, request.params.studentId],
+      [classResult.rows[0].id, request.params.studentId],
     );
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -442,7 +439,7 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
 });
 
 async function updateMembershipActivity(request, response, active) {
-  if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
+  if (!isValidPublicId(request.params.id) || !isValidPublicId(request.params.studentId)) {
     const page = renderMessagePage('Affectation introuvable', 'Cette affectation n’existe pas.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -451,7 +448,7 @@ async function updateMembershipActivity(request, response, active) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
+    const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
     if (classResult.rowCount === 0) {
       await client.query('ROLLBACK');
       const page = renderClassNotFoundPage();
@@ -463,11 +460,11 @@ async function updateMembershipActivity(request, response, active) {
        SET active = $3
        FROM students s
        WHERE sc.class_id = $1
-         AND sc.student_id = $2
+         AND s.public_id = $2
          AND s.id = sc.student_id
          AND s.active = TRUE
        RETURNING sc.student_id`,
-      [request.params.id, request.params.studentId, active],
+      [classResult.rows[0].id, request.params.studentId, active],
     );
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -496,7 +493,7 @@ router.post('/:id/students/:studentId/reactivate', (request, response) => (
 ));
 
 router.get('/:id/edit', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -504,7 +501,7 @@ router.get('/:id/edit', async (request, response) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, name, description FROM classes WHERE id = $1',
+      'SELECT id, public_id, name, description FROM classes WHERE public_id = $1',
       [request.params.id],
     );
 
@@ -516,7 +513,7 @@ router.get('/:id/edit', async (request, response) => {
 
     response.send(renderClassForm({
       title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
-      action: `/classes/${result.rows[0].id}`,
+      action: `/classes/${result.rows[0].public_id}`,
       submitLabel: 'Enregistrer',
       values: result.rows[0],
     }));
@@ -531,7 +528,7 @@ router.get('/:id/edit', async (request, response) => {
 });
 
 router.post('/:id', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -552,7 +549,7 @@ router.post('/:id', async (request, response) => {
 
   try {
     const result = await pool.query(
-      'UPDATE classes SET name = $1, description = $2 WHERE id = $3 RETURNING id',
+      'UPDATE classes SET name = $1, description = $2 WHERE public_id = $3 RETURNING id',
       [values.name, values.description || null, request.params.id],
     );
 
@@ -576,7 +573,7 @@ router.post('/:id', async (request, response) => {
 });
 
 router.post('/:id/delete', async (request, response) => {
-  if (!isValidId(request.params.id)) {
+  if (!isValidPublicId(request.params.id)) {
     const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
@@ -584,7 +581,7 @@ router.post('/:id/delete', async (request, response) => {
 
   try {
     const result = await pool.query(
-      'DELETE FROM classes WHERE id = $1 RETURNING id',
+      'DELETE FROM classes WHERE public_id = $1 RETURNING id',
       [request.params.id],
     );
 

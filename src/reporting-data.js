@@ -32,7 +32,7 @@ function normalizeSummary(row) {
 
 async function getCourseSummaries() {
   const result = await pool.query(
-    `SELECT c.id, c.name,
+    `SELECT c.id, c.public_id, c.name,
             COUNT(DISTINCT cs.id)::integer AS closed_session_count,
             COUNT(ar.student_id)::integer AS opportunities,
             COUNT(ar.student_id) FILTER (WHERE ar.status = 'present')::integer AS present,
@@ -49,7 +49,7 @@ async function getCourseSummaries() {
 
 async function getSessionSummaries({ classId = null, dateFrom = null, dateTo = null } = {}) {
   const result = await pool.query(
-    `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.instructor,
+    `SELECT cs.id, cs.public_id, cs.class_id, c.public_id AS class_public_id, cs.date, cs.title, cs.instructor,
             c.name AS class_name,
             COUNT(ar.student_id)::integer AS opportunities,
             COUNT(ar.student_id) FILTER (WHERE ar.status = 'present')::integer AS present,
@@ -58,10 +58,10 @@ async function getSessionSummaries({ classId = null, dateFrom = null, dateTo = n
      INNER JOIN classes c ON c.id = cs.class_id
      LEFT JOIN attendance_records ar ON ar.session_id = cs.id
      WHERE cs.state = 'closed'
-       AND ($1::bigint IS NULL OR cs.class_id = $1)
+       AND ($1::uuid IS NULL OR c.public_id = $1)
        AND ($2::date IS NULL OR cs.date >= $2)
        AND ($3::date IS NULL OR cs.date <= $3)
-     GROUP BY cs.id, c.name
+     GROUP BY cs.id, c.public_id, c.name
      ORDER BY cs.date DESC, LOWER(cs.title), cs.id DESC`,
     [classId, dateFrom, dateTo],
   );
@@ -81,7 +81,7 @@ async function getSessionSummaries({ classId = null, dateFrom = null, dateTo = n
 
 async function getStudentSummaries() {
   const result = await pool.query(
-    `SELECT s.id, s.first_name, s.last_name, s.student_code, s.active,
+    `SELECT s.id, s.public_id, s.first_name, s.last_name, s.student_code, s.active,
             COUNT(DISTINCT cs.id)::integer AS closed_session_count,
             COUNT(*)::integer AS opportunities,
             COUNT(*) FILTER (WHERE ar.status = 'present')::integer AS present,
@@ -99,18 +99,18 @@ async function getStudentSummaries() {
 async function getAttendanceDetails({ classId = null, studentId = null, sessionId = null,
   dateFrom = null, dateTo = null } = {}) {
   const result = await pool.query(
-    `SELECT cs.id AS session_id, cs.date, cs.title, cs.instructor,
-            c.id AS class_id, c.name AS class_name,
-            s.id AS student_id, s.first_name, s.last_name, s.email, s.student_code,
+    `SELECT cs.id AS session_id, cs.public_id AS session_public_id, cs.date, cs.title, cs.instructor,
+            c.id AS class_id, c.public_id AS class_public_id, c.name AS class_name,
+            s.id AS student_id, s.public_id AS student_public_id, s.first_name, s.last_name, s.email, s.student_code,
             ar.status
      FROM course_sessions cs
      INNER JOIN classes c ON c.id = cs.class_id
      INNER JOIN attendance_records ar ON ar.session_id = cs.id
      INNER JOIN students s ON s.id = ar.student_id
      WHERE cs.state = 'closed'
-       AND ($1::bigint IS NULL OR cs.class_id = $1)
-       AND ($2::bigint IS NULL OR ar.student_id = $2)
-       AND ($3::bigint IS NULL OR cs.id = $3)
+       AND ($1::uuid IS NULL OR c.public_id = $1)
+       AND ($2::uuid IS NULL OR s.public_id = $2)
+       AND ($3::uuid IS NULL OR cs.public_id = $3)
        AND ($4::date IS NULL OR cs.date >= $4)
        AND ($5::date IS NULL OR cs.date <= $5)
      ORDER BY cs.date, LOWER(c.name), LOWER(cs.title),
@@ -129,6 +129,7 @@ function aggregateStudents(rows) {
     if (!students.has(key)) {
       students.set(key, {
         id: row.student_id,
+        public_id: row.student_public_id,
         first_name: row.first_name,
         last_name: row.last_name,
         student_code: row.student_code,
@@ -156,7 +157,7 @@ function aggregateStudents(rows) {
 
 async function getCourseReport(classId) {
   const [classResult, sessions, details] = await Promise.all([
-    pool.query('SELECT id, name, description FROM classes WHERE id = $1', [classId]),
+    pool.query('SELECT id, public_id, name, description FROM classes WHERE public_id = $1', [classId]),
     getSessionSummaries({ classId }),
     getAttendanceDetails({ classId }),
   ]);
@@ -177,11 +178,11 @@ async function getCourseReport(classId) {
 
 async function getSessionReport(sessionId) {
   const sessionResult = await pool.query(
-    `SELECT cs.id, cs.class_id, cs.date, cs.title, cs.instructor, cs.state,
+    `SELECT cs.id, cs.public_id, cs.class_id, c.public_id AS class_public_id, cs.date, cs.title, cs.instructor, cs.state,
             c.name AS class_name
      FROM course_sessions cs
      INNER JOIN classes c ON c.id = cs.class_id
-     WHERE cs.id = $1`,
+     WHERE cs.public_id = $1`,
     [sessionId],
   );
   if (sessionResult.rowCount === 0) return null;
@@ -196,9 +197,9 @@ async function getSessionReport(sessionId) {
 
 async function getStudentReport(studentId) {
   const studentResult = await pool.query(
-    `SELECT id, first_name, last_name, email, student_code, active
+    `SELECT id, public_id, first_name, last_name, email, student_code, active
      FROM students
-     WHERE id = $1`,
+     WHERE public_id = $1`,
     [studentId],
   );
   if (studentResult.rowCount === 0) return null;
@@ -231,7 +232,7 @@ async function getGlobalReport(filters = {}) {
 
 async function getClassesForFilters() {
   const result = await pool.query(
-    'SELECT id, name FROM classes ORDER BY LOWER(name), id',
+    'SELECT id, public_id, name FROM classes ORDER BY LOWER(name), id',
   );
   return result.rows;
 }

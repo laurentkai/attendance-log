@@ -151,7 +151,7 @@ app.use('/students', requirePermission(permissions.manageStudents), studentsRout
 app.get('/', async (request, response) => {
   try {
     const result = await pool.query(
-      `SELECT cs.id, cs.date, cs.title, cs.instructor, c.name AS class_name,
+      `SELECT cs.public_id, cs.date, cs.title, cs.instructor, c.name AS class_name,
               COUNT(roster.student_id)::integer AS total_students,
               COUNT(ar.student_id) FILTER (WHERE ar.status = 'present')::integer AS present_count
        FROM course_sessions cs
@@ -178,7 +178,7 @@ app.get('/', async (request, response) => {
     const openSessions = result.rows.length === 0
       ? ''
       : `<div class="list-group compact-list" data-live-session-list>${result.rows.map((sessionRecord) => `
-          <article class="list-group-item compact-row compact-row-status session-row" data-live-session-card data-session-id="${sessionRecord.id}">
+          <article class="list-group-item compact-row compact-row-status session-row" data-live-session-card data-session-id="${sessionRecord.public_id}">
             <div class="compact-identity session-identity">
               <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(sessionRecord.date))}</p>
               <p class="compact-title">${escapeHtml(sessionRecord.title)}</p>
@@ -189,9 +189,9 @@ app.get('/', async (request, response) => {
               <span class="badge status-badge status-open" data-session-state>État : ouvert</span>
             </div>
             <div class="compact-actions compact-actions--split" aria-label="Actions disponibles pour « ${escapeHtml(sessionRecord.title)} »">
-              <a class="btn btn-primary" href="/sessions/${sessionRecord.id}">${businessTerm('attendance', 'plural')}</a>
+              <a class="btn btn-primary" href="/sessions/${sessionRecord.public_id}">${businessTerm('attendance', 'plural')}</a>
               ${canManageSessions ? `<span class="session-edit-slot">
-                <a class="btn btn-light" href="/sessions/${sessionRecord.id}/edit" data-session-edit>Modifier</a>
+                <a class="btn btn-light" href="/sessions/${sessionRecord.public_id}/edit" data-session-edit>Modifier</a>
                 <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled hidden>Modifier</button>
               </span>` : ''}
             </div>

@@ -15,11 +15,11 @@ const {
   sendAdminInvitation,
 } = require('./admin-invitations');
 const { pool } = require('./db/client');
+const { isValidPublicId } = require('./public-id');
 const { escapeHtml, renderMessagePage, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
 
-function isValidId(value) { return /^[1-9]\d*$/.test(value); }
 function formatDateTime(value) {
   return value ? new Intl.DateTimeFormat('fr-BE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Brussels' }).format(new Date(value)) : 'Jamais';
 }
@@ -41,27 +41,27 @@ function normalValues(body = {}) {
 
 function renderUserActions(user, currentUser) {
   const emergency = user.account_type === 'break_glass';
-  const editUrl = `/settings/users/${user.id}/edit`;
+  const editUrl = `/settings/users/${user.public_id}/edit`;
   const normalActions = [
     `<li><a class="dropdown-item" href="${editUrl}">Modifier</a></li>`,
   ];
   if (emergency) {
     normalActions.push(`<li><a class="dropdown-item" href="${editUrl}#password">Changer le mot de passe</a></li>`);
   } else if (user.active) {
-    normalActions.push(`<li><form method="post" action="/settings/users/${user.id}/invitation"><button class="dropdown-item" type="submit">Renvoyer l’invitation</button></form></li>`);
+    normalActions.push(`<li><form method="post" action="/settings/users/${user.public_id}/invitation"><button class="dropdown-item" type="submit">Renvoyer l’invitation</button></form></li>`);
   }
 
   const securityActions = [
-    `<li><form method="post" action="/settings/users/${user.id}/revoke-sessions"><button class="dropdown-item" type="submit">Révoquer toutes les sessions</button></form></li>`,
+    `<li><form method="post" action="/settings/users/${user.public_id}/revoke-sessions"><button class="dropdown-item" type="submit">Révoquer toutes les sessions</button></form></li>`,
   ];
   if (!emergency) {
     securityActions.push(`<li><a class="dropdown-item" href="${editUrl}#account-active">${user.active ? 'Désactiver…' : 'Réactiver…'}</a></li>`);
   }
 
   const destructiveAction = !emergency && String(user.id) !== String(currentUser.id)
-    ? `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="/settings/users/${user.id}/delete">Supprimer</a></li>`
+    ? `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="/settings/users/${user.public_id}/delete">Supprimer</a></li>`
     : '';
-  const triggerId = `user-actions-${user.id}`;
+  const triggerId = `user-actions-${user.public_id}`;
 
   return `<div class="dropdown user-actions-dropdown">
     <button class="btn btn-sm btn-light user-actions-trigger" id="${triggerId}" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-user-actions-toggle aria-expanded="false" aria-label="Actions pour ${escapeHtml(user.name)}">
@@ -107,12 +107,12 @@ function renderEditPage(user, error = '') {
     activeSection: 'users', title: emergency ? 'Compte d’urgence' : 'Modifier un utilisateur',
     description: emergency ? 'Gérez l’identité locale et le mot de passe de secours.' : 'Modifiez son identité, son rôle ou son accès.',
     notifications: notification(error), status: '<a class="btn btn-light" href="/settings/users">Retour aux utilisateurs</a>',
-    content: `<form class="card card-body app-form" method="post" action="/settings/users/${user.id}">${fields}
+    content: `<form class="card card-body app-form" method="post" action="/settings/users/${user.public_id}">${fields}
       <div class="form-actions d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">Enregistrer</button><a class="btn btn-outline-secondary" href="/settings/users">Annuler</a></div>
     </form>${emergency ? '' : `<section class="mt-4 border-top pt-3" aria-labelledby="delete-user-title">
       <h2 class="h6" id="delete-user-title">Supprimer le compte</h2>
       <p class="text-body-secondary">La suppression révoque immédiatement tous les accès de cet utilisateur.</p>
-      <a class="btn btn-sm btn-outline-danger" href="/settings/users/${user.id}/delete">Supprimer</a>
+      <a class="btn btn-sm btn-outline-danger" href="/settings/users/${user.public_id}/delete">Supprimer</a>
     </section>`}`,
   }));
 }
@@ -123,8 +123,8 @@ function renderDeletePage(user, error = '') {
     title: 'Supprimer un utilisateur',
     description: 'Cette action supprime définitivement le compte et révoque ses sessions.',
     notifications: notification(error),
-    status: `<a class="btn btn-light" href="/settings/users/${user.id}/edit">Annuler</a>`,
-    content: `<form class="card card-body app-form border-danger-subtle" method="post" action="/settings/users/${user.id}/delete">
+    status: `<a class="btn btn-light" href="/settings/users/${user.public_id}/edit">Annuler</a>`,
+    content: `<form class="card card-body app-form border-danger-subtle" method="post" action="/settings/users/${user.public_id}/delete">
       <div><strong>${escapeHtml(user.name)}</strong><br><span class="text-body-secondary text-break">${escapeHtml(user.email)}</span></div>
       <label class="form-check">
         <input class="form-check-input" name="confirm_delete" type="checkbox" value="true" required>
@@ -132,21 +132,21 @@ function renderDeletePage(user, error = '') {
       </label>
       <div class="form-actions d-flex flex-wrap gap-2">
         <button class="btn btn-danger" type="submit">Supprimer définitivement</button>
-        <a class="btn btn-outline-secondary" href="/settings/users/${user.id}/edit">Annuler</a>
+        <a class="btn btn-outline-secondary" href="/settings/users/${user.public_id}/edit">Annuler</a>
       </div>
     </form>`,
   }));
 }
 
-async function findUser(id) {
-  const result = await pool.query('SELECT id, name, email, username, account_type, role, active FROM admin_users WHERE id = $1', [id]);
+async function findUser(publicId) {
+  const result = await pool.query('SELECT id, public_id, name, email, username, account_type, role, active FROM admin_users WHERE public_id = $1', [publicId]);
   return result.rows[0] || null;
 }
 
 router.get('/', async (request, response) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, email, username, account_type, role, active, last_login_at FROM admin_users
+      `SELECT id, public_id, name, email, username, account_type, role, active, last_login_at FROM admin_users
        ORDER BY account_type = 'break_glass' DESC, active DESC, LOWER(name), id`,
     );
     const notices = {
@@ -201,9 +201,11 @@ router.post('/', async (request, response) => {
 });
 
 router.post('/:id/invitation', async (request, response) => {
-  if (!isValidId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+  if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   try {
-    await sendAdminInvitation(request.params.id);
+    const user = await findUser(request.params.id);
+    if (!user) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+    await sendAdminInvitation(user.id);
     response.redirect(303, '/settings/users?notice=invitation_sent');
   } catch (error) {
     const notice = error.code === 'INVITATION_RATE_LIMITED'
@@ -219,7 +221,7 @@ router.post('/:id/invitation', async (request, response) => {
 });
 
 router.get('/:id/edit', async (request, response) => {
-  if (!isValidId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+  if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   try {
     const user = await findUser(request.params.id);
     if (!user) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
@@ -231,7 +233,7 @@ router.get('/:id/edit', async (request, response) => {
 });
 
 router.get('/:id/delete', async (request, response) => {
-  if (!isValidId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+  if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   try {
     const user = await findUser(request.params.id);
     if (!user) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
@@ -245,12 +247,12 @@ router.get('/:id/delete', async (request, response) => {
 });
 
 router.post('/:id', async (request, response) => {
-  if (!isValidId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+  if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
-    const targetResult = await client.query('SELECT * FROM admin_users WHERE id = $1 FOR UPDATE', [request.params.id]);
+    const targetResult = await client.query('SELECT * FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
     if (targetResult.rowCount === 0) {
       await client.query('ROLLBACK');
       return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
@@ -308,11 +310,11 @@ router.post('/:id', async (request, response) => {
 });
 
 router.post('/:id/revoke-sessions', async (request, response) => {
-  if (!isValidId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+  if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   try {
-    const result = await pool.query('UPDATE admin_users SET session_version = session_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id', [request.params.id]);
+    const result = await pool.query('UPDATE admin_users SET session_version = session_version + 1, updated_at = CURRENT_TIMESTAMP WHERE public_id = $1 RETURNING id', [request.params.id]);
     if (result.rowCount === 0) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
-    if (String(request.currentUser.id) === String(request.params.id)) {
+    if (String(request.currentUser.id) === String(result.rows[0].id)) {
       request.session.destroy((error) => {
         if (error) return response.status(500).send(renderMessagePage('Session indisponible', 'Les sessions ont été révoquées. Reconnectez-vous.', 500).html);
         response.clearCookie('attendance_log_session');
@@ -328,7 +330,7 @@ router.post('/:id/revoke-sessions', async (request, response) => {
 });
 
 router.post('/:id/delete', async (request, response) => {
-  if (!isValidId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+  if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   const user = await findUser(request.params.id).catch(() => null);
   if (!user) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   if (request.body?.confirm_delete !== 'true') return response.status(400).send(renderDeletePage(user, 'Confirmez explicitement la suppression du compte.'));
@@ -337,7 +339,7 @@ router.post('/:id/delete', async (request, response) => {
   try {
     await client.query('BEGIN');
     const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
-    const targetResult = await client.query('SELECT id, account_type, role, active FROM admin_users WHERE id = $1 FOR UPDATE', [request.params.id]);
+    const targetResult = await client.query('SELECT id, account_type, role, active FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
     if (targetResult.rowCount === 0) {
       await client.query('ROLLBACK');
       return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
