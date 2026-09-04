@@ -177,6 +177,81 @@ document.querySelectorAll('[data-live-session-card]').forEach((card) => {
   });
 });
 
+function cameraFacingMode(camera) {
+  const label = camera?.label || '';
+  if (/front|user|face|avant/i.test(label)) return 'user';
+  if (/back|rear|environment|world|arrière/i.test(label)) return 'environment';
+  return '';
+}
+
+function chooseLogicalCameras(cameras, currentId, currentFacingMode, previousChoices) {
+  const cameraIds = new Set(cameras.map((camera) => camera.id));
+  const choices = {
+    environment: cameraIds.has(previousChoices.environment?.id)
+      ? previousChoices.environment
+      : null,
+    user: cameraIds.has(previousChoices.user?.id) ? previousChoices.user : null,
+  };
+  const currentCamera = cameras.find((camera) => camera.id === currentId);
+
+  if (currentCamera && ['environment', 'user'].includes(currentFacingMode)) {
+    choices[currentFacingMode] = currentCamera;
+  }
+
+  choices.user ||= cameras.find((camera) => cameraFacingMode(camera) === 'user') || null;
+  choices.environment ||= cameras.find(
+    (camera) => cameraFacingMode(camera) === 'environment'
+      && !/ultra[ -]?wide|telephoto|tele\b/i.test(camera.label || ''),
+  ) || cameras.find((camera) => cameraFacingMode(camera) === 'environment') || null;
+
+  if (cameras.length === 2) {
+    if (!choices.environment && choices.user) {
+      choices.environment = cameras.find((camera) => camera.id !== choices.user.id) || null;
+    }
+    if (!choices.user && choices.environment) {
+      choices.user = cameras.find((camera) => camera.id !== choices.environment.id) || null;
+    }
+  }
+
+  return choices;
+}
+
+async function releaseQrScannerStream(scanner, video, retainedStream = null) {
+  try {
+    await scanner?.pause(true);
+  } catch (_error) {
+    // Direct track cleanup remains authoritative if the scanner cannot pause cleanly.
+  }
+  const streams = new Set([retainedStream, video?.srcObject].filter(Boolean));
+  streams.forEach((stream) => stream.getTracks?.().forEach((track) => track.stop()));
+  if (video?.srcObject) video.srcObject = null;
+}
+
+function mediaStreamIsAlive(stream) {
+  return Boolean(stream?.getVideoTracks?.().some((track) => track.readyState !== 'ended'));
+}
+
+async function pauseQrScannerRetainingStream(scanner, video, retainedStream) {
+  const stream = mediaStreamIsAlive(retainedStream) ? retainedStream : video?.srcObject;
+  if (!scanner || !mediaStreamIsAlive(stream)) return null;
+
+  if (video.srcObject === stream) video.srcObject = null;
+  try {
+    await scanner.pause(true);
+  } catch (_error) {
+    // The generation guard still prevents decoding while the manual mode is active.
+  }
+  if (!video.srcObject && mediaStreamIsAlive(stream)) video.srcObject = stream;
+  return mediaStreamIsAlive(stream) ? stream : null;
+}
+
+function destroyQrScanner(scanner, video, retainedStream) {
+  const streams = new Set([retainedStream, video?.srcObject].filter(Boolean));
+  streams.forEach((stream) => stream.getTracks?.().forEach((track) => track.stop()));
+  if (video?.srcObject) video.srcObject = null;
+  scanner?.destroy();
+}
+
 const quickAttendance = document.querySelector('[data-quick-attendance]');
 
 if (quickAttendance) {
@@ -201,6 +276,7 @@ if (quickAttendance) {
   const qrSoundButton = quickAttendance.querySelector('[data-qr-sound]');
   const qrCameraSwitchButton = quickAttendance.querySelector('[data-qr-camera-switch]');
   const qrScanResult = quickAttendance.querySelector('[data-qr-scan-result]');
+  const quickClose = quickAttendance.querySelector('[data-quick-close]');
   let undoCandidate = null;
   let qrScanner = null;
   let qrScannerClass = null;
@@ -216,6 +292,9 @@ if (quickAttendance) {
   let scannerGeneration = 0;
   let availableCameras = [];
   let selectedCamera = 'environment';
+  let selectedFacingMode = 'environment';
+  let logicalCameras = { environment: null, user: null };
+  let retainedCameraStream = null;
   let qrResultHideTimer = null;
   let qrResultResetTimer = null;
   let currentMode = 'manual';
@@ -333,16 +412,21 @@ if (quickAttendance) {
     ?.getVideoTracks?.()[0]
     ?.getSettings?.().deviceId || '';
 
-  const cameraMatchingFacingMode = (cameras, facingMode) => {
-    const labelPattern = facingMode === 'environment'
-      ? /back|rear|environment|world|arrière/i
-      : /front|user|face|avant/i;
-    return cameras.find((camera) => labelPattern.test(camera.label || ''));
+  const activeCameraFacingMode = () => {
+    const track = qrVideo?.srcObject?.getVideoTracks?.()[0];
+    const setting = track?.getSettings?.().facingMode;
+    if (setting === 'environment' || setting === 'user') return setting;
+    return cameraFacingMode({ label: track?.label });
   };
 
   const updateCameraSwitchButton = () => {
     if (!qrCameraSwitchButton) return;
-    qrCameraSwitchButton.hidden = availableCameras.length < 2;
+    const hasRearAndFront = Boolean(
+      logicalCameras.environment
+      && logicalCameras.user
+      && logicalCameras.environment.id !== logicalCameras.user.id,
+    );
+    qrCameraSwitchButton.hidden = !hasRearAndFront;
     qrCameraSwitchButton.disabled = !scannerActive
       || scannerStarting
       || cameraSwitching
@@ -361,14 +445,20 @@ if (quickAttendance) {
         return true;
       });
       const currentCameraId = activeCameraId();
+      const detectedFacingMode = activeCameraFacingMode() || selectedFacingMode;
+      logicalCameras = chooseLogicalCameras(
+        availableCameras,
+        currentCameraId,
+        detectedFacingMode,
+        logicalCameras,
+      );
       if (currentCameraId && availableCameras.some((camera) => camera.id === currentCameraId)) {
+        selectedFacingMode = detectedFacingMode;
         selectedCamera = currentCameraId;
-      } else if (selectedCamera === 'environment' || selectedCamera === 'user') {
-        selectedCamera = cameraMatchingFacingMode(availableCameras, selectedCamera)?.id
-          || selectedCamera;
       }
     } catch (_error) {
       availableCameras = [];
+      logicalCameras = { environment: null, user: null };
     }
     updateCameraSwitchButton();
   };
@@ -440,9 +530,40 @@ if (quickAttendance) {
     updateQuickCount(presentCount + 1, totalCount);
   };
 
-  const stopScanner = ({ offerRestart = false, placeholder = 'Caméra arrêtée.' } = {}) => {
+  const releaseScannerStream = () => releaseQrScannerStream(
+    qrScanner,
+    qrVideo,
+    retainedCameraStream,
+  );
+
+  const pauseScannerForManualMode = async () => {
+    if (!qrScanner && !scannerStarting && !scannerActive) return;
     scannerGeneration += 1;
-    qrScanner?.stop().catch(() => {});
+    scannerActive = false;
+    updateCameraSwitchButton();
+    retainedCameraStream = await pauseQrScannerRetainingStream(
+      qrScanner,
+      qrVideo,
+      retainedCameraStream,
+    );
+  };
+
+  const settleStaleScannerStart = async () => {
+    scannerActive = false;
+    if (currentMode === 'manual') {
+      retainedCameraStream = await pauseQrScannerRetainingStream(
+        qrScanner,
+        qrVideo,
+        retainedCameraStream,
+      );
+      return;
+    }
+    await releaseScannerStream();
+    retainedCameraStream = null;
+  };
+
+  const stopScanner = async ({ offerRestart = false, placeholder = 'Caméra arrêtée.' } = {}) => {
+    scannerGeneration += 1;
     scannerActive = false;
     updateCameraSwitchButton();
     qrView?.classList.add('is-inactive');
@@ -455,6 +576,8 @@ if (quickAttendance) {
       qrStartButton.hidden = !offerRestart;
       qrStartButton.disabled = scannerUnavailable;
     }
+    await releaseScannerStream();
+    retainedCameraStream = null;
   };
 
   const refreshQuickAttendance = async () => {
@@ -482,7 +605,7 @@ if (quickAttendance) {
       if (searchClearButton) searchClearButton.disabled = true;
       modeButtons.forEach((button) => { button.disabled = true; });
       scannerUnavailable = true;
-      stopScanner({ placeholder: `${sessionTerm} clôturée.` });
+      await stopScanner({ placeholder: `${sessionTerm} clôturée.` });
       if (qrSoundButton) qrSoundButton.disabled = true;
       if (completeState) completeState.hidden = true;
       setFeedback();
@@ -602,6 +725,7 @@ if (quickAttendance) {
       });
       if (redirectOnUnauthorized(response)) return;
       const payload = await response.json();
+      if (currentMode !== 'qr' || resultGeneration !== scannerGeneration) return;
       if (!response.ok) {
         setQrFeedback(payload.message || 'QR non reconnu.', 'error');
         scanFeedbackHandled = triggerQrScanFeedback('failure', resultGeneration);
@@ -610,13 +734,14 @@ if (quickAttendance) {
       }
 
       applyPresentResult(payload);
-      setQrFeedback(payload.message, payload.changed ? 'success' : 'warning');
+      setQrFeedback(payload.message, payload.changed ? 'success' : 'error');
       scanFeedbackHandled = triggerQrScanFeedback(
         payload.changed ? 'success' : 'failure',
         resultGeneration,
       );
       await refreshQuickAttendance();
     } catch (_error) {
+      if (currentMode !== 'qr' || resultGeneration !== scannerGeneration) return;
       setQrFeedback('Le QR n’a pas pu être traité. Réessayez.', 'error');
       if (
         !scanFeedbackHandled
@@ -652,56 +777,67 @@ if (quickAttendance) {
     try {
       await prepareAudio();
       if (currentMode !== 'qr') return;
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('Camera unsupported');
-      }
-      const { default: QrScanner } = await import('/vendor/qr-scanner/qr-scanner.min.js');
-      qrScannerClass = QrScanner;
-      if (currentMode !== 'qr') return;
-      if (!(await QrScanner.hasCamera())) {
-        throw new Error('Camera not found');
-      }
-      if (currentMode !== 'qr') return;
-      if (!qrScanner) {
-        qrScanner = new QrScanner(qrVideo, handleQrResult, {
-          preferredCamera: selectedCamera,
-          maxScansPerSecond: 8,
-          returnDetailedScanResult: true,
-        });
+      if (!qrScanner || !mediaStreamIsAlive(retainedCameraStream)) {
+        retainedCameraStream = null;
+        if (qrVideo?.srcObject) qrVideo.srcObject = null;
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('Camera unsupported');
+        }
+        const { default: QrScanner } = await import('/vendor/qr-scanner/qr-scanner.min.js');
+        qrScannerClass = QrScanner;
+        if (currentMode !== 'qr') return;
+        if (!(await QrScanner.hasCamera())) {
+          throw new Error('Camera not found');
+        }
+        if (currentMode !== 'qr') return;
+        if (!qrScanner) {
+          qrScanner = new QrScanner(qrVideo, handleQrResult, {
+            preferredCamera: selectedCamera,
+            maxScansPerSecond: 8,
+            returnDetailedScanResult: true,
+          });
+        }
+      } else if (!qrVideo.srcObject) {
+        qrVideo.srcObject = retainedCameraStream;
       }
       await qrScanner.start();
       if (currentMode !== 'qr' || startGeneration !== scannerGeneration) {
-        stopScanner();
+        await settleStaleScannerStart();
         return;
       }
       scannerActive = true;
+      retainedCameraStream = qrVideo.srcObject;
       qrView?.classList.remove('is-inactive');
       if (qrGuide) qrGuide.hidden = false;
       if (qrPlaceholder) qrPlaceholder.hidden = true;
       if (qrStartButton) qrStartButton.hidden = true;
       await refreshAvailableCameras(startGeneration);
-      setQrFeedback('Présentez un QR devant la caméra.', 'success');
+      setQrFeedback('Présentez un QR devant la caméra.');
     } catch (error) {
+      if (currentMode !== 'qr' || startGeneration !== scannerGeneration) {
+        await settleStaleScannerStart();
+        return;
+      }
       const reason = `${error?.name || ''} ${error?.message || error}`;
       if (/NotAllowed|Permission|denied/i.test(reason)) {
         scannerUnavailable = true;
         scannerUnavailableMessage = 'Accès à la caméra refusé. Passez en mode Manuel.';
-        stopScanner({ placeholder: 'Accès à la caméra refusé.' });
+        await stopScanner({ placeholder: 'Accès à la caméra refusé.' });
         setQrFeedback(scannerUnavailableMessage, 'error');
       } else if (/not found|NotFound|DevicesNotFound/i.test(reason)) {
         scannerUnavailable = true;
         scannerUnavailableMessage = 'Aucune caméra disponible. Passez en mode Manuel.';
-        stopScanner({ placeholder: 'Aucune caméra disponible.' });
+        await stopScanner({ placeholder: 'Aucune caméra disponible.' });
         setQrFeedback(scannerUnavailableMessage, 'error');
       } else if (/unsupported/i.test(reason)) {
         scannerUnavailable = true;
         scannerUnavailableMessage = 'Scanner indisponible sur ce navigateur. Passez en mode Manuel.';
-        stopScanner({ placeholder: 'Scanner indisponible.' });
+        await stopScanner({ placeholder: 'Scanner indisponible.' });
         setQrFeedback(scannerUnavailableMessage, 'error');
       } else {
         scannerUnavailable = false;
         scannerUnavailableMessage = '';
-        stopScanner({ offerRestart: true, placeholder: 'La caméra n’a pas démarré.' });
+        await stopScanner({ offerRestart: true, placeholder: 'La caméra n’a pas démarré.' });
         setQrFeedback('Le scanner n’a pas pu démarrer. Réessayez ou passez en mode Manuel.', 'error');
       }
     } finally {
@@ -718,16 +854,17 @@ if (quickAttendance) {
       || scannerStarting
       || cameraSwitching
       || scanProcessing
-      || availableCameras.length < 2
+      || !logicalCameras.environment
+      || !logicalCameras.user
       || currentMode !== 'qr'
     ) {
       return;
     }
 
-    const currentCameraId = activeCameraId() || selectedCamera;
-    const currentIndex = availableCameras.findIndex((camera) => camera.id === currentCameraId);
-    const nextCamera = availableCameras[(currentIndex + 1 + availableCameras.length) % availableCameras.length];
+    const nextFacingMode = selectedFacingMode === 'environment' ? 'user' : 'environment';
+    const nextCamera = logicalCameras[nextFacingMode];
     const previousCamera = selectedCamera;
+    const previousFacingMode = selectedFacingMode;
     const switchGeneration = ++scannerGeneration;
     cameraSwitching = true;
     scannerActive = false;
@@ -737,29 +874,33 @@ if (quickAttendance) {
 
     try {
       selectedCamera = nextCamera.id;
+      selectedFacingMode = nextFacingMode;
       await qrScanner.setCamera(selectedCamera);
       if (currentMode !== 'qr' || switchGeneration !== scannerGeneration) {
-        await qrScanner.stop().catch(() => {});
+        await releaseScannerStream();
         return;
       }
       scannerActive = true;
+      retainedCameraStream = qrVideo.srcObject;
       qrView?.classList.remove('is-inactive');
       if (qrGuide) qrGuide.hidden = false;
       if (qrPlaceholder) qrPlaceholder.hidden = true;
       await refreshAvailableCameras(switchGeneration);
-      setQrFeedback('Présentez un QR devant la caméra.', 'success');
+      setQrFeedback('Présentez un QR devant la caméra.');
     } catch (_error) {
       if (currentMode !== 'qr' || switchGeneration !== scannerGeneration) return;
       selectedCamera = previousCamera;
+      selectedFacingMode = previousFacingMode;
       try {
-        await qrScanner.stop();
+        await releaseScannerStream();
         await qrScanner.setCamera(selectedCamera);
         await qrScanner.start();
         if (currentMode !== 'qr' || switchGeneration !== scannerGeneration) {
-          await qrScanner.stop().catch(() => {});
+          await releaseScannerStream();
           return;
         }
         scannerActive = true;
+        retainedCameraStream = qrVideo.srcObject;
         qrView?.classList.remove('is-inactive');
         if (qrGuide) qrGuide.hidden = false;
         if (qrPlaceholder) qrPlaceholder.hidden = true;
@@ -789,7 +930,7 @@ if (quickAttendance) {
 
     if (mode === 'manual') {
       clearQrScanResult();
-      stopScanner();
+      await pauseScannerForManualMode();
     }
 
     modeButtons.forEach((button) => {
@@ -832,13 +973,18 @@ if (quickAttendance) {
     if (soundEnabled) prepareAudio();
   });
 
-  window.addEventListener('pagehide', () => {
+  const releaseScannerOnPageExit = () => {
     currentMode = '';
     scannerGeneration += 1;
     scannerActive = false;
     clearQrScanResult();
-    qrScanner?.destroy();
-  });
+    destroyQrScanner(qrScanner, qrVideo, retainedCameraStream);
+    retainedCameraStream = null;
+    qrScanner = null;
+  };
+
+  quickClose?.addEventListener('click', releaseScannerOnPageExit);
+  window.addEventListener('pagehide', releaseScannerOnPageExit);
 
   filterQuickRows();
   setMode('manual', { focus: false });

@@ -665,6 +665,58 @@ select {
   overflow-wrap: anywhere;
 }
 
+.qr-scanner-panel .quick-operational-feedback {
+  height: 2.75rem;
+  padding: 0.35rem 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.qr-scanner-panel .quick-operational-feedback::before {
+  flex: 0 0 1rem;
+  color: currentcolor;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  content: "";
+}
+
+.qr-scanner-panel .quick-operational-feedback.message-success {
+  border-color: #86c99a;
+  color: #166534;
+  background: var(--success-soft);
+}
+
+.qr-scanner-panel .quick-operational-feedback.message-success::before {
+  content: "✓";
+}
+
+.qr-scanner-panel .quick-operational-feedback.message-warning {
+  border-color: #e7c768;
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.qr-scanner-panel .quick-operational-feedback.message-warning::before {
+  content: "!";
+}
+
+.qr-scanner-panel .quick-operational-feedback.message-error {
+  border-color: #e8a0a0;
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.qr-scanner-panel .quick-operational-feedback.message-error::before {
+  content: "×";
+}
+
 .quick-mode-panel {
   min-width: 0;
   display: grid;
@@ -1534,6 +1586,7 @@ a:focus-visible,
 .navbar-toggler:focus-visible,
 .settings-navigation a:focus-visible,
 .quick-close:focus-visible,
+.qr-camera-switch:focus-visible,
 .view-switch button:focus-visible,
 .search-clear:focus-visible {
   outline: 0.15rem solid #38bdf8;

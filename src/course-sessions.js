@@ -566,7 +566,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
           <h1 class="visually-hidden">Mode rapide des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h1>
           <header class="quick-topbar">
             <strong class="quick-attendance-count">${presentCount} / ${rosterResult.rowCount} ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</strong>
-            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer le mode rapide"><span aria-hidden="true">×</span></a>
+            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer le mode rapide" data-quick-close><span aria-hidden="true">×</span></a>
           </header>
           <p class="alert alert-warning">${session.state === 'closed'
             ? `La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Réouvrez-la avant de reprendre les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`
@@ -833,7 +833,7 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
         outcome: result.changed ? 'present' : 'already_present',
         message: result.changed
           ? `${student.first_name} ${student.last_name} — présent`
-          : `${student.first_name} ${student.last_name} est déjà présent`,
+          : `${student.first_name} ${student.last_name} — déjà présent`,
       });
     } catch (error) {
       await client.query('ROLLBACK');
