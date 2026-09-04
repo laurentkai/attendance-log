@@ -62,6 +62,14 @@ Check:
 
 Use a real browser/runtime inspection for high-risk interactive behavior when available. Do not claim physical-device, camera, focus, or pixel-level validation from static inspection alone.
 
+## Security review skill
+
+For meaningful reviews involving authentication, authorization, sessions, OTP, password handling, rate limiting, account recovery, security-sensitive routes, or broader application-security findings, read and apply:
+
+- `owasp-security` — `.agents/skills/owasp-security/SKILL.md` (discoverable by Claude through `.claude/skills/owasp-security/SKILL.md`)
+
+Consult the skill before tracing or reporting those security paths. It supplements `AGENTS.md`; do not restate or substitute its guidance here.
+
 ## Domain integrity review
 
 ### Attendance and reporting
@@ -93,7 +101,7 @@ Use a real browser/runtime inspection for high-risk interactive behavior when av
 
 ## Security and operations review
 
-- Authentication uses active PostgreSQL `admin_users`, never environment credentials. Verify role changes/deactivation affect existing sessions, UI visibility matches the centralized permission matrix, direct URLs are server-protected, and last-active-administrator changes are transactionally safe under concurrency.
+- Authentication uses active PostgreSQL `admin_users`, never environment credentials. Normal users use hashed, expiring, single-use e-mail OTP challenges; the sole local break-glass administrator uses bcrypt password authentication without SMTP behind the unified, enumeration-safe identifier flow. Verify generic identifier responses, OTP resend/attempt/rate limits, break-glass username/IP lockout and reset, session-version revocation, 30-day sliding and 90-day absolute lifetimes, immediate role/activity enforcement, break-glass immutability, and transactionally safe normal-user deletion.
 - Verify fixed role boundaries: administrators have full access; managers cannot access Settings or user management; attendance operators can use session attendance workflows but cannot administer students, classes, Reporting, Settings, Backup, or Restore.
 - State changes must not use an unsafe GET.
 - SQL must be parameterized and subprocesses must use controlled argument arrays.

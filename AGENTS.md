@@ -71,6 +71,14 @@ For meaningful theme, navigation, form/table, responsive, accessibility, new adm
 
 Skills supply design principles and review criteria. They do not override this file or authorize their framework-specific reference implementation. Translate React, Tailwind, or shadcn-oriented recommendations into the approved Bootstrap 5 plus server-rendered HTML architecture.
 
+### Installed security skill
+
+For meaningful implementation work involving authentication, authorization, sessions, OTP, password handling, rate limiting, account recovery, security-sensitive routes, or related security controls, read and apply:
+
+- `owasp-security` — `.agents/skills/owasp-security/SKILL.md`
+
+Consult the skill before editing those code paths. It supplements but does not override this file; do not invoke it mechanically for changes with no material security impact.
+
 ### Mobile, accessibility, and browser validation
 
 - Use meaningful touch targets, visible keyboard focus, native semantics, and accessible names for icon-only controls.
@@ -117,12 +125,16 @@ CSV Import belongs to student management and is accessed contextually from Stude
 
 - Administrator identities are stored only in PostgreSQL `admin_users`; runtime authentication must never fall back to environment credentials.
 - Roles are fixed and centralized: `administrator`, `manager`, and `attendance_operator`. Do not build configurable permissions or a generic RBAC engine.
-- Load the active account from PostgreSQL for every authenticated request so deactivation, deletion, and role changes take effect on existing sessions.
+- Normal accounts authenticate passwordlessly with a single-use six-digit e-mail OTP. OTP challenges are short-lived, hashed, rate-limited, never logged, and invalidated on resend or successful use.
+- One permanent local break-glass account authenticates only by username and bcrypt-hashed password, remains an active administrator, does not depend on SMTP, and is created only with `npm run create-admin`.
+- Login uses one identifier entry point. E-mail-shaped identifiers continue through the enumeration-safe OTP response; non-e-mail identifiers continue through the same generic password step whether or not they exist. Never advertise a separate emergency-login route, and rate-limit break-glass password failures by hashed username and IP.
+- Load the active account and `session_version` from PostgreSQL for every authenticated request so deactivation, deletion, revocation, and role changes take effect immediately. Sessions slide for 30 days but require reauthentication after the 90-day absolute limit.
 - Administrators have full access and exclusively manage Settings and administrator accounts. Managers handle students, Import, classes, sessions, attendance, Reporting/Excel, and student QR/e-mail. Attendance operators access only the session views and attendance workflows required to record attendance.
 - UI visibility follows permissions, but server-side authorization remains authoritative. Unauthorized authenticated requests return 403; unauthenticated HTML requests redirect to login and JSON requests return 401.
-- Preserve at least one active administrator transactionally. Prefer deactivation over hard deletion.
-- Passwords use the central adaptive password-hashing implementation and are never encrypted, rendered, or logged. Do not add OTP, invitations, recovery, or federated login until explicitly scoped.
-- The first administrator is created explicitly after migrations with `npm run create-admin`; never recreate one automatically at startup.
+- Preserve administrative access transactionally. The break-glass account cannot be demoted, deactivated, or deleted through normal routes.
+- Normal OTP accounts may be deleted only by an administrator after explicit confirmation. Reject self-deletion and serialize deletion with role/deactivation changes so administrative access cannot be removed by a race.
+- Only the break-glass password uses the central adaptive password-hashing implementation; it is never encrypted, rendered, or logged. Do not add invitations, password recovery, or federated login until explicitly scoped.
+- The break-glass administrator is created explicitly after migrations with `npm run create-admin`; never recreate one automatically at startup. Normal accounts are created from Configuration > Utilisateurs.
 
 ### Students, memberships, sessions, and attendance
 

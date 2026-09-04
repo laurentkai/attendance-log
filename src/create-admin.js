@@ -1,21 +1,21 @@
 require('dotenv').config({ quiet: true });
 
-const { createAdminUser } = require('./admin-users');
+const { createBreakGlassUser } = require('./admin-users');
 const { pool } = require('./db/client');
 
 async function main() {
   const name = process.env.CREATE_ADMIN_NAME;
-  const email = process.env.CREATE_ADMIN_EMAIL;
+  const username = process.env.CREATE_ADMIN_USERNAME;
   const password = process.env.CREATE_ADMIN_PASSWORD;
 
-  if (!name || !email || !password) {
+  if (!username || !password) {
     throw new Error(
-      'CREATE_ADMIN_NAME, CREATE_ADMIN_EMAIL and CREATE_ADMIN_PASSWORD are required.',
+      'CREATE_ADMIN_USERNAME and CREATE_ADMIN_PASSWORD are required. CREATE_ADMIN_NAME is optional.',
     );
   }
 
-  const user = await createAdminUser({ name, email, password });
-  console.log(`Administrator created: ${user.email}`);
+  const user = await createBreakGlassUser({ name, username, password });
+  console.log(`Break-glass administrator created: ${user.username}`);
 }
 
 main()

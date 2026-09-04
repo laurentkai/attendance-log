@@ -114,6 +114,7 @@ function renderPage(title, content, {
     <link rel="stylesheet" href="/vendor/bootstrap/css/bootstrap.min.css">
     <link rel="stylesheet" href="/css/styles.css">
     <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" defer></script>
+    <script src="/js/otp-resend.js" defer></script>
     <script src="/js/classes.js" defer></script>
     <script src="/js/live-attendance.js" defer></script>
   </head>

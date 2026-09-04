@@ -183,6 +183,8 @@ async function createDatabaseDump(filename) {
       '--no-owner',
       '--no-privileges',
       '--exclude-table-data=public.user_sessions',
+      '--exclude-table-data=public.admin_otp_challenges',
+      '--exclude-table-data=public.admin_break_glass_attempts',
       `--file=${filename}`,
     ], {
       env: pgEnvironment(),

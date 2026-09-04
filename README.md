@@ -101,19 +101,18 @@ docker compose run --rm app npm run migrate
 
 La commande de migration applique les migrations PostgreSQL absentes. Elle est conçue pour être relancée : les migrations déjà enregistrées dans `schema_migrations` ne sont pas réappliquées.
 
-### 5. Créer le premier administrateur
+### 5. Créer le compte administrateur d’urgence
 
 ```bash
 docker compose run --rm \
-  -e CREATE_ADMIN_NAME="Votre nom" \
-  -e CREATE_ADMIN_EMAIL="admin@example.com" \
+  -e CREATE_ADMIN_USERNAME="admin-secours" \
   -e CREATE_ADMIN_PASSWORD="VotreMotDePasseLongEtSolide" \
   app npm run create-admin
 ```
 
-Les options `-e` transmettent ces valeurs uniquement au conteneur ponctuel créé par `docker compose run --rm`. Elles ne doivent pas être ajoutées à `.env` et ne constituent pas une configuration d’exécution permanente. La commande refuse une adresse e-mail déjà utilisée et exige un mot de passe d’au moins 12 caractères.
+`CREATE_ADMIN_NAME` peut aussi être fourni pour personnaliser le nom affiché. Les options `-e` transmettent ces valeurs uniquement au conteneur ponctuel créé par `docker compose run --rm`. Elles ne doivent pas être ajoutées à `.env` et ne constituent pas une configuration d’exécution permanente. La commande refuse de créer un second compte d’urgence et exige un mot de passe d’au moins 12 caractères.
 
-`npm run create-admin` peut être réutilisé ultérieurement de manière délibérée lorsqu’un amorçage administrateur est réellement nécessaire. En fonctionnement normal, les comptes et leurs rôles se gèrent depuis **Configuration > Utilisateurs** ; cette commande ne fait pas partie de la procédure de mise à jour.
+Ce compte local est le seul à utiliser un nom d’utilisateur et un mot de passe. Il sert uniquement d’accès de secours indépendant de SMTP. En fonctionnement normal, les comptes et leurs rôles se gèrent depuis **Configuration > Utilisateurs** ; cette commande ne fait pas partie de la procédure de mise à jour.
 
 ### 6. Démarrer ou recréer l’application
 
@@ -137,7 +136,7 @@ Une réponse saine ressemble à :
 
 ### 8. Se connecter
 
-Ouvrir Attendance Log, puis utiliser l’adresse e-mail et le mot de passe fournis à l’étape 5.
+Ouvrir Attendance Log, saisir le nom d’utilisateur créé à l’étape 5 dans le champ d’identification unique, puis renseigner son mot de passe. Configurer ensuite SMTP dans **Configuration > E-mail** et créer les comptes nominatifs dans **Configuration > Utilisateurs**. Ces comptes saisissent leur adresse e-mail dans le même champ, puis se connectent avec un code à six chiffres reçu par e-mail ; ils n’ont pas de mot de passe local.
 
 ## HTTPS et reverse proxy
 
@@ -320,7 +319,7 @@ La restauration actuelle se trouve dans **Configuration > Sauvegardes > Restaure
 Pour une installation neuve avec une sauvegarde cloud :
 
 1. installer et démarrer Attendance Log ;
-2. créer puis utiliser le compte administrateur de la nouvelle installation ;
+2. créer puis utiliser le compte administrateur d’urgence de la nouvelle installation ;
 3. configurer les credentials S3/Azure actuels dans **Configuration > Sauvegardes** ;
 4. utiliser **Tester la destination** ;
 5. ouvrir **Restaurer une sauvegarde**, sélectionner la sauvegarde cloud et l’inspecter ;
@@ -363,7 +362,7 @@ Consulter :
 docker compose logs --tail=100 app
 ```
 
-Vérifier en priorité les variables requises dans `.env`, notamment `SESSION_SECRET` et les paramètres PostgreSQL. Vérifier également que les migrations ont été appliquées et qu’au moins un compte administrateur actif existe dans `admin_users`.
+Vérifier en priorité les variables requises dans `.env`, notamment `SESSION_SECRET` et les paramètres PostgreSQL. Vérifier également que les migrations ont été appliquées et que le compte administrateur d’urgence existe dans `admin_users`. Si SMTP est indisponible, saisir le nom d’utilisateur local dans le formulaire de connexion normal ; le mot de passe sera demandé à l’étape suivante.
 
 ### Une migration manque
 

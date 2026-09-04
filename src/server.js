@@ -88,13 +88,14 @@ app.use(session({
   name: 'attendance_log_session',
   secret: process.env.SESSION_SECRET,
   resave: false,
+  rolling: true,
   saveUninitialized: false,
   store: new PostgreSqlSessionStore({ pool, tableName: 'user_sessions' }),
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 8 * 60 * 60 * 1000,
+    maxAge: 30 * 24 * 60 * 60 * 1000,
   },
 }));
 
