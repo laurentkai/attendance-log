@@ -91,8 +91,8 @@ function renderRestorePage({ cloud = null, feedback = null, history = [] }) {
     description: 'Inspectez une sauvegarde avant de remplacer les données de l’installation.',
     status: '<a class="btn btn-light" href="/settings/backups">Retour aux sauvegardes</a>',
     notifications: notification,
-    content: `<div class="backup-settings restore-settings">
-      <p class="alert alert-warning">Une restauration remplace entièrement la base actuelle. Les données métier restent restaurables même si la clé de chiffrement est différente.</p>
+    contentClass: 'restore-settings',
+    content: `<p class="alert alert-warning">Une restauration remplace entièrement la base actuelle. Les données métier restent restaurables même si la clé de chiffrement est différente.</p>
       <section class="page-section" aria-labelledby="local-restore-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="local-restore-title">Depuis un fichier</h2><p class="section-description">Archive ZIP créée par Attendance Log, jusqu’à ${maximumUploadMb} Mo.</p></div></div>
         <form class="card card-body app-form" method="post" action="/settings/backups/restore/local" enctype="multipart/form-data">
@@ -107,8 +107,7 @@ function renderRestorePage({ cloud = null, feedback = null, history = [] }) {
       <section class="page-section" aria-labelledby="restore-history-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="restore-history-title">Historique des restaurations</h2><p class="section-description">Dernières tentatives enregistrées dans la base actuelle.</p></div></div>
         ${historyContent}
-      </section>
-    </div>`,
+      </section>`,
   }));
 }
 
@@ -131,8 +130,8 @@ function renderPreview(prepared, feedback = null) {
     description: 'Vérifiez l’origine et la compatibilité avant de continuer.',
     status: '<a class="btn btn-light" href="/settings/backups/restore">Changer de sauvegarde</a>',
     notifications: feedback ? `<p class="alert alert-danger" role="alert">${escapeHtml(feedback)}</p>` : '',
-    content: `<div class="backup-settings restore-settings">
-      <section class="card card-body app-form restore-summary" aria-labelledby="backup-summary-title">
+    contentClass: 'restore-settings',
+    content: `<section class="card card-body app-form restore-summary" aria-labelledby="backup-summary-title">
         <h2 id="backup-summary-title">${escapeHtml(prepared.filename)}</h2>
         <dl class="security-key-summary">
           <div><dt>Date de sauvegarde</dt><dd>${escapeHtml(formatTimestamp(manifest.generatedAt))}</dd></div>
@@ -155,8 +154,7 @@ function renderPreview(prepared, feedback = null) {
           <div class="form-field"><label for="restore-confirmation">Saisissez RESTAURER</label><input class="form-control" id="restore-confirmation" name="confirmation" required autocomplete="off" spellcheck="false"></div>
           <button class="btn btn-danger" type="submit">Restaurer cette sauvegarde</button>
         </form>
-      </section>
-    </div>`,
+      </section>`,
   }));
 }
 

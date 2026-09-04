@@ -1,5 +1,6 @@
 const ExcelJS = require('exceljs');
 const { formatDateForInput } = require('./date-format');
+const { getTerm } = require('./terminology');
 
 const STATUS_LABELS = {
   present: 'Présent',
@@ -41,14 +42,15 @@ function addSummarySheet(workbook, title, summary, extraRows = []) {
     { header: 'Indicateur', key: 'label', width: 34 },
     { header: 'Valeur', key: 'value', width: 24 },
   ];
+  const attendanceRateLabel = `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`;
   const rows = [
     ['Rapport', title],
     ...extraRows,
-    ['Séances clôturées', summary.closedSessionCount],
-    ['Opportunités de présence', summary.opportunities],
+    [`${getTerm('session', 'plural')} clôturées`, summary.closedSessionCount],
+    [`Nombre de ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, summary.opportunities],
     ['Présents', summary.present],
     ['Absents', summary.absent],
-    ['Taux de présence', summary.attendanceRate],
+    [attendanceRateLabel, summary.attendanceRate],
     ['Généré le', new Date()],
   ];
   rows.forEach(([label, value]) => sheet.addRow({ label, value }));
@@ -56,7 +58,7 @@ function addSummarySheet(workbook, title, summary, extraRows = []) {
   sheet.getColumn(2).eachCell((cell) => {
     if (cell.value instanceof Date) cell.numFmt = 'dd/mm/yyyy hh:mm';
   });
-  const rateRow = rows.findIndex(([label]) => label === 'Taux de présence') + 2;
+  const rateRow = rows.findIndex(([label]) => label === attendanceRateLabel) + 2;
   sheet.getCell(rateRow, 2).numFmt = '0.0%';
   return sheet;
 }
@@ -112,40 +114,40 @@ function addDetailRows(sheet, details, { includeStudent = true, includeCourse = 
 
 function buildCourseWorkbook(report) {
   const workbook = createWorkbook();
-  addSummarySheet(workbook, `Cours — ${report.course.name}`, report.summary, [
-    ['Cours', report.course.name],
+  addSummarySheet(workbook, `Rapport pour ${report.course.name}`, report.summary, [
+    [getTerm('class'), report.course.name],
   ]);
 
   const sessionSheet = workbook.addWorksheet('Par séance');
   configureSheet(sessionSheet, [
     { header: 'Date', key: 'date', width: 14 },
-    { header: 'Séance', key: 'title', width: 30 },
-    { header: 'Formateur', key: 'instructor', width: 24 },
-    { header: 'Élèves attendus', key: 'expected', width: 18 },
+    { header: getTerm('session'), key: 'title', width: 30 },
+    { header: getTerm('instructor'), key: 'instructor', width: 24 },
+    { header: `${getTerm('student', 'plural')} attendus`, key: 'expected', width: 18 },
     { header: 'Présents', key: 'present', width: 12 },
     { header: 'Absents', key: 'absent', width: 12 },
-    { header: 'Taux de présence', key: 'rate', width: 19 },
+    { header: `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`, key: 'rate', width: 19 },
   ]);
   addSessionRows(sessionSheet, report.sessions);
 
   const studentSheet = workbook.addWorksheet('Par élève');
   configureSheet(studentSheet, [
-    { header: 'Élève', key: 'student', width: 28 },
-    { header: 'Code élève', key: 'code', width: 15 },
-    { header: 'Séances concernées', key: 'sessions', width: 21 },
-    { header: 'Présences', key: 'present', width: 13 },
+    { header: getTerm('student'), key: 'student', width: 28 },
+    { header: 'Code d’identification', key: 'code', width: 20 },
+    { header: `${getTerm('session', 'plural')} concernées`, key: 'sessions', width: 21 },
+    { header: getTerm('attendance', 'plural'), key: 'present', width: 13 },
     { header: 'Absences', key: 'absent', width: 13 },
-    { header: 'Taux de présence', key: 'rate', width: 19 },
+    { header: `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`, key: 'rate', width: 19 },
   ]);
   addStudentRows(studentSheet, report.students);
 
   const detailSheet = workbook.addWorksheet('Détail');
   configureSheet(detailSheet, [
     { header: 'Date', key: 'date', width: 14 },
-    { header: 'Cours', key: 'course', width: 24 },
-    { header: 'Séance', key: 'session', width: 30 },
-    { header: 'Élève', key: 'student', width: 28 },
-    { header: 'Code élève', key: 'code', width: 15 },
+    { header: getTerm('class'), key: 'course', width: 24 },
+    { header: getTerm('session'), key: 'session', width: 30 },
+    { header: getTerm('student'), key: 'student', width: 28 },
+    { header: 'Code d’identification', key: 'code', width: 20 },
     { header: 'E-mail', key: 'email', width: 34 },
     { header: 'Statut', key: 'status', width: 14 },
   ]);
@@ -155,19 +157,19 @@ function buildCourseWorkbook(report) {
 
 function buildSessionWorkbook(report) {
   const workbook = createWorkbook();
-  addSummarySheet(workbook, `Séance — ${report.session.title}`, {
+  addSummarySheet(workbook, `Rapport pour ${report.session.title}`, {
     closedSessionCount: 1,
     ...report.summary,
   }, [
-    ['Cours', report.session.class_name],
+    [getTerm('class'), report.session.class_name],
     ['Date', toExcelDate(report.session.date)],
-    ['Formateur', report.session.instructor],
+    [getTerm('instructor'), report.session.instructor],
   ]);
 
   const sheet = workbook.addWorksheet('Présences');
   configureSheet(sheet, [
-    { header: 'Élève', key: 'student', width: 28 },
-    { header: 'Code élève', key: 'code', width: 15 },
+    { header: getTerm('student'), key: 'student', width: 28 },
+    { header: 'Code d’identification', key: 'code', width: 20 },
     { header: 'E-mail', key: 'email', width: 34 },
     { header: 'Statut', key: 'status', width: 14 },
   ]);
@@ -184,17 +186,17 @@ function buildStudentWorkbook(report) {
   const workbook = createWorkbook();
   addSummarySheet(
     workbook,
-    `Élève — ${report.student.first_name} ${report.student.last_name}`,
+    `Rapport pour ${report.student.first_name} ${report.student.last_name}`,
     report.summary,
-    [['Code élève', report.student.student_code]],
+    [['Code d’identification', report.student.student_code]],
   );
 
   const sheet = workbook.addWorksheet('Historique');
   configureSheet(sheet, [
     { header: 'Date', key: 'date', width: 14 },
-    { header: 'Cours', key: 'course', width: 24 },
-    { header: 'Séance', key: 'session', width: 30 },
-    { header: 'Formateur', key: 'instructor', width: 24 },
+    { header: getTerm('class'), key: 'course', width: 24 },
+    { header: getTerm('session'), key: 'session', width: 30 },
+    { header: getTerm('instructor'), key: 'instructor', width: 24 },
     { header: 'Statut', key: 'status', width: 14 },
   ]);
   addDetailRows(sheet, report.details, { includeStudent: false });
@@ -203,15 +205,15 @@ function buildStudentWorkbook(report) {
 
 function buildGlobalWorkbook(report) {
   const workbook = createWorkbook();
-  addSummarySheet(workbook, 'Export global des présences', report.summary);
+  addSummarySheet(workbook, `Export global des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, report.summary);
 
   const sheet = workbook.addWorksheet('Présences');
   configureSheet(sheet, [
     { header: 'Date', key: 'date', width: 14 },
-    { header: 'Cours', key: 'course', width: 24 },
-    { header: 'Séance', key: 'session', width: 30 },
-    { header: 'Élève', key: 'student', width: 28 },
-    { header: 'Code élève', key: 'code', width: 15 },
+    { header: getTerm('class'), key: 'course', width: 24 },
+    { header: getTerm('session'), key: 'session', width: 30 },
+    { header: getTerm('student'), key: 'student', width: 28 },
+    { header: 'Code d’identification', key: 'code', width: 20 },
     { header: 'E-mail', key: 'email', width: 34 },
     { header: 'Statut', key: 'status', width: 14 },
   ]);

@@ -187,8 +187,8 @@ function renderBackupPage({ values, history = [], feedback = null, nextRunAt = n
     description: 'Téléchargez une sauvegarde ou automatisez son envoi vers un stockage cloud.',
     status: `<span class="badge status-badge status-${values.enabled ? 'active' : 'inactive'}">${values.enabled ? 'Sauvegardes automatiques actives' : 'Sauvegardes automatiques désactivées'}</span>`,
     notifications: feedbackMessage,
-    content: `<div class="backup-settings" data-backup-settings>
-      <section class="page-section" aria-labelledby="manual-backup-title">
+    contentClass: 'backup-settings',
+    content: `<section class="page-section" aria-labelledby="manual-backup-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="manual-backup-title">Sauvegarde manuelle</h2>
@@ -287,8 +287,7 @@ function renderBackupPage({ values, history = [], feedback = null, nextRunAt = n
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="backup-history-title">Historique</h2><p class="section-description">Dernières exécutions enregistrées.</p></div></div>
         ${latestFailure}
         ${historyRows}
-      </section>
-    </div>`,
+      </section>`,
     after: '<script src="/js/backup-settings.js" defer></script>',
   }));
 }

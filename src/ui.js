@@ -1,5 +1,6 @@
 const { hasPermission, permissions } = require('./permissions');
 const { getCurrentUser } = require('./request-context');
+const { getTerm } = require('./terminology');
 
 const htmlEscapes = {
   '&': '&amp;',
@@ -13,6 +14,10 @@ function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (character) => htmlEscapes[character]);
 }
 
+function businessTerm(concept, form = 'singular') {
+  return escapeHtml(getTerm(concept, form));
+}
+
 function renderNavigation() {
   const currentUser = getCurrentUser();
   const canManageClasses = hasPermission(currentUser, permissions.manageClasses);
@@ -21,7 +26,7 @@ function renderNavigation() {
   const canManageSettings = hasPermission(currentUser, permissions.manageSettings);
 
   return `<nav class="navbar navbar-expand-lg app-header" aria-label="Navigation principale">
-    <div class="container-xl">
+    <div class="container-xl app-frame">
       <a class="navbar-brand app-brand" href="/" aria-label="Attendance Log — Accueil">
         <svg class="app-brand-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false">
           <rect class="app-brand-mark-background" x="1" y="1" width="30" height="30" rx="8"/>
@@ -52,9 +57,9 @@ function renderNavigation() {
       <div class="collapse navbar-collapse" id="primary-navigation">
         <div class="navbar-nav admin-nav">
           <a class="nav-link" href="/" data-section="home">Accueil</a>
-          ${canManageClasses ? '<a class="nav-link" href="/classes" data-section="classes">Classes</a>' : ''}
-          ${canManageStudents ? '<a class="nav-link" href="/students" data-section="students">Élèves</a>' : ''}
-          <a class="nav-link" href="/sessions" data-section="sessions">Séances</a>
+          ${canManageClasses ? `<a class="nav-link" href="/classes" data-section="classes">${businessTerm('class', 'plural')}</a>` : ''}
+          ${canManageStudents ? `<a class="nav-link" href="/students" data-section="students">${businessTerm('student', 'plural')}</a>` : ''}
+          <a class="nav-link" href="/sessions" data-section="sessions">${businessTerm('session', 'plural')}</a>
           ${canViewReporting ? '<a class="nav-link" href="/reporting" data-section="reporting">Reporting</a>' : ''}
         </div>
       </div>
@@ -67,6 +72,8 @@ function renderSettingsNavigation(activeSection) {
     <a class="nav-link${activeSection === 'email' ? ' active' : ''}" href="/settings/email"${activeSection === 'email' ? ' aria-current="page"' : ''}>E-mail</a>
     <a class="nav-link${activeSection === 'security' ? ' active' : ''}" href="/settings/security"${activeSection === 'security' ? ' aria-current="page"' : ''}>Sécurité</a>
     <a class="nav-link${activeSection === 'backups' ? ' active' : ''}" href="/settings/backups"${activeSection === 'backups' ? ' aria-current="page"' : ''}>Sauvegardes</a>
+    <a class="nav-link${activeSection === 'terminology' ? ' active' : ''}" href="/settings/terminology"${activeSection === 'terminology' ? ' aria-current="page"' : ''}>Terminologie</a>
+    <a class="nav-link${activeSection === 'maintenance' ? ' active' : ''}" href="/settings/maintenance"${activeSection === 'maintenance' ? ' aria-current="page"' : ''}>Maintenance</a>
     <a class="nav-link${activeSection === 'users' ? ' active' : ''}" href="/settings/users"${activeSection === 'users' ? ' aria-current="page"' : ''}>Utilisateurs</a>
   </nav>`;
 }
@@ -78,6 +85,7 @@ function renderSettingsLayout({
   status = '',
   notifications = '',
   content = '',
+  contentClass = '',
   after = '',
 }) {
   return `<div class="settings-layout row g-4">
@@ -94,7 +102,9 @@ function renderSettingsLayout({
         ${status ? `<div class="settings-header-meta">${status}</div>` : ''}
       </header>
       <div class="notification-area settings-notifications" aria-live="polite" aria-atomic="true">${notifications}</div>
-      <div class="settings-body">${content}</div>
+      <div class="settings-body">
+        <div class="settings-sections${contentClass ? ` ${escapeHtml(contentClass)}` : ''}">${content}</div>
+      </div>
     </div>
   </div>${after}`;
 }
@@ -118,10 +128,10 @@ function renderPage(title, content, {
     <script src="/js/classes.js" defer></script>
     <script src="/js/live-attendance.js" defer></script>
   </head>
-  <body class="bg-body-tertiary">
+  <body class="bg-body-tertiary" data-term-session="${businessTerm('session')}" data-term-attendance="${businessTerm('attendance')}">
     <a class="skip-link visually-hidden-focusable" href="#main-content">Aller au contenu</a>
     ${authenticated && navigation ? renderNavigation() : ''}
-    <main class="app-main${pageClass ? ` ${escapeHtml(pageClass)}` : ''}" id="main-content" tabindex="-1">
+    <main class="app-main${navigation ? ' app-frame' : ''}${pageClass ? ` ${escapeHtml(pageClass)}` : ''}" id="main-content" tabindex="-1">
       ${content}
     </main>
   </body>
@@ -146,6 +156,7 @@ function renderMessagePage(
 }
 
 module.exports = {
+  businessTerm,
   escapeHtml,
   renderPage,
   renderMessagePage,

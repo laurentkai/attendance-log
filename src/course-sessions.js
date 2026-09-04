@@ -4,11 +4,24 @@ const { pool } = require('./db/client');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const { parseStudentQrPayload } = require('./student-qr');
 const { hasPermission, permissions } = require('./permissions');
-const { escapeHtml, renderPage, renderMessagePage } = require('./ui');
+const { getTerm } = require('./terminology');
+const { businessTerm, escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
 const router = express.Router();
 const requireAttendanceManagement = requirePermission(permissions.manageAttendance);
 const requireSessionManagement = requirePermission(permissions.manageSessions);
+
+function renderSessionNotFoundPage() {
+  return renderMessagePage(`${getTerm('session')} introuvable`, 'L’élément demandé n’existe pas.', 404);
+}
+
+function renderSessionReadOnlyPage() {
+  return renderMessagePage(
+    `${getTerm('session')} en lecture seule`,
+    'Réouverture requise avant modification.',
+    409,
+  );
+}
 
 function isValidId(value) {
   return /^[1-9]\d*$/.test(value);
@@ -36,7 +49,7 @@ function getFormValues(body = {}) {
 
 function validateForm(values) {
   if (!isValidId(values.class_id)) {
-    return 'La classe est obligatoire.';
+    return `Sélectionnez une ${getTerm('class').toLocaleLowerCase('fr')}.`;
   }
   if (!isValidDate(values.date)) {
     return 'La date est obligatoire et doit être valide.';
@@ -45,7 +58,7 @@ function validateForm(values) {
     return 'Le titre est obligatoire.';
   }
   if (!values.instructor) {
-    return 'Le nom du formateur est obligatoire.';
+    return `Le nom du ${getTerm('instructor').toLocaleLowerCase('fr')} est obligatoire.`;
   }
   return '';
 }
@@ -56,13 +69,13 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
     : '';
   const classField = edit
     ? `<div class="form-field">
-         <p><strong>Classe :</strong> ${escapeHtml(values.class_name)}</p>
+         <p><strong>${businessTerm('class')} :</strong> ${escapeHtml(values.class_name)}</p>
          <input name="class_id" type="hidden" value="${escapeHtml(values.class_id)}">
        </div>`
     : `<div class="form-field">
-         <label for="class_id">Classe <span aria-hidden="true">*</span></label>
+         <label for="class_id">${businessTerm('class')} <span aria-hidden="true">*</span></label>
          <select class="form-select" id="class_id" name="class_id" required>
-           <option value="">Sélectionner une classe</option>
+           <option value="">Sélectionner dans la liste</option>
            ${classes.map((classRecord) => `<option value="${classRecord.id}"${String(classRecord.id) === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
          </select>
        </div>`;
@@ -88,7 +101,7 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
       </div>
 
       <div class="form-field">
-        <label for="instructor">Formateur <span aria-hidden="true">*</span></label>
+        <label for="instructor">${businessTerm('instructor')} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="instructor" name="instructor" type="text" value="${escapeHtml(values.instructor)}" autocomplete="off" required>
       </div>
 
@@ -202,9 +215,9 @@ async function markStudentPresent(client, sessionId, studentId) {
 
 function getStateLabel(state) {
   return {
-    scheduled: 'Séance planifiée',
-    open: 'Séance ouverte',
-    closed: 'Séance clôturée',
+    scheduled: 'État : planifié',
+    open: 'État : ouvert',
+    closed: 'État : clôturé',
   }[state];
 }
 
@@ -233,22 +246,22 @@ router.get('/', async (request, response) => {
     ]);
     const classRecord = classResult.rows[0];
     if (classId && !classRecord) {
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderMessagePage(`${getTerm('class')} introuvable`, 'L’élément demandé n’existe pas.', 404);
       response.status(page.status).send(page.html);
       return;
     }
     const notices = {
-      created: 'La séance a été créée.',
-      updated: 'La séance a été modifiée.',
+      created: 'La session a été créée.',
+      updated: 'La session a été mise à jour.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
     const sessions = result.rows.length === 0
       ? `<p class="empty-state">${searchQuery
-        ? 'Aucune séance ne correspond à cette recherche.'
-        : 'Aucune séance pour le moment.'}</p>`
+        ? 'Aucune session ne correspond à la recherche.'
+        : 'Aucune session n’est enregistrée pour le moment.'}</p>`
       : `<div class="list-group compact-list">${result.rows.map((session) => `
           <article class="list-group-item compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.id}"` : ''}>
             <div class="compact-identity session-identity">
@@ -259,8 +272,8 @@ router.get('/', async (request, response) => {
             <div class="compact-status">
               <span class="badge status-badge status-${session.state}" data-session-state>${getStateLabel(session.state)}</span>
             </div>
-            <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(session.title)}">
-              <a class="btn btn-primary" href="/sessions/${session.id}">${session.state === 'scheduled' ? 'Voir la séance' : 'Présences'}</a>
+            <div class="compact-actions compact-actions--split" aria-label="Actions disponibles pour « ${escapeHtml(session.title)} »">
+              <a class="btn btn-primary" href="/sessions/${session.id}">${session.state === 'scheduled' ? `Voir la ${businessTerm('session').toLocaleLowerCase('fr')}` : businessTerm('attendance', 'plural')}</a>
               ${canManageSessions ? `<span class="session-edit-slot">
                 <a class="btn btn-light" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
                 <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>Modifier</button>
@@ -268,23 +281,23 @@ router.get('/', async (request, response) => {
             </div>
           </article>`).join('')}</div>`;
 
-    response.send(renderPage('Séances', `
+    response.send(renderPage(getTerm('session', 'plural'), `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
-          <h1>Séances</h1>
-          <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : canManageSessions ? 'Planifiez les cours et gérez les présences.' : 'Accédez aux séances et gérez les présences.'}</p>
+          <h1>${businessTerm('session', 'plural')}</h1>
+          <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : canManageSessions ? `Planifiez et gérez les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.` : `Accédez aux ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} et gérez les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`}</p>
         </div>
-        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Nouvelle séance</a>` : ''}
+        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.id}` : ''}">Ajouter</a>` : ''}
       </header>
-      ${classRecord && canManageSessions ? `<nav class="nav nav-pills context-tabs" aria-label="Gestion de la classe ${escapeHtml(classRecord.name)}">
-        <a class="nav-link" href="/classes/${classRecord.id}">Gérer les élèves</a>
-        <a class="nav-link active" href="/sessions?class_id=${classRecord.id}" aria-current="page">Gérer les séances</a>
+      ${classRecord && canManageSessions ? `<nav class="nav nav-pills context-tabs" aria-label="Gestion de « ${escapeHtml(classRecord.name)} »">
+        <a class="nav-link" href="/classes/${classRecord.id}">${businessTerm('student', 'plural')}</a>
+        <a class="nav-link active" href="/sessions?class_id=${classRecord.id}" aria-current="page">${businessTerm('session', 'plural')}</a>
       </nav>` : ''}
       <form class="search" method="get" action="/sessions" role="search">
-        <label for="session-search">Rechercher une séance</label>
+        <label for="session-search">Rechercher une ${businessTerm('session').toLocaleLowerCase('fr')}</label>
         ${classId ? `<input name="class_id" type="hidden" value="${classId}">` : ''}
         <div class="search-controls">
-          <input class="form-control" id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Titre, classe ou formateur…">
+          <input class="form-control" id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Titre, ${businessTerm('class').toLocaleLowerCase('fr')} ou ${businessTerm('instructor').toLocaleLowerCase('fr')}…">
           <button class="btn btn-primary" type="submit">Rechercher</button>
           ${searchQuery ? `<a class="btn btn-outline-secondary" href="/sessions${classId ? `?class_id=${classId}` : ''}">Effacer</a>` : ''}
         </div>
@@ -293,7 +306,7 @@ router.get('/', async (request, response) => {
       ${sessions}`));
   } catch (error) {
     console.error('Unable to list course sessions:', error);
-    const page = renderMessagePage('Séances indisponibles', 'Impossible de charger les séances pour le moment.');
+    const page = renderMessagePage(`${getTerm('session', 'plural')} indisponibles`, 'Impossible de charger la liste pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
@@ -302,9 +315,9 @@ router.get('/new', requireSessionManagement, async (request, response) => {
   try {
     const classes = await getClasses();
     response.send(renderSessionForm({
-      title: 'Ajouter une séance',
+      title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: '/sessions',
-      submitLabel: 'Créer la séance',
+      submitLabel: 'Créer',
       values: {
         class_id: isValidId(request.query.class_id || '') ? request.query.class_id : '',
         date: '',
@@ -329,9 +342,9 @@ router.post('/', requireSessionManagement, async (request, response) => {
     try {
       const classes = await getClasses();
       response.status(400).send(renderSessionForm({
-        title: 'Ajouter une séance',
+        title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
         action: '/sessions',
-        submitLabel: 'Créer la séance',
+        submitLabel: 'Créer',
         values,
         classes,
         error: validationError,
@@ -356,12 +369,12 @@ router.post('/', requireSessionManagement, async (request, response) => {
     if (result.rowCount === 0) {
       const classes = await getClasses();
       response.status(400).send(renderSessionForm({
-        title: 'Ajouter une séance',
+        title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
         action: '/sessions',
-        submitLabel: 'Créer la séance',
+        submitLabel: 'Créer',
         values,
         classes,
-        error: 'La classe sélectionnée n’existe pas.',
+        error: 'La sélection ne correspond à aucune activité.',
       }));
       return;
     }
@@ -370,19 +383,19 @@ router.post('/', requireSessionManagement, async (request, response) => {
     console.error('Unable to create course session:', error);
     const classes = await getClasses().catch(() => []);
     response.status(500).send(renderSessionForm({
-      title: 'Ajouter une séance',
+      title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: '/sessions',
-      submitLabel: 'Créer la séance',
+      submitLabel: 'Créer',
       values,
       classes,
-      error: 'Impossible de créer la séance pour le moment.',
+      error: `Impossible de créer la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`,
     }));
   }
 });
 
 router.get('/:id/edit', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -397,22 +410,18 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
       [request.params.id],
     );
     if (result.rowCount === 0) {
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
     if (result.rows[0].state === 'closed') {
-      const page = renderMessagePage(
-        'Séance en lecture seule',
-        'Réouvrez la séance avant de modifier ses informations.',
-        409,
-      );
+      const page = renderSessionReadOnlyPage();
       response.status(page.status).send(page.html);
       return;
     }
 
     response.send(renderSessionForm({
-      title: 'Modifier la séance',
+      title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: `/sessions/${result.rows[0].id}`,
       submitLabel: 'Enregistrer',
       values: result.rows[0],
@@ -421,14 +430,14 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
     }));
   } catch (error) {
     console.error('Unable to load course session:', error);
-    const page = renderMessagePage('Séance indisponible', 'Impossible de charger cette séance pour le moment.');
+    const page = renderMessagePage(`${getTerm('session')} indisponible`, 'Impossible de charger l’élément demandé pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -436,18 +445,18 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   try {
     const stateResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.params.id]);
     if (stateResult.rowCount === 0) {
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
     if (stateResult.rows[0].state === 'closed') {
-      const page = renderMessagePage('Séance en lecture seule', 'Réouvrez la séance avant de modifier ses informations.', 409);
+      const page = renderSessionReadOnlyPage();
       response.status(page.status).send(page.html);
       return;
     }
   } catch (error) {
     console.error('Unable to verify course session state:', error);
-    const page = renderMessagePage('Modification impossible', 'Impossible de vérifier cette séance pour le moment.');
+    const page = renderMessagePage('Modification impossible', `Impossible de vérifier la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
     return;
   }
@@ -457,7 +466,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   if (validationError) {
     const classResult = await pool.query('SELECT name FROM classes WHERE id = $1', [values.class_id]).catch(() => ({ rows: [] }));
     response.status(400).send(renderSessionForm({
-      title: 'Modifier la séance',
+      title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: `/sessions/${request.params.id}`,
       submitLabel: 'Enregistrer',
       values: { ...values, class_name: classResult.rows[0]?.name || '' },
@@ -479,22 +488,22 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
     if (result.rowCount === 0) {
       const sessionResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.params.id]);
       const page = sessionResult.rows[0]?.state === 'closed'
-        ? renderMessagePage('Séance en lecture seule', 'Réouvrez la séance avant de modifier ses informations.', 409)
-        : renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+        ? renderSessionReadOnlyPage()
+        : renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
     response.redirect(303, `/sessions/${request.params.id}?notice=updated`);
   } catch (error) {
     console.error('Unable to update course session:', error);
-    const page = renderMessagePage('Modification impossible', 'Impossible de modifier cette séance pour le moment.');
+    const page = renderMessagePage('Modification impossible', `Impossible de modifier la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/:id/status', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    response.status(404).json({ error: 'Séance introuvable.' });
+    response.status(404).json({ error: `${getTerm('session')} introuvable.` });
     return;
   }
 
@@ -504,7 +513,7 @@ router.get('/:id/status', async (request, response) => {
       [request.params.id],
     );
     if (sessionResult.rowCount === 0) {
-      response.status(404).json({ error: 'Séance introuvable.' });
+      response.status(404).json({ error: `${getTerm('session')} introuvable.` });
       return;
     }
     const session = sessionResult.rows[0];
@@ -522,13 +531,13 @@ router.get('/:id/status', async (request, response) => {
     });
   } catch (error) {
     console.error('Unable to load live course session status:', error);
-    response.status(500).json({ error: 'Impossible de charger l’état de la séance.' });
+    response.status(500).json({ error: 'Impossible de charger l’état demandé.' });
   }
 });
 
 router.get('/:id/quick-attendance', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -543,7 +552,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
       [request.params.id],
     );
     if (sessionResult.rowCount === 0) {
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -552,16 +561,16 @@ router.get('/:id/quick-attendance', async (request, response) => {
     const rosterResult = await loadRoster(session);
     const presentCount = rosterResult.rows.filter((student) => student.status === 'present').length;
     if (session.state !== 'open') {
-      response.status(409).send(renderPage('Prise de présence rapide', `
+      response.status(409).send(renderPage(`Mode rapide des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, `
         <div class="quick-attendance quick-attendance--unavailable">
-          <h1 class="visually-hidden">Prise de présence rapide</h1>
+          <h1 class="visually-hidden">Mode rapide des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h1>
           <header class="quick-topbar">
-            <strong class="quick-attendance-count">${presentCount} / ${rosterResult.rowCount} présents</strong>
-            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer la prise de présence rapide"><span aria-hidden="true">×</span></a>
+            <strong class="quick-attendance-count">${presentCount} / ${rosterResult.rowCount} ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</strong>
+            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer le mode rapide"><span aria-hidden="true">×</span></a>
           </header>
           <p class="alert alert-warning">${session.state === 'closed'
-            ? 'Cette séance est clôturée. Elle doit être réouverte par un gestionnaire avant de reprendre les présences.'
-            : 'Cette séance doit être ouverte avant de prendre les présences.'}</p>
+            ? `La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Réouvrez-la avant de reprendre les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`
+            : `Ouvrez la ${businessTerm('session').toLocaleLowerCase('fr')} avant de prendre les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`}</p>
         </div>`, { navigation: false, pageClass: 'page--quick-attendance' }));
       return;
     }
@@ -580,21 +589,30 @@ router.get('/:id/quick-attendance', async (request, response) => {
         </div>
       </article>`).join('');
 
-    response.send(renderPage('Prise de présence rapide', `
+    response.send(renderPage(`Mode rapide des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, `
       <div class="quick-attendance" data-quick-attendance data-session-id="${session.id}">
-        <h1 class="visually-hidden">Prise de présence rapide</h1>
+        <h1 class="visually-hidden">Mode rapide des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h1>
         <header class="quick-topbar">
-          <strong class="quick-attendance-count" aria-label="Nombre de présences"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> présents</strong>
-          <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer la prise de présence rapide"><span aria-hidden="true">×</span></a>
+          <strong class="quick-attendance-count" aria-label="Nombre de ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</strong>
+          <div class="quick-topbar-actions">
+            <button class="btn btn-light quick-undo" type="button" data-quick-undo disabled>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <path d="m9 7-4 4 4 4"/>
+                <path d="M5 11h7a5 5 0 0 1 5 5v1"/>
+              </svg>
+              <span>Annuler</span>
+            </button>
+            <a class="quick-close" href="/sessions/${session.id}" aria-label="Fermer le mode rapide"><span aria-hidden="true">×</span></a>
+          </div>
         </header>
-        <p class="alert alert-warning" data-quick-readonly hidden>Cette séance vient d’être clôturée. La prise de présence est maintenant indisponible.</p>
-        <div class="nav nav-pills view-switch quick-mode-switch" role="group" aria-label="Mode de prise de présence">
+        <p class="alert alert-warning" data-quick-readonly hidden>La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Le mode rapide est indisponible.</p>
+        <div class="nav nav-pills view-switch quick-mode-switch" role="group" aria-label="Mode de saisie">
           <button class="nav-link active" type="button" aria-pressed="true" aria-controls="quick-manual-mode" data-quick-mode="manual">Recherche</button>
           <button class="nav-link" type="button" aria-pressed="false" aria-controls="quick-qr-mode" data-quick-mode="qr">QR</button>
         </div>
-        <section id="quick-manual-mode" class="quick-mode-panel" aria-label="Prise de présence manuelle" data-quick-mode-panel="manual">
+        <section id="quick-manual-mode" class="quick-mode-panel" aria-label="Saisie manuelle" data-quick-mode-panel="manual">
           <div class="search quick-search">
-            <label class="visually-hidden" for="quick-attendance-search">Rechercher un élève</label>
+            <label class="visually-hidden" for="quick-attendance-search">Rechercher dans les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</label>
             <div class="search-input-action">
               <input class="form-control" id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
               <button class="search-clear" type="button" aria-label="Effacer la recherche" data-quick-search-clear hidden><span aria-hidden="true">×</span></button>
@@ -603,8 +621,8 @@ router.get('/:id/quick-attendance', async (request, response) => {
           <span data-quick-feedback-anchor="manual"></span>
           <p class="quick-operational-feedback" role="status" aria-live="polite" aria-atomic="true" data-quick-feedback>&nbsp;</p>
           <div class="quick-results-state" aria-live="polite">
-            <p class="quick-attendance-state" data-quick-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
-            <p class="quick-attendance-state" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>Tous les élèves sont présents.</p>
+            <p class="quick-attendance-state" data-quick-no-results hidden>Aucun résultat.</p>
+            <p class="quick-attendance-state" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>Toutes les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')} ont été enregistrées.</p>
           </div>
           <div class="list-group compact-list" id="quick-attendance-results" data-quick-results${eligibleStudents.length === 0 ? ' hidden' : ''}>${studentRows}</div>
         </section>
@@ -613,6 +631,22 @@ router.get('/:id/quick-attendance', async (request, response) => {
             <video data-qr-video muted playsinline aria-label="Aperçu de la caméra pour scanner un QR"></video>
             <span class="qr-scan-guide" aria-hidden="true" data-qr-guide hidden></span>
             <p class="qr-camera-placeholder" data-qr-placeholder>Activation de la caméra…</p>
+            <button class="qr-camera-switch" type="button" aria-label="Changer de caméra" data-qr-camera-switch hidden>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <path d="M20 7V3l-2 2a8 8 0 0 0-12.7 2"/>
+                <path d="M4 17v4l2-2a8 8 0 0 0 12.7-2"/>
+                <rect x="7" y="8" width="10" height="8" rx="2"/>
+                <circle cx="12" cy="12" r="2"/>
+              </svg>
+            </button>
+            <span class="qr-scan-result" aria-hidden="true" data-qr-scan-result>
+              <svg class="qr-scan-result-icon qr-scan-result-icon--success" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="m5 12.5 4.2 4.2L19 7"/>
+              </svg>
+              <svg class="qr-scan-result-icon qr-scan-result-icon--failure" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="m7 7 10 10M17 7 7 17"/>
+              </svg>
+            </span>
           </div>
           <span data-quick-feedback-anchor="qr"></span>
           <div class="compact-actions qr-scanner-actions">
@@ -620,20 +654,17 @@ router.get('/:id/quick-attendance', async (request, response) => {
             <button class="btn btn-light" type="button" aria-pressed="true" data-qr-sound>Son activé</button>
           </div>
         </section>
-        <div class="quick-secondary-actions">
-          <button class="btn btn-light quick-undo" type="button" data-quick-undo disabled>Annuler la dernière action</button>
-        </div>
       </div>`, { navigation: false, pageClass: 'page--quick-attendance' }));
   } catch (error) {
     console.error('Unable to load quick attendance:', error);
-    const page = renderMessagePage('Prise de présence indisponible', 'Impossible de charger la prise de présence rapide pour le moment.');
+    const page = renderMessagePage('Mode rapide indisponible', 'Impossible de charger le mode rapide pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/:id', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -649,7 +680,7 @@ router.get('/:id', async (request, response) => {
       [request.params.id],
     );
     if (sessionResult.rowCount === 0) {
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -659,21 +690,21 @@ router.get('/:id', async (request, response) => {
 
     const presentCount = studentsResult.rows.filter((student) => student.status === 'present').length;
     const notices = {
-      created: 'La séance a été créée.',
-      updated: 'La séance a été modifiée.',
-      attendance_updated: 'La présence a été mise à jour.',
-      closed: 'La séance a été clôturée.',
-      opened: 'La séance est ouverte.',
+      created: `La ${getTerm('session').toLocaleLowerCase('fr')} a été créée.`,
+      updated: `La ${getTerm('session').toLocaleLowerCase('fr')} a été mise à jour.`,
+      attendance_updated: `La ${getTerm('attendance').toLocaleLowerCase('fr')} a été mise à jour.`,
+      closed: `La ${getTerm('session').toLocaleLowerCase('fr')} a été clôturée.`,
+      opened: `La ${getTerm('session').toLocaleLowerCase('fr')} est ouverte.`,
     };
     const notice = notices[request.query.notice]
-      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const studentList = studentsResult.rows.length === 0
       ? `<p class="empty-state">${session.state === 'closed'
-        ? 'Aucun élève enregistré pour cette séance.'
+        ? `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} n’est enregistré pour cette ${businessTerm('session').toLocaleLowerCase('fr')}.`
         : session.state === 'open'
-        ? 'Aucun élève actif dans cette classe.'
-        : 'Aucun élève actif dans cette classe. La séance n’a pas encore commencé.'}</p>`
+        ? `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}.`
+        : `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}. La ${businessTerm('session').toLocaleLowerCase('fr')} n’a pas encore commencé.`}</p>`
       : `<div class="list-group compact-list" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
           <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
@@ -705,38 +736,38 @@ router.get('/:id', async (request, response) => {
           ${session.notes ? `<p class="page-description session-notes">${escapeHtml(session.notes)}</p>` : ''}
         </div>
         <div class="context-actions d-flex flex-wrap gap-2">
-          <a class="btn btn-primary" href="/sessions/${session.id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Prise de présence rapide</a>
-          ${canManageSessions ? `<form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir la séance' : 'Réouvrir la séance'}</button></form>
-          <a class="btn btn-outline-secondary" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier la séance</a>
-          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer cette séance et marquer les élèves en attente comme absents ?"${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer la séance</button></form>` : ''}
+          <a class="btn btn-primary" href="/sessions/${session.id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Mode rapide</a>
+          ${canManageSessions ? `<form method="post" action="/sessions/${session.id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir' : 'Réouvrir'}</button></form>
+          <a class="btn btn-outline-secondary" href="/sessions/${session.id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
+          <form method="post" action="/sessions/${session.id}/close" data-session-close data-confirm="Clôturer la ${businessTerm('session').toLocaleLowerCase('fr')} ? Les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} en attente seront marqués absents."${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer</button></form>` : ''}
         </div>
       </header>
       ${notice}
-      ${session.state === 'closed' ? `<p class="alert alert-warning">Cette séance est clôturée et en lecture seule. ${canManageSessions ? 'Réouvrez-la pour modifier ses informations ou les présences.' : 'Un gestionnaire doit la réouvrir avant toute correction.'}</p>` : ''}
-      <section class="card card-body summary-card attendance-summary" aria-label="Résumé des présences" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.id}"` : ''}>
+      ${session.state === 'closed' ? `<p class="alert alert-warning">La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée et en lecture seule. ${canManageSessions ? `Réouvrez-la pour modifier ses informations ou les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.` : 'Réouverture par un gestionnaire requise avant toute correction.'}</p>` : ''}
+      <section class="card card-body summary-card attendance-summary" aria-label="Résumé des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.id}"` : ''}>
         <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> présents</strong>
         <span class="badge status-badge status-${session.state}" data-session-state aria-live="polite">${getStateLabel(session.state)}</span>
       </section>
-      <p class="alert alert-warning" data-live-readonly hidden>Cette séance vient d’être clôturée. Les présences sont maintenant en lecture seule.</p>
-      <p class="alert alert-danger" data-live-error role="alert" hidden>La présence n’a pas pu être mise à jour. Réessayez.</p>
+      <p class="alert alert-warning" data-live-readonly hidden>La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')} sont maintenant en lecture seule.</p>
+      <p class="alert alert-danger" data-live-error role="alert" hidden>La mise à jour a échoué. Réessayez.</p>
       <section class="page-section" aria-labelledby="attendance-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="attendance-title">Gestion des présences</h2>
+            <h2 id="attendance-title">${businessTerm('attendance', 'plural')}</h2>
           </div>
         </div>
         ${studentsResult.rows.length > 0 ? `<div class="search">
-          <label for="attendance-search">Rechercher un élève</label>
+          <label for="attendance-search">Rechercher dans les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</label>
           <div class="search-controls">
             <input class="form-control" id="attendance-search" name="attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
           </div>
-          <p class="help-text" role="status" data-attendance-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
+          <p class="help-text" role="status" data-attendance-no-results hidden>Aucun résultat.</p>
         </div>` : ''}
         ${studentList}
       </section>`));
   } catch (error) {
     console.error('Unable to load course session attendance:', error);
-    const page = renderMessagePage('Séance indisponible', 'Impossible de charger cette séance pour le moment.');
+    const page = renderMessagePage(`${getTerm('session')} indisponible`, 'Impossible de charger l’élément demandé pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
@@ -777,19 +808,19 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
         );
         await client.query('ROLLBACK');
         if (sessionResult.rowCount === 0) {
-          response.status(404).json({ outcome: 'unknown', message: 'Séance introuvable.' });
+          response.status(404).json({ outcome: 'unknown', message: `${getTerm('session')} introuvable.` });
           return;
         }
         if (sessionResult.rows[0].state !== 'open') {
           response.status(409).json({
             outcome: 'session_unavailable',
-            message: 'La séance n’est pas ouverte.',
+            message: `La ${getTerm('session').toLocaleLowerCase('fr')} n’est pas ouverte.`,
           });
           return;
         }
         response.status(409).json({
           outcome: 'ineligible',
-          message: 'Cet élève ne peut pas être enregistré pour cette séance.',
+          message: `Cette personne ne peut pas être enregistrée dans cette ${getTerm('session').toLocaleLowerCase('fr')}.`,
         });
         return;
       }
@@ -821,7 +852,7 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
 
 router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, async (request, response) => {
   if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
-    response.status(404).json({ error: 'Présence introuvable.' });
+    response.status(404).json({ error: 'Enregistrement introuvable.' });
     return;
   }
 
@@ -836,7 +867,7 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
     if (!result.allowed) {
       await client.query('ROLLBACK');
       response.status(409).json({
-        error: 'La séance doit être ouverte et l’élève doit être actif dans cette classe.',
+        error: `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte et la personne doit être active et admissible.`,
       });
       return;
     }
@@ -848,7 +879,7 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to update quick attendance:', error);
-    response.status(500).json({ error: 'Impossible de mettre à jour cette présence.' });
+    response.status(500).json({ error: `Impossible d’enregistrer la ${getTerm('attendance').toLocaleLowerCase('fr')}.` });
   } finally {
     client.release();
   }
@@ -856,7 +887,7 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
 
 router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement, async (request, response) => {
   if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
-    response.status(404).json({ error: 'Présence introuvable.' });
+    response.status(404).json({ error: 'Enregistrement introuvable.' });
     return;
   }
   const previousStatus = typeof request.body.previous_status === 'string'
@@ -897,7 +928,7 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
     if (updateResult.rowCount === 0) {
       await client.query('ROLLBACK');
       response.status(409).json({
-        error: 'La présence a été modifiée depuis cette action. L’annulation a été ignorée.',
+        error: 'Cet enregistrement a été modifié depuis cette action. Annulation ignorée.',
       });
       return;
     }
@@ -920,12 +951,12 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
 
 router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (request, response) => {
   if (!isValidId(request.params.id) || !isValidId(request.params.studentId)) {
-    const page = renderMessagePage('Présence introuvable', 'Cette présence ne peut pas être modifiée.', 404);
+    const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
     response.status(page.status).send(page.html);
     return;
   }
   if (!['present', 'absent'].includes(request.body.status)) {
-    const page = renderMessagePage('Statut invalide', 'Le statut de présence est invalide.', 400);
+    const page = renderMessagePage('Statut invalide', 'Le statut demandé est invalide.', 400);
     response.status(page.status).send(page.html);
     return;
   }
@@ -942,7 +973,7 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
       await client.query('ROLLBACK');
       const page = renderMessagePage(
         'Modification impossible',
-        'La séance doit être ouverte et l’élève doit être actif dans cette classe.',
+        `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte et la personne doit être active et admissible.`,
         409,
       );
       response.status(page.status).send(page.html);
@@ -961,7 +992,7 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to update attendance:', error);
-    const page = renderMessagePage('Modification impossible', 'Impossible de mettre à jour cette présence pour le moment.');
+    const page = renderMessagePage('Modification impossible', `Impossible de mettre à jour la ${getTerm('attendance').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
   } finally {
     client.release();
@@ -970,7 +1001,7 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
 
 router.post('/:id/close', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -984,13 +1015,13 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
     );
     if (sessionResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
     if (sessionResult.rows[0].state !== 'open') {
       await client.query('ROLLBACK');
-      const page = renderMessagePage('Clôture impossible', 'Seule une séance ouverte peut être clôturée.', 409);
+      const page = renderMessagePage('Clôture impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte.`, 409);
       response.status(page.status).send(page.html);
       return;
     }
@@ -1030,7 +1061,7 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to close course session:', error);
-    const page = renderMessagePage('Clôture impossible', 'Impossible de clôturer cette séance pour le moment.');
+    const page = renderMessagePage('Clôture impossible', `Impossible de clôturer la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
   } finally {
     client.release();
@@ -1039,7 +1070,7 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
 
 router.post('/:id/open', requireSessionManagement, async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    const page = renderSessionNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -1064,11 +1095,11 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');
       if (sessionResult.rowCount > 0) {
-        const page = renderMessagePage('Ouverture impossible', 'Cette séance est déjà ouverte.', 409);
+        const page = renderMessagePage('Ouverture impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} est déjà ouverte.`, 409);
         response.status(page.status).send(page.html);
         return;
       }
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -1077,7 +1108,7 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to open course session:', error);
-    const page = renderMessagePage('Ouverture impossible', 'Impossible d’ouvrir cette séance pour le moment.');
+    const page = renderMessagePage('Ouverture impossible', `Impossible d’ouvrir la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
   } finally {
     client.release();

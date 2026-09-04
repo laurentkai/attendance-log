@@ -18,7 +18,8 @@ const {
   safeFilenamePart,
   sendWorkbook,
 } = require('./reporting-excel');
-const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
+const { getTerm } = require('./terminology');
+const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
 
@@ -46,12 +47,16 @@ function getStatusLabel(status) {
   return { present: 'Présent', absent: 'Absent', pending: 'En attente' }[status] || status;
 }
 
+function renderBusinessNotFoundPage(concept) {
+  return renderMessagePage(`${getTerm(concept)} introuvable`, 'L’élément demandé n’existe pas.', 404);
+}
+
 function renderReportingNavigation(active) {
   const links = [
     ['overview', '/reporting', 'Vue d’ensemble'],
-    ['courses', '/reporting/courses', 'Cours'],
-    ['sessions', '/reporting/sessions', 'Séances'],
-    ['students', '/reporting/students', 'Élèves'],
+    ['courses', '/reporting/courses', getTerm('class', 'plural')],
+    ['sessions', '/reporting/sessions', getTerm('session', 'plural')],
+    ['students', '/reporting/students', getTerm('student', 'plural')],
   ];
   return `<nav class="nav nav-pills context-tabs" aria-label="Rubriques du reporting">
     ${links.map(([key, href, label]) => `<a class="nav-link${active === key ? ' active' : ''}" href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
@@ -60,11 +65,11 @@ function renderReportingNavigation(active) {
 
 function renderSummary(summary) {
   return `<dl class="report-summary" aria-label="Synthèse">
-    <div><dt>Séances clôturées</dt><dd>${summary.closedSessionCount}</dd></div>
-    <div><dt>Présences attendues</dt><dd>${summary.opportunities}</dd></div>
+    <div><dt>${businessTerm('session', 'plural')} clôturées</dt><dd>${summary.closedSessionCount}</dd></div>
+    <div><dt>Nombre de ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</dt><dd>${summary.opportunities}</dd></div>
     <div><dt>Présents</dt><dd>${summary.present}</dd></div>
     <div><dt>Absents</dt><dd>${summary.absent}</dd></div>
-    <div><dt>Taux de présence</dt><dd>${formatRate(summary.attendanceRate)}</dd></div>
+    <div><dt>Taux de ${businessTerm('attendance').toLocaleLowerCase('fr')}</dt><dd>${formatRate(summary.attendanceRate)}</dd></div>
   </dl>`;
 }
 
@@ -96,7 +101,7 @@ function getGlobalFilters(query) {
   const dateFrom = typeof query.date_from === 'string' ? query.date_from : '';
   const dateTo = typeof query.date_to === 'string' ? query.date_to : '';
   const error = classId && !isValidId(classId)
-    ? 'La classe sélectionnée n’est pas valide.'
+    ? 'La sélection contient une valeur invalide.'
     : dateFrom && !isValidDate(dateFrom)
     ? 'La date de début n’est pas valide.'
     : dateTo && !isValidDate(dateTo)
@@ -119,35 +124,35 @@ router.get('/', async (_request, response) => {
     response.send(renderPage('Reporting', `
       ${renderReportHeader({
         title: 'Reporting',
-        description: 'Consultez et exportez uniquement les présences des séances clôturées.',
+        description: `Consultez et exportez uniquement les ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')} des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.`,
       })}
       ${renderReportingNavigation('overview')}
       <section class="page-section" aria-labelledby="reporting-access-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="reporting-access-title">Consulter les rapports</h2></div></div>
         <div class="list-group compact-list">
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/courses">
-            <div class="compact-identity"><p class="compact-title">Reporting par cours</p><p class="compact-meta">Synthèse et détail par séance et par élève</p></div>
+            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('class').toLocaleLowerCase('fr')}</p><p class="compact-meta">Synthèse par ${businessTerm('session').toLocaleLowerCase('fr')} et par ${businessTerm('student').toLocaleLowerCase('fr')}</p></div>
           </a>
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/sessions">
-            <div class="compact-identity"><p class="compact-title">Reporting par séance</p><p class="compact-meta">Toutes les séances clôturées et leurs taux</p></div>
+            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('session').toLocaleLowerCase('fr')}</p><p class="compact-meta">Toutes les ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées et leurs taux</p></div>
           </a>
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/students">
-            <div class="compact-identity"><p class="compact-title">Reporting par élève</p><p class="compact-meta">Historique individuel des séances clôturées</p></div>
+            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('student').toLocaleLowerCase('fr')}</p><p class="compact-meta">Historique individuel des ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées</p></div>
           </a>
         </div>
       </section>
       <section class="page-section" aria-labelledby="global-export-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="global-export-title">Export global des présences</h2>
-            <p class="section-description">Les dates sont inclusives. Les séances ouvertes ou planifiées restent exclues.</p>
+            <h2 id="global-export-title">Export global des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h2>
+            <p class="section-description">Les dates sont inclusives. Les ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} ouvertes ou planifiées restent exclues.</p>
           </div>
         </div>
         <form class="card card-body app-form report-filter-form" method="get" action="/reporting/export">
           <div class="form-field">
-            <label for="report-class">Cours</label>
+            <label for="report-class">${businessTerm('class')}</label>
             <select class="form-select" id="report-class" name="class_id">
-              <option value="">Tous les cours</option>
+              <option value="">Sans filtre</option>
               ${classes.map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`).join('')}
             </select>
           </div>
@@ -159,7 +164,7 @@ router.get('/', async (_request, response) => {
             <label for="report-date-to">Au</label>
             <input class="form-control" id="report-date-to" name="date_to" type="date">
           </div>
-          <button class="btn btn-primary" type="submit">Exporter les présences</button>
+          <button class="btn btn-primary" type="submit">Exporter les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</button>
         </form>
       </section>`));
   } catch (error) {
@@ -173,41 +178,41 @@ router.get('/courses', async (_request, response) => {
   try {
     const courses = await getCourseSummaries();
     const content = courses.length === 0
-      ? '<p class="empty-state">Aucun cours n’est disponible pour le moment.</p>'
+      ? `<p class="empty-state">Aucune donnée disponible pour les ${businessTerm('class', 'plural').toLocaleLowerCase('fr')}.</p>`
       : `<section data-filterable-list>
           <div class="search">
-            <label for="report-course-search">Rechercher un cours</label>
-            <div class="search-controls"><input class="form-control" id="report-course-search" name="course_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom du cours…" data-list-search aria-controls="report-course-list"></div>
+            <label for="report-course-search">Rechercher une ${businessTerm('class').toLocaleLowerCase('fr')}</label>
+            <div class="search-controls"><input class="form-control" id="report-course-search" name="course_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom…" data-list-search aria-controls="report-course-list"></div>
           </div>
-          <p class="empty-state" data-list-no-results hidden>Aucun cours ne correspond à cette recherche.</p>
+          <p class="empty-state" data-list-no-results hidden>Aucun résultat.</p>
           <div class="list-group compact-list" id="report-course-list" data-list-results>${courses.map((course) => `
             <article class="list-group-item compact-row compact-row-status report-row" data-list-row data-search="${escapeHtml(course.name.toLocaleLowerCase('fr'))}">
-              <div class="compact-identity"><p class="compact-title">${escapeHtml(course.name)}</p><p class="compact-meta">${course.closedSessionCount} séance${course.closedSessionCount > 1 ? 's' : ''} clôturée${course.closedSessionCount > 1 ? 's' : ''} · ${course.opportunities} présence${course.opportunities > 1 ? 's' : ''} attendue${course.opportunities > 1 ? 's' : ''}</p></div>
+              <div class="compact-identity"><p class="compact-title">${escapeHtml(course.name)}</p><p class="compact-meta">${businessTerm('session', 'plural')} clôturées : ${course.closedSessionCount} · ${businessTerm('attendance', 'plural')} : ${course.opportunities}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(course.attendanceRate)}</strong><span class="compact-meta">${course.present} présents · ${course.absent} absents</span></div>
               <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/courses/${course.id}">Voir le rapport</a></div>
             </article>`).join('')}</div>
         </section>`;
-    response.send(renderPage('Reporting par cours', `
-      ${renderReportHeader({ title: 'Reporting par cours', description: 'Synthèse des séances clôturées par cours.' })}
+    response.send(renderPage(`Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`, `
+      ${renderReportHeader({ title: `Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`, description: `Synthèse des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées pour chaque ${getTerm('class').toLocaleLowerCase('fr')}.` })}
       ${renderReportingNavigation('courses')}
       ${content}`));
   } catch (error) {
     console.error('Unable to load course reporting:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger le reporting par cours.');
+    const page = renderMessagePage('Reporting indisponible', `Impossible de charger le reporting par ${getTerm('class').toLocaleLowerCase('fr')}.`);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/courses/:id/export', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Cours introuvable', 'Ce cours n’existe pas.', 404);
+    const page = renderBusinessNotFoundPage('class');
     response.status(page.status).send(page.html);
     return;
   }
   try {
     const report = await getCourseReport(request.params.id);
     if (!report) {
-      const page = renderMessagePage('Cours introuvable', 'Ce cours n’existe pas.', 404);
+      const page = renderBusinessNotFoundPage('class');
       response.status(page.status).send(page.html);
       return;
     }
@@ -225,14 +230,14 @@ router.get('/courses/:id/export', async (request, response) => {
 
 router.get('/courses/:id', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Cours introuvable', 'Ce cours n’existe pas.', 404);
+    const page = renderBusinessNotFoundPage('class');
     response.status(page.status).send(page.html);
     return;
   }
   try {
     const report = await getCourseReport(request.params.id);
     if (!report) {
-      const page = renderMessagePage('Cours introuvable', 'Ce cours n’existe pas.', 404);
+      const page = renderBusinessNotFoundPage('class');
       response.status(page.status).send(page.html);
       return;
     }
@@ -248,24 +253,24 @@ router.get('/courses/:id', async (request, response) => {
       <td class="numeric">${student.closedSessionCount}</td><td class="numeric">${student.present}</td><td class="numeric">${student.absent}</td><td class="numeric">${formatRate(student.attendanceRate)}</td>
     </tr>`);
 
-    response.send(renderPage(`Reporting — ${report.course.name}`, `
+    response.send(renderPage(`Rapport de ${report.course.name}`, `
       ${renderReportHeader({
-        eyebrow: 'Reporting par cours',
+        eyebrow: `Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`,
         title: report.course.name,
-        description: 'Données officielles issues uniquement des séances clôturées.',
-        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/courses">Retour aux cours</a></div>`,
+        description: `Données officielles issues uniquement des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.`,
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/courses">Retour à la liste</a></div>`,
       })}
       ${renderReportingNavigation('courses')}
       ${renderSummary(report.summary)}
-      <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-session-breakdown">Par séance</h2></div></div>
-        ${renderDataTable({ label: 'Détail du cours par séance', headers: ['Date', 'Séance', 'Formateur', 'Attendus', 'Présents', 'Absents', 'Taux'], rows: sessionRows })}
+      <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-session-breakdown">Par ${businessTerm('session').toLocaleLowerCase('fr')}</h2></div></div>
+        ${renderDataTable({ label: `Détail par ${getTerm('session').toLocaleLowerCase('fr')}`, headers: ['Date', getTerm('session'), getTerm('instructor'), 'Attendus', 'Présents', 'Absents', 'Taux'], rows: sessionRows })}
       </section>
-      <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-student-breakdown">Par élève</h2></div></div>
-        ${renderDataTable({ label: 'Détail du cours par élève', headers: ['Élève', 'Code', 'Séances', 'Présences', 'Absences', 'Taux'], rows: studentRows })}
+      <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-student-breakdown">Par ${businessTerm('student').toLocaleLowerCase('fr')}</h2></div></div>
+        ${renderDataTable({ label: `Détail par ${getTerm('student').toLocaleLowerCase('fr')}`, headers: [getTerm('student'), 'Code', getTerm('session', 'plural'), getTerm('attendance', 'plural'), 'Absences', 'Taux'], rows: studentRows })}
       </section>`));
   } catch (error) {
     console.error('Unable to load course report:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger ce rapport de cours.');
+    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger ce rapport pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
@@ -274,43 +279,43 @@ router.get('/sessions', async (_request, response) => {
   try {
     const sessions = await getSessionSummaries();
     const content = sessions.length === 0
-      ? '<p class="empty-state">Aucune séance clôturée à reporter.</p>'
+      ? `<p class="empty-state">Aucune ${businessTerm('session').toLocaleLowerCase('fr')} clôturée à reporter.</p>`
       : `<section data-filterable-list>
-          <div class="search"><label for="report-session-search">Rechercher une séance</label><div class="search-controls"><input class="form-control" id="report-session-search" name="session_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Titre, cours ou formateur…" data-list-search aria-controls="report-session-list"></div></div>
-          <p class="empty-state" data-list-no-results hidden>Aucune séance ne correspond à cette recherche.</p>
+          <div class="search"><label for="report-session-search">Rechercher une ${businessTerm('session').toLocaleLowerCase('fr')}</label><div class="search-controls"><input class="form-control" id="report-session-search" name="session_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Titre, ${businessTerm('class').toLocaleLowerCase('fr')} ou ${businessTerm('instructor').toLocaleLowerCase('fr')}…" data-list-search aria-controls="report-session-list"></div></div>
+          <p class="empty-state" data-list-no-results hidden>Aucun résultat.</p>
           <div class="list-group compact-list" id="report-session-list" data-list-results>${sessions.map((session) => `
             <article class="list-group-item compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase('fr'))}">
               <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p><p class="compact-title">${escapeHtml(session.title)}</p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
-              <div class="compact-status"><span class="badge status-badge status-closed">Séance clôturée</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents</span></div>
-              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.id}">Voir la séance</a><a class="btn btn-primary" href="/reporting/sessions/${session.id}/export">Exporter en Excel</a></div>
+              <div class="compact-status"><span class="badge status-badge status-closed">État : clôturé</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents</span></div>
+              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.id}">Voir la session</a><a class="btn btn-primary" href="/reporting/sessions/${session.id}/export">Exporter en Excel</a></div>
             </article>`).join('')}</div>
         </section>`;
-    response.send(renderPage('Reporting par séance', `
-      ${renderReportHeader({ title: 'Reporting par séance', description: 'Résultats officiels des séances clôturées.' })}
+    response.send(renderPage(`Reporting par ${getTerm('session').toLocaleLowerCase('fr')}`, `
+      ${renderReportHeader({ title: `Reporting par ${getTerm('session').toLocaleLowerCase('fr')}`, description: `Résultats officiels des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.` })}
       ${renderReportingNavigation('sessions')}
       ${content}`));
   } catch (error) {
     console.error('Unable to load session reporting:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger le reporting par séance.');
+    const page = renderMessagePage('Reporting indisponible', `Impossible de charger le reporting par ${getTerm('session').toLocaleLowerCase('fr')}.`);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/sessions/:id/export', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+    const page = renderBusinessNotFoundPage('session');
     response.status(page.status).send(page.html);
     return;
   }
   try {
     const report = await getSessionReport(request.params.id);
     if (!report) {
-      const page = renderMessagePage('Séance introuvable', 'Cette séance n’existe pas.', 404);
+      const page = renderBusinessNotFoundPage('session');
       response.status(page.status).send(page.html);
       return;
     }
     if (report.session.state !== 'closed') {
-      const page = renderMessagePage('Export indisponible', 'Seule une séance clôturée peut être exportée comme donnée officielle.', 409);
+      const page = renderMessagePage('Export indisponible', `${getTerm('session')} clôturée requise pour un export officiel.`, 409);
       response.status(page.status).send(page.html);
       return;
     }
@@ -331,38 +336,38 @@ router.get('/students', async (_request, response) => {
   try {
     const students = await getStudentSummaries();
     const content = students.length === 0
-      ? '<p class="empty-state">Aucun élève ne possède encore de présence historique clôturée.</p>'
+      ? `<p class="empty-state">Aucune donnée historique clôturée pour les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}.</p>`
       : `<section data-filterable-list>
-          <div class="search"><label for="report-student-search">Rechercher un élève</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom ou code élève…" data-list-search aria-controls="report-student-list"></div></div>
-          <p class="empty-state" data-list-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
+          <div class="search"><label for="report-student-search">Rechercher un ${businessTerm('student').toLocaleLowerCase('fr')}</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom ou code…" data-list-search aria-controls="report-student-list"></div></div>
+          <p class="empty-state" data-list-no-results hidden>Aucun résultat.</p>
           <div class="list-group compact-list" id="report-student-list" data-list-results>${students.map((student) => `
             <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
-              <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p><p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ${student.closedSessionCount} séance${student.closedSessionCount > 1 ? 's' : ''} clôturée${student.closedSessionCount > 1 ? 's' : ''}</p></div>
+              <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p><p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ${student.closedSessionCount} ${businessTerm('session', student.closedSessionCount === 1 ? 'singular' : 'plural').toLocaleLowerCase('fr')} clôturée${student.closedSessionCount > 1 ? 's' : ''}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(student.attendanceRate)}</strong><span class="compact-meta">${student.present} présents · ${student.absent} absents</span></div>
               <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.id}">Voir le rapport</a></div>
             </article>`).join('')}</div>
         </section>`;
-    response.send(renderPage('Reporting par élève', `
-      ${renderReportHeader({ title: 'Reporting par élève', description: 'Historique individuel des séances clôturées.' })}
+    response.send(renderPage(`Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, `
+      ${renderReportHeader({ title: `Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, description: `Historique individuel des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.` })}
       ${renderReportingNavigation('students')}
       ${content}`));
   } catch (error) {
     console.error('Unable to load student reporting:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger le reporting par élève.');
+    const page = renderMessagePage('Reporting indisponible', `Impossible de charger le reporting par ${getTerm('student').toLocaleLowerCase('fr')}.`);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/students/:id/export', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderBusinessNotFoundPage('student');
     response.status(page.status).send(page.html);
     return;
   }
   try {
     const report = await getStudentReport(request.params.id);
     if (!report) {
-      const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+      const page = renderBusinessNotFoundPage('student');
       response.status(page.status).send(page.html);
       return;
     }
@@ -380,14 +385,14 @@ router.get('/students/:id/export', async (request, response) => {
 
 router.get('/students/:id', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderBusinessNotFoundPage('student');
     response.status(page.status).send(page.html);
     return;
   }
   try {
     const report = await getStudentReport(request.params.id);
     if (!report) {
-      const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+      const page = renderBusinessNotFoundPage('student');
       response.status(page.status).send(page.html);
       return;
     }
@@ -395,21 +400,21 @@ router.get('/students/:id', async (request, response) => {
     const rows = report.details.map((row) => `<tr>
       <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td>
     </tr>`);
-    response.send(renderPage(`Reporting — ${studentName}`, `
+    response.send(renderPage(`Rapport de ${studentName}`, `
       ${renderReportHeader({
-        eyebrow: 'Reporting par élève',
+        eyebrow: `Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`,
         title: studentName,
-        description: `Code élève · ${report.student.student_code}`,
-        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/students/${report.student.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/students">Retour aux élèves</a></div>`,
+        description: `Code d’identification · ${report.student.student_code}`,
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/students/${report.student.id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/students">Retour à la liste</a></div>`,
       })}
       ${renderReportingNavigation('students')}
       ${renderSummary(report.summary)}
-      <section class="page-section" aria-labelledby="student-history-title"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="student-history-title">Historique des présences</h2></div></div>
-        ${renderDataTable({ label: `Historique de ${studentName}`, headers: ['Date', 'Cours', 'Séance', 'Formateur', 'Statut'], rows })}
+      <section class="page-section" aria-labelledby="student-history-title"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="student-history-title">Historique des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h2></div></div>
+        ${renderDataTable({ label: `Historique de ${studentName}`, headers: ['Date', getTerm('class'), getTerm('session'), getTerm('instructor'), 'Statut'], rows })}
       </section>`));
   } catch (error) {
     console.error('Unable to load student report:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger ce rapport élève.');
+    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger ce rapport pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
@@ -425,7 +430,7 @@ router.get('/export', async (request, response) => {
     if (filters.classId) {
       const classes = await getClassesForFilters();
       if (!classes.some((course) => String(course.id) === filters.classId)) {
-        const page = renderMessagePage('Cours introuvable', 'Le cours sélectionné n’existe pas.', 404);
+        const page = renderBusinessNotFoundPage('class');
         response.status(page.status).send(page.html);
         return;
       }

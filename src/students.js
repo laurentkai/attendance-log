@@ -8,7 +8,8 @@ const {
 } = require('./student-data');
 const { createStudentQrEmail } = require('./student-qr-email');
 const { createStudentQrPng } = require('./student-qr');
-const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
+const { getTerm } = require('./terminology');
+const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ function studentQrMailErrorMessage(code) {
     CONNECTION_FAILED: 'Impossible de joindre le serveur SMTP. Vérifiez la configuration e-mail.',
     TLS_FAILED: 'La connexion sécurisée au serveur SMTP a échoué. Vérifiez la configuration e-mail.',
     SENDER_REJECTED: 'Le serveur SMTP a refusé l’adresse d’expéditeur configurée.',
-    RECIPIENT_REJECTED: 'Le serveur SMTP a refusé l’adresse e-mail de cet élève.',
+    RECIPIENT_REJECTED: 'Le serveur SMTP a refusé l’adresse e-mail destinataire.',
     DELIVERY_FAILED: 'Le serveur SMTP n’a pas accepté l’e-mail contenant le QR.',
   }[code] || 'Le QR n’a pas pu être envoyé par e-mail pour le moment.';
 }
@@ -64,7 +65,7 @@ function renderStudentForm({
     ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
   const classChoices = classes.length === 0
-    ? '<p class="muted">Aucune classe disponible.</p>'
+    ? '<p class="muted">Aucun choix disponible.</p>'
     : `<div class="checkbox-list">${classes.map((classRecord) => `
         <label class="checkbox-option">
           <input class="form-check-input" name="class_ids" type="checkbox" value="${classRecord.id}"${selectedIds.has(classRecord.id) ? ' checked' : ''}>
@@ -72,14 +73,14 @@ function renderStudentForm({
         </label>`).join('')}</div>`;
   const codeField = editing
     ? `<div class="form-field">
-        <span class="field-label">Code élève</span>
+        <span class="field-label">Code d’identification</span>
         <strong class="student-code">${escapeHtml(values.student_code)}</strong>
       </div>`
     : '';
   const activeField = editing
     ? `<label class="checkbox-option">
         <input class="form-check-input" name="active" type="checkbox" value="true"${values.active ? ' checked' : ''}>
-        <span>Élève actif</span>
+        <span>Statut global actif</span>
       </label>`
     : '';
 
@@ -111,7 +112,7 @@ function renderStudentForm({
 
       ${codeField}
       <fieldset>
-        <legend>Classes</legend>
+        <legend>${businessTerm('class', 'plural')}</legend>
         ${classChoices}
       </fieldset>
       ${activeField}
@@ -145,10 +146,10 @@ function renderStudentQrPage(student, feedback = null) {
       <div>
         <p class="eyebrow">QR personnel</p>
         <h1>${escapeHtml(studentName)}</h1>
-        <p class="page-description">Ce QR identifie cet élève pendant la prise de présence.</p>
+        <p class="page-description">Ce QR permet d’identifier la personne pendant l’enregistrement des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.</p>
       </div>
       <div class="context-actions d-flex flex-wrap gap-2">
-        <a class="btn btn-light" href="/students/${student.id}/edit">Retour à l’élève</a>
+        <a class="btn btn-light" href="/students/${student.id}/edit">Retour à la fiche</a>
       </div>
     </header>
     <div class="notification-area" aria-live="polite" aria-atomic="true">
@@ -157,11 +158,11 @@ function renderStudentQrPage(student, feedback = null) {
     <section class="qr-display" aria-labelledby="student-qr-title">
       <div class="compact-identity student-identity">
         <h2 class="compact-title" id="student-qr-title">${escapeHtml(studentName)}</h2>
-        <p class="compact-meta">Code élève · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
-        <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
+        <p class="compact-meta">Code d’identification · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+        <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Statut : ${student.active ? 'actif' : 'inactif'}</span>
       </div>
       <img class="student-qr-image" src="/students/${student.id}/qr.png" width="512" height="512" fetchpriority="high" alt="QR personnel de ${escapeHtml(studentName)}">
-      <p class="section-description qr-instruction">Présentez ce QR lors de la prise de présence, directement sur l’écran ou en version imprimée.</p>
+      <p class="section-description qr-instruction">Présentez ce QR lors de l’enregistrement des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}, directement sur l’écran ou en version imprimée.</p>
       <form class="form-actions qr-actions" method="post" action="/students/${student.id}/qr/email" data-submit-once>
         <button class="btn btn-primary" type="submit">Envoyer le QR</button>
         <a class="btn btn-outline-secondary" href="/students/${student.id}/qr.png?download=1" download="eleve-${escapeHtml(student.student_code)}-qr.png">Télécharger le QR</a>
@@ -181,23 +182,23 @@ router.get('/', async (request, response) => {
       [!showInactive],
     );
     const notices = {
-      created: 'L’élève a été créé.',
-      updated: 'L’élève a été modifié.',
-      deactivated: 'L’élève a été désactivé.',
+      created: 'La fiche a été créée.',
+      updated: 'La fiche a été mise à jour.',
+      deactivated: 'La fiche a été désactivée.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const cards = result.rows.length === 0
-      ? `<p class="empty-state">Aucun élève ${showInactive ? 'inactif' : 'actif'}.</p>`
+      ? `<p class="empty-state">Aucun résultat dans les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} ${showInactive ? 'inactifs' : 'actifs'}.</p>`
       : `<section data-filterable-list>
           <div class="search">
             <label for="student-search">Rechercher dans le répertoire</label>
             <div class="search-controls">
-              <input class="form-control" id="student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="student-list" data-list-search>
+              <input class="form-control" id="student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…" aria-controls="student-list" data-list-search>
             </div>
           </div>
-          <p class="empty-state" role="status" data-list-no-results hidden>Aucun élève ne correspond à cette recherche.</p>
+          <p class="empty-state" role="status" data-list-no-results hidden>Aucun résultat.</p>
           <div class="list-group compact-list" id="student-list" data-list-results>${result.rows.map((student) => `
           <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
@@ -205,29 +206,29 @@ router.get('/', async (request, response) => {
               <p class="compact-meta"><a href="mailto:${escapeHtml(student.email)}">${escapeHtml(student.email)}</a> · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
-              <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Élève ${student.active ? 'actif' : 'inactif'}</span>
+              <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Statut : ${student.active ? 'actif' : 'inactif'}</span>
             </div>
             <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
               <a class="btn btn-light" href="/students/${student.id}/edit">Modifier</a>
-              ${student.active ? `<form method="post" action="/students/${student.id}/deactivate" data-confirm="Désactiver cet élève ?">
+              ${student.active ? `<form method="post" action="/students/${student.id}/deactivate" data-confirm="Désactiver cette fiche ?">
                 <button class="btn btn-outline-danger" type="submit">Désactiver</button>
               </form>` : ''}
             </div>
           </article>`).join('')}</div>
         </section>`;
 
-    response.send(renderPage('Élèves', `
+    response.send(renderPage(getTerm('student', 'plural'), `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
-          <h1>Élèves</h1>
-          <p class="page-description">${showInactive ? 'Élèves globalement inactifs.' : 'Répertoire des élèves actifs.'}</p>
+          <h1>${businessTerm('student', 'plural')}</h1>
+          <p class="page-description">${showInactive ? `Répertoire des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} inactifs.` : `Répertoire des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} actifs.`}</p>
         </div>
         <div class="context-actions d-flex flex-wrap gap-2">
-          <a class="btn btn-primary" href="/students/new">Ajouter un élève</a>
+          <a class="btn btn-primary" href="/students/new">Ajouter</a>
           <a class="btn btn-outline-secondary" href="/students/import">Importer</a>
         </div>
       </header>
-      <nav class="nav nav-pills view-switch" aria-label="Filtrer les élèves par activité">
+      <nav class="nav nav-pills view-switch" aria-label="Filtrer les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} par ${businessTerm('class').toLocaleLowerCase('fr')}">
         <a class="nav-link${showInactive ? '' : ' active'}" href="/students"${showInactive ? '' : ' aria-current="page"'}>Actifs</a>
         <a class="nav-link${showInactive ? ' active' : ''}" href="/students?status=inactive"${showInactive ? ' aria-current="page"' : ''}>Inactifs</a>
       </nav>
@@ -235,7 +236,7 @@ router.get('/', async (request, response) => {
       ${cards}`));
   } catch (error) {
     console.error('Unable to list students:', error);
-    const page = renderMessagePage('Élèves indisponibles', 'Impossible de charger les élèves pour le moment.');
+    const page = renderMessagePage('Répertoire indisponible', 'Impossible de charger le répertoire pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
@@ -244,9 +245,9 @@ router.get('/new', async (_request, response) => {
   try {
     const classes = await loadClasses();
     response.send(renderStudentForm({
-      title: 'Ajouter un élève',
+      title: `Ajouter un ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: '/students',
-      submitLabel: 'Créer l’élève',
+      submitLabel: 'Créer',
       values: {},
       classes,
       selectedClassIds: [],
@@ -267,18 +268,18 @@ router.post('/', async (request, response) => {
     classes = await loadClasses();
   } catch (error) {
     console.error('Unable to load classes for student creation:', error);
-    const page = renderMessagePage('Création impossible', 'Impossible de créer l’élève pour le moment.');
+    const page = renderMessagePage('Création impossible', 'Impossible de créer la fiche pour le moment.');
     response.status(page.status).send(page.html);
     return;
   }
 
   const validationError = validateStudentValues(values)
-    || (!classIdsAreValid(selectedClassIds, classes) ? 'Une classe sélectionnée n’est pas valide.' : '');
+    || (!classIdsAreValid(selectedClassIds, classes) ? 'La sélection contient une valeur invalide.' : '');
   if (validationError) {
     response.status(400).send(renderStudentForm({
-      title: 'Ajouter un élève',
+      title: `Ajouter un ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: '/students',
-      submitLabel: 'Créer l’élève',
+      submitLabel: 'Créer',
       values,
       classes,
       selectedClassIds,
@@ -304,12 +305,12 @@ router.post('/', async (request, response) => {
     await client.query('ROLLBACK');
     console.error('Unable to create student:', error);
     const message = error.code === '23505'
-      ? 'Un élève utilise déjà cette adresse e-mail.'
-      : 'Impossible de créer l’élève pour le moment.';
+      ? 'Cette adresse e-mail est déjà utilisée.'
+      : 'Impossible de créer la fiche pour le moment.';
     response.status(error.code === '23505' ? 409 : 500).send(renderStudentForm({
-      title: 'Ajouter un élève',
+      title: `Ajouter un ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: '/students',
-      submitLabel: 'Créer l’élève',
+      submitLabel: 'Créer',
       values,
       classes,
       selectedClassIds,
@@ -354,7 +355,7 @@ router.get('/:id/qr.png', async (request, response) => {
 
 router.get('/:id/qr', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
   }
@@ -367,7 +368,7 @@ router.get('/:id/qr', async (request, response) => {
       [request.params.id],
     );
     if (result.rowCount === 0) {
-      const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+      const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
       response.status(page.status).send(page.html);
       return;
     }
@@ -385,7 +386,7 @@ router.get('/:id/qr', async (request, response) => {
 
 router.post('/:id/qr/email', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
   }
@@ -399,14 +400,14 @@ router.post('/:id/qr/email', async (request, response) => {
       [request.params.id],
     );
     if (result.rowCount === 0) {
-      const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+      const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
       response.status(page.status).send(page.html);
       return;
     }
     student = result.rows[0];
   } catch (error) {
     console.error('Unable to load student for QR email:', error.code || 'DATABASE_ERROR');
-    const page = renderMessagePage('Envoi impossible', 'Impossible de charger cet élève pour le moment.');
+    const page = renderMessagePage('Envoi impossible', 'Impossible de charger la fiche pour le moment.');
     response.status(page.status).send(page.html);
     return;
   }
@@ -414,14 +415,14 @@ router.post('/:id/qr/email', async (request, response) => {
   if (!student.email) {
     response.status(400).send(renderStudentQrPage(student, {
       type: 'error',
-      message: 'Cet élève ne possède pas d’adresse e-mail.',
+      message: 'Aucune adresse e-mail n’est enregistrée pour cette personne.',
     }));
     return;
   }
   if (!student.qr_token) {
     response.status(409).send(renderStudentQrPage(student, {
       type: 'error',
-      message: 'Le QR de cet élève n’est pas disponible.',
+      message: 'Le QR est indisponible pour cette personne.',
     }));
     return;
   }
@@ -456,7 +457,7 @@ router.post('/:id/qr/email', async (request, response) => {
 
 router.get('/:id/edit', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
   }
@@ -469,14 +470,14 @@ router.get('/:id/edit', async (request, response) => {
     ]);
 
     if (studentResult.rowCount === 0) {
-      const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+      const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
       response.status(page.status).send(page.html);
       return;
     }
 
     const student = studentResult.rows[0];
     response.send(renderStudentForm({
-      title: 'Modifier l’élève',
+      title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: `/students/${student.id}`,
       submitLabel: 'Enregistrer',
       values: {
@@ -493,14 +494,14 @@ router.get('/:id/edit', async (request, response) => {
     }));
   } catch (error) {
     console.error('Unable to load student:', error);
-    const page = renderMessagePage('Élève indisponible', 'Impossible de charger cet élève pour le moment.');
+    const page = renderMessagePage('Fiche indisponible', 'Impossible de charger la fiche pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
   }
@@ -512,17 +513,17 @@ router.post('/:id', async (request, response) => {
   const currentResult = await pool.query('SELECT student_code FROM students WHERE id = $1', [request.params.id]);
 
   if (currentResult.rowCount === 0) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
   }
 
   values.student_code = currentResult.rows[0].student_code;
   const validationError = validateStudentValues(values)
-    || (!classIdsAreValid(selectedClassIds, classes) ? 'Une classe sélectionnée n’est pas valide.' : '');
+    || (!classIdsAreValid(selectedClassIds, classes) ? 'La sélection contient une valeur invalide.' : '');
   if (validationError) {
     response.status(400).send(renderStudentForm({
-      title: 'Modifier l’élève',
+      title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: `/students/${request.params.id}`,
       submitLabel: 'Enregistrer',
       values,
@@ -572,7 +573,7 @@ router.post('/:id', async (request, response) => {
       if (protectedResult.rowCount > 0) {
         await client.query('ROLLBACK');
         response.status(409).send(renderStudentForm({
-          title: 'Modifier l’élève',
+          title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
           action: `/students/${request.params.id}`,
           submitLabel: 'Enregistrer',
           values,
@@ -580,7 +581,7 @@ router.post('/:id', async (request, response) => {
           selectedClassIds,
           editing: true,
           studentId: request.params.id,
-          error: `L’affectation à la classe « ${protectedResult.rows[0].name} » ne peut plus être retirée car cette classe a déjà commencé. Gérez son activité depuis la page de la classe.`,
+          error: `Le retrait de « ${protectedResult.rows[0].name} » est impossible après le démarrage. Gérez son état depuis la rubrique ${getTerm('class', 'plural')}.`,
         }));
         return;
       }
@@ -610,10 +611,10 @@ router.post('/:id', async (request, response) => {
     await client.query('ROLLBACK');
     console.error('Unable to update student:', error);
     const message = error.code === '23505'
-      ? 'Un élève utilise déjà cette adresse e-mail.'
-      : 'Impossible de modifier l’élève pour le moment.';
+      ? 'Cette adresse e-mail est déjà utilisée.'
+      : 'Impossible de modifier la fiche pour le moment.';
     response.status(error.code === '23505' ? 409 : 500).send(renderStudentForm({
-      title: 'Modifier l’élève',
+      title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: `/students/${request.params.id}`,
       submitLabel: 'Enregistrer',
       values,
@@ -630,7 +631,7 @@ router.post('/:id', async (request, response) => {
 
 router.post('/:id/deactivate', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Élève introuvable', 'Cet élève n’existe pas.', 404);
+    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
   }
@@ -653,7 +654,7 @@ router.post('/:id/deactivate', async (request, response) => {
     );
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');
-      const page = renderMessagePage('Élève introuvable', 'Cet élève actif n’existe pas.', 404);
+      const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement actif ne correspond à cette demande.', 404);
       response.status(page.status).send(page.html);
       return;
     }
@@ -662,7 +663,7 @@ router.post('/:id/deactivate', async (request, response) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to deactivate student:', error);
-    const page = renderMessagePage('Désactivation impossible', 'Impossible de désactiver cet élève pour le moment.');
+    const page = renderMessagePage('Désactivation impossible', 'Impossible de désactiver la fiche pour le moment.');
     response.status(page.status).send(page.html);
   } finally {
     client.release();

@@ -7,7 +7,8 @@ const {
   normalizeStudentValues,
   validateStudentValues,
 } = require('./student-data');
-const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
+const { getTerm } = require('./terminology');
+const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
 const upload = multer({
@@ -30,7 +31,7 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
         <dl class="summary-list">
           <div><dt>Créés</dt><dd>${summary.created}</dd></div>
           <div><dt>Existants retrouvés</dt><dd>${summary.matchedExisting}</dd></div>
-          <div><dt>Nouvelles affectations</dt><dd>${summary.newlyAssigned}</dd></div>
+          <div><dt>${businessTerm('membership', 'plural')}</dt><dd>${summary.newlyAssigned}</dd></div>
           <div><dt>Erreurs ou lignes ignorées</dt><dd>${summary.skipped}</dd></div>
         </dl>
       </section>`
@@ -39,14 +40,14 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
     <option value="${classRecord.id}"${classRecord.id === selectedClassId ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('');
   const selectedClass = classes.find((classRecord) => classRecord.id === selectedClassId);
 
-  return renderPage('Importer des élèves', `
+  return renderPage(`Importer des ${getTerm('student', 'plural').toLocaleLowerCase('fr')}`, `
     <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
-        <h1>Importer des élèves</h1>
-        <p class="page-description">Ajoutez des élèves à une classe à partir d’un fichier CSV.</p>
+        <h1>Importer des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</h1>
+        <p class="page-description">Ajoutez des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} à une ${businessTerm('class').toLocaleLowerCase('fr')} depuis un fichier CSV.</p>
       </div>
       ${selectedClass
-        ? `<a class="btn btn-outline-secondary" href="/classes/${selectedClass.id}">Retour à la classe</a>`
+        ? `<a class="btn btn-outline-secondary" href="/classes/${selectedClass.id}">Retour</a>`
         : ''}
     </header>
     ${errorMessage}
@@ -55,12 +56,12 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
       <h2 id="import-instructions-title">Préparer le fichier</h2>
       <p>Utilisez les colonnes <span class="student-code" translate="no">first_name</span>, <span class="student-code" translate="no">last_name</span> et <span class="student-code" translate="no">email</span>. Taille maximale : 1 Mo.</p>
     </section>
-    ${classes.length === 0 ? '<p class="alert alert-warning" role="status">Créez une classe avant d’importer des élèves.</p>' : ''}
+    ${classes.length === 0 ? `<p class="alert alert-warning" role="status">Créez d’abord une ${businessTerm('class').toLocaleLowerCase('fr')}.</p>` : ''}
     <form class="card card-body app-form import-form" method="post" action="/students/import" enctype="multipart/form-data">
       <div class="form-field">
-        <label for="class_id">Classe cible <span aria-hidden="true">*</span></label>
+        <label for="class_id">${businessTerm('class')} cible <span aria-hidden="true">*</span></label>
         <select class="form-select" id="class_id" name="class_id" required>
-          <option value="">Choisir une classe</option>
+          <option value="">Choisir une ${businessTerm('class').toLocaleLowerCase('fr')}</option>
           ${classOptions}
         </select>
       </div>
@@ -72,7 +73,7 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
       </div>
 
       <div class="form-actions d-flex flex-wrap gap-2">
-        <button class="btn btn-primary" type="submit"${classes.length === 0 ? ' disabled' : ''}>Importer les élèves</button>
+        <button class="btn btn-primary" type="submit"${classes.length === 0 ? ' disabled' : ''}>Importer les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</button>
       </div>
     </form>`);
 }
@@ -138,7 +139,7 @@ router.post('/', receiveCsvFile, async (request, response) => {
       classes,
       selectedClassId,
       error: !selectedClassExists
-        ? 'Sélectionnez une classe valide.'
+        ? `Sélectionnez une ${getTerm('class').toLocaleLowerCase('fr')} valide.`
         : 'Sélectionnez un fichier CSV.',
     }));
     return;

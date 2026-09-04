@@ -52,6 +52,7 @@ The interface must be clean, restrained, professional, compact, data-first, acce
 - Avoid oversized dashboard cards, decorative clutter, unnecessary icons, excessive whitespace, and cards nested inside cards.
 - Establish clear title, metadata, status, primary-action, secondary-action, and destructive-action hierarchy.
 - Same UI concept means the same canonical component/DOM structure, base classes, behavior, spacing, and hierarchy wherever reasonably possible.
+- User-facing business labels for participants, activities, sessions, attendance, instructors, and memberships must use the centralized terminology service. Keep internal table, route, model, and variable names unchanged; do not hardcode parallel labels or build an i18n framework.
 - Express genuine contextual differences through modifiers or additional child content, not page-specific parallel implementations.
 - When changing a shared concept, audit every equivalent occurrence: student rows, session rows, headers, notifications, forms, settings navigation, tables, searches, statuses, and action groups.
 - Visual resemblance alone is not harmonization. Verify reuse in source markup and rendered behavior.

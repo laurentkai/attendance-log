@@ -10,15 +10,14 @@ const {
   validatePassword,
   validateUsername,
 } = require('./admin-users');
+const {
+  roleLabels,
+  sendAdminInvitation,
+} = require('./admin-invitations');
 const { pool } = require('./db/client');
 const { escapeHtml, renderMessagePage, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
-const roleLabels = Object.freeze({
-  [roles.administrator]: 'Administrateur',
-  [roles.manager]: 'Gestionnaire',
-  [roles.attendanceOperator]: 'Opérateur de présence',
-});
 
 function isValidId(value) { return /^[1-9]\d*$/.test(value); }
 function formatDateTime(value) {
@@ -38,6 +37,43 @@ function normalValues(body = {}) {
     active: body.active === 'true',
     account_type: 'otp',
   };
+}
+
+function renderUserActions(user, currentUser) {
+  const emergency = user.account_type === 'break_glass';
+  const editUrl = `/settings/users/${user.id}/edit`;
+  const normalActions = [
+    `<li><a class="dropdown-item" href="${editUrl}">Modifier</a></li>`,
+  ];
+  if (emergency) {
+    normalActions.push(`<li><a class="dropdown-item" href="${editUrl}#password">Changer le mot de passe</a></li>`);
+  } else if (user.active) {
+    normalActions.push(`<li><form method="post" action="/settings/users/${user.id}/invitation"><button class="dropdown-item" type="submit">Renvoyer l’invitation</button></form></li>`);
+  }
+
+  const securityActions = [
+    `<li><form method="post" action="/settings/users/${user.id}/revoke-sessions"><button class="dropdown-item" type="submit">Révoquer toutes les sessions</button></form></li>`,
+  ];
+  if (!emergency) {
+    securityActions.push(`<li><a class="dropdown-item" href="${editUrl}#account-active">${user.active ? 'Désactiver…' : 'Réactiver…'}</a></li>`);
+  }
+
+  const destructiveAction = !emergency && String(user.id) !== String(currentUser.id)
+    ? `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="/settings/users/${user.id}/delete">Supprimer</a></li>`
+    : '';
+  const triggerId = `user-actions-${user.id}`;
+
+  return `<div class="dropdown user-actions-dropdown">
+    <button class="btn btn-sm btn-light user-actions-trigger" id="${triggerId}" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-user-actions-toggle aria-expanded="false" aria-label="Actions pour ${escapeHtml(user.name)}">
+      <span class="user-actions-ellipsis" aria-hidden="true">⋯</span>
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end user-actions-menu" aria-labelledby="${triggerId}">
+      ${normalActions.join('')}
+      <li><hr class="dropdown-divider"></li>
+      ${securityActions.join('')}
+      ${destructiveAction}
+    </ul>
+  </div>`;
 }
 
 function renderCreatePage(values = {}, error = '') {
@@ -65,7 +101,7 @@ function renderEditPage(user, error = '') {
     <div class="form-field"><label for="name">Nom</label><input class="form-control" id="name" name="name" type="text" value="${escapeHtml(user.name)}" autocomplete="name" required></div>
     <div class="form-field"><label for="email">Adresse e-mail</label><input class="form-control" id="email" name="email" type="email" value="${escapeHtml(user.email)}" autocomplete="email" spellcheck="false" required></div>
     <div class="form-field"><label for="role">Rôle</label><select class="form-select" id="role" name="role" required>${roleOptions(user.role)}</select></div>
-    <label class="form-check form-switch"><input class="form-check-input" name="active" type="checkbox" value="true"${user.active ? ' checked' : ''}><span class="form-check-label">Compte actif</span></label>`;
+    <label class="form-check form-switch" for="account-active"><input class="form-check-input" id="account-active" name="active" type="checkbox" value="true"${user.active ? ' checked' : ''}><span class="form-check-label">Compte actif</span></label>`;
 
   return renderPage(`Modifier ${user.name}`, renderSettingsLayout({
     activeSection: 'users', title: emergency ? 'Compte d’urgence' : 'Modifier un utilisateur',
@@ -113,19 +149,30 @@ router.get('/', async (request, response) => {
       `SELECT id, name, email, username, account_type, role, active, last_login_at FROM admin_users
        ORDER BY account_type = 'break_glass' DESC, active DESC, LOWER(name), id`,
     );
-    const notices = { created: 'L’utilisateur a été créé.', updated: 'L’utilisateur a été modifié.', revoked: 'Toutes les sessions de l’utilisateur ont été révoquées.', deleted: 'L’utilisateur a été supprimé.' };
+    const notices = {
+      created_invited: { message: 'L’utilisateur a été créé et son invitation a été envoyée.', type: 'success' },
+      created_invitation_failed: { message: 'L’utilisateur a été créé, mais l’invitation n’a pas pu être envoyée.', type: 'warning' },
+      invitation_sent: { message: 'L’invitation a été envoyée.', type: 'success' },
+      invitation_rate_limited: { message: 'Veuillez attendre avant de renvoyer cette invitation.', type: 'warning' },
+      invitation_failed: { message: 'L’invitation n’a pas pu être envoyée. Vérifiez la configuration e-mail et l’URL de l’application.', type: 'danger' },
+      invitation_inactive: { message: 'Réactivez ce compte avant de lui envoyer une invitation.', type: 'warning' },
+      updated: { message: 'L’utilisateur a été modifié.', type: 'success' },
+      revoked: { message: 'Toutes les sessions de l’utilisateur ont été révoquées.', type: 'success' },
+      deleted: { message: 'L’utilisateur a été supprimé.', type: 'success' },
+    };
+    const feedback = notices[request.query.notice];
     const rows = result.rows.map((user) => `<tr>
       <td><strong>${escapeHtml(user.name)}</strong>${user.account_type === 'break_glass' ? ' <span class="badge text-bg-warning">Urgence locale</span>' : ''}<br><span class="text-body-secondary text-break">${escapeHtml(user.email || user.username)}</span></td>
       <td>${escapeHtml(roleLabels[user.role])}</td><td><span class="badge ${user.active ? 'text-bg-success' : 'text-bg-secondary'}">${user.active ? 'Actif' : 'Inactif'}</span></td>
       <td>${escapeHtml(formatDateTime(user.last_login_at))}</td>
-      <td><div class="d-flex flex-wrap justify-content-end gap-2"><a class="btn btn-sm btn-outline-secondary" href="/settings/users/${user.id}/edit">Modifier</a>
-        <form method="post" action="/settings/users/${user.id}/revoke-sessions"><button class="btn btn-sm btn-outline-secondary" type="submit">Révoquer toutes les sessions</button></form></div></td>
+      <td class="user-actions-cell">${renderUserActions(user, request.currentUser)}</td>
     </tr>`).join('');
     response.send(renderPage('Utilisateurs', renderSettingsLayout({
       activeSection: 'users', title: 'Utilisateurs', description: 'Gérez les comptes, leurs rôles et leurs accès.',
       status: '<a class="btn btn-primary" href="/settings/users/new">Ajouter un utilisateur</a>',
-      notifications: notification(notices[request.query.notice], 'success'),
+      notifications: feedback ? notification(feedback.message, feedback.type) : '',
       content: `<div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>État</th><th>Dernière connexion</th><th><span class="visually-hidden">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+      after: '<script src="/js/user-actions-dropdown.js" defer></script>',
     })));
   } catch (error) {
     console.error('Unable to list administrator users:', error);
@@ -138,12 +185,36 @@ router.get('/new', (_request, response) => response.send(renderCreatePage()));
 router.post('/', async (request, response) => {
   const values = normalValues(request.body);
   try {
-    await createAdminUser(values);
-    response.redirect(303, '/settings/users?notice=created');
+    const user = await createAdminUser(values);
+    try {
+      await sendAdminInvitation(user.id);
+      response.redirect(303, '/settings/users?notice=created_invited');
+    } catch (invitationError) {
+      console.warn('Administrator account created but invitation delivery failed:', invitationError.code || 'DELIVERY_FAILED');
+      response.redirect(303, '/settings/users?notice=created_invitation_failed');
+    }
   } catch (error) {
     const known = ['VALIDATION_ERROR', 'EMAIL_EXISTS'].includes(error.code);
     if (!known) console.error('Unable to create administrator user:', error);
     response.status(known ? 400 : 500).send(renderCreatePage(values, known ? error.message : 'Impossible de créer l’utilisateur pour le moment.'));
+  }
+});
+
+router.post('/:id/invitation', async (request, response) => {
+  if (!isValidId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+  try {
+    await sendAdminInvitation(request.params.id);
+    response.redirect(303, '/settings/users?notice=invitation_sent');
+  } catch (error) {
+    const notice = error.code === 'INVITATION_RATE_LIMITED'
+      ? 'invitation_rate_limited'
+      : error.code === 'USER_INACTIVE'
+        ? 'invitation_inactive'
+        : 'invitation_failed';
+    if (!['INVITATION_RATE_LIMITED', 'USER_INACTIVE', 'BREAK_GLASS_NOT_ELIGIBLE', 'USER_NOT_FOUND'].includes(error.code)) {
+      console.warn('Unable to resend administrator invitation:', error.code || 'DELIVERY_FAILED');
+    }
+    response.redirect(303, `/settings/users?notice=${notice}`);
   }
 });
 

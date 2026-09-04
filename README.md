@@ -55,6 +55,7 @@ Edit `.env` with installation-specific values. Never commit this file.
 | `BIND_ADDRESS` | Host address on which Docker publishes the application port | Optional; defaults to `0.0.0.0` |
 | `PORT` | Host port mapped to application port `3000` | Optional; defaults to `3000` |
 | `NODE_ENV` | Node environment | Set to `production` on the VPS |
+| `APP_BASE_URL` | Canonical public application URL used in administrator invitation e-mails | Required for invitations; use the public HTTPS origin in production |
 | `POSTGRES_DB` | Compose PostgreSQL database name | Configure for the installation |
 | `POSTGRES_USER` | Compose PostgreSQL user | Configure for the installation |
 | `POSTGRES_PASSWORD` | Compose PostgreSQL password | Use a strong, unique value |
@@ -75,6 +76,7 @@ For local development, `BIND_ADDRESS=0.0.0.0` makes the published port reachable
 BIND_ADDRESS=127.0.0.1
 PORT=3000
 NODE_ENV=production
+APP_BASE_URL=https://attendance.example.com
 ```
 
 This restricts the application port to the VPS loopback interface while nginx serves public HTTPS traffic. A local `docker-compose.override.yml` is no longer required to change the bind address for this deployment.
@@ -136,7 +138,7 @@ A healthy response is:
 5. Export the recovery key from **Configuration > Sécurité** and store it securely outside the VPS and separately from database backups.
 6. Configure and test backups in **Configuration > Sauvegardes**.
 
-Normal users authenticate passwordlessly: they enter their e-mail address in the same identifier field and then enter the six-digit OTP sent by Attendance Log. SMTP must be configured and working before they can receive a code. If SMTP is unavailable, the local break-glass username still switches the unified login flow to password entry; there is no separate emergency-login page.
+Normal users authenticate passwordlessly: they enter their e-mail address in the same identifier field and then enter the six-digit OTP sent by Attendance Log. Creating a normal user sends an invitation to the stored e-mail address when SMTP and `APP_BASE_URL` are configured; administrators can resend it from **Configuration > Utilisateurs**. SMTP must be configured and working before users can receive an invitation or a code. If SMTP is unavailable, the local break-glass username still switches the unified login flow to password entry; there is no separate emergency-login page.
 
 ## HTTPS reverse proxy
 
@@ -313,6 +315,22 @@ Start them again:
 ```bash
 docker compose up -d
 ```
+
+### Reset operational data
+
+Administrators can reset students, classes, memberships, sessions, and attendance from **Configuration > Maintenance**. The UI requires explicit confirmation and a recoverable safety backup. Administrator accounts, SMTP, encryption, Backup/Restore settings and history, sessions, migrations, and instance identity are preserved.
+
+For a live installation, prefer the web Maintenance workflow because it places the running application in maintenance mode and enforces a safety backup. The CLI runs in a separate one-shot container and cannot activate the web process's in-memory maintenance mode. Before using it on a live installation, create and verify a current backup, stop only the application service, run the reset, and start the application again:
+
+```bash
+docker compose stop app
+docker compose run --rm \
+  -e CONFIRM_RESET=RESET \
+  app npm run reset-data
+docker compose up -d app
+```
+
+PostgreSQL and both persistent volumes remain running and mounted throughout this procedure. Running `npm run reset-data` without the exact confirmation value refuses to delete data. The command remains transactional and reports deleted row counts only.
 
 ## Database migrations
 

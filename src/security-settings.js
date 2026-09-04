@@ -63,8 +63,7 @@ function renderSecurityPage({ feedback = null, secretStatus = 'available' } = {}
     description: 'Gérez la clé de récupération utilisée pour protéger les secrets sauvegardés.',
     status: `<span class="badge status-badge status-${secretStatus === 'available' ? 'active' : 'inactive'}">${secretStatus === 'available' ? 'Chiffrement actif' : 'Clé à vérifier'}</span>`,
     notifications: `${feedbackMessage}${mismatchMessage}<p class="alert alert-danger" role="alert" data-security-client-feedback hidden></p>`,
-    content: `
-      <section class="card card-body app-form" aria-labelledby="encryption-title">
+    content: `<section class="card card-body app-form" aria-labelledby="encryption-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
             <h2 id="encryption-title">Chiffrement des données sensibles</h2>
@@ -104,8 +103,7 @@ function renderSecurityPage({ feedback = null, secretStatus = 'available' } = {}
             <button class="btn btn-outline-secondary" type="submit">Importer la clé</button>
           </div>
         </form>
-      </section>
-    `,
+      </section>`,
     after: `
     <dialog class="security-key-dialog" data-recovery-key-dialog aria-labelledby="recovery-key-title">
       <div class="dialog-content">

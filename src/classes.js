@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('./db/client');
-const { escapeHtml, renderPage } = require('./ui');
+const { getTerm } = require('./terminology');
+const { businessTerm, escapeHtml, renderPage } = require('./ui');
 
 const router = express.Router();
 
@@ -15,6 +16,10 @@ function renderMessagePage(title, message, status = 500) {
       </header>
       <p class="alert alert-danger">${escapeHtml(message)}</p>`),
   };
+}
+
+function renderClassNotFoundPage() {
+  return renderMessagePage('Fiche introuvable', 'L’élément demandé n’existe pas.', 404);
 }
 
 function getFormValues(body = {}) {
@@ -74,15 +79,15 @@ router.get('/', async (request, response) => {
       'SELECT id, name, description FROM classes ORDER BY LOWER(name), id',
     );
     const notices = {
-      created: 'La classe a été créée.',
-      updated: 'La classe a été modifiée.',
-      deleted: 'La classe a été supprimée.',
+      created: 'La fiche a été créée.',
+      updated: 'La fiche a été mise à jour.',
+      deleted: 'La fiche a été supprimée.',
     };
     const notice = notices[request.query.notice]
-      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const classList = result.rows.length === 0
-      ? '<p class="empty-state">Aucune classe pour le moment.</p>'
+      ? `<p class="empty-state">Aucune ${businessTerm('class').toLocaleLowerCase('fr')} n’est enregistrée pour le moment.</p>`
       : `<div class="list-group compact-list">${result.rows.map((classRecord) => `
           <article class="list-group-item compact-row class-management-row">
             <div class="compact-identity class-identity">
@@ -93,33 +98,33 @@ router.get('/', async (request, response) => {
             </div>
             <div class="row-action-stack">
               <div class="compact-actions compact-actions--split" aria-label="Gérer ${escapeHtml(classRecord.name)}">
-                <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}">Gérer les élèves</a>
-                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
+                <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}">${businessTerm('student', 'plural')}</a>
+                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.id}">${businessTerm('session', 'plural')}</a>
               </div>
               <div class="compact-actions" aria-label="Administration de ${escapeHtml(classRecord.name)}">
                 <a class="btn btn-light" href="/classes/${classRecord.id}/edit">Modifier</a>
-                <form method="post" action="/classes/${classRecord.id}/delete" data-confirm="Supprimer cette classe ?">
+                <form method="post" action="/classes/${classRecord.id}/delete" data-confirm="Supprimer cette fiche ?">
                   <button class="btn btn-outline-danger" type="submit">Supprimer</button>
                 </form>
               </div>
             </div>
           </article>`).join('')}</div>`;
 
-    response.send(renderPage('Classes', `
+    response.send(renderPage(getTerm('class', 'plural'), `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
-          <h1>Classes</h1>
-          <p class="page-description">Accédez directement aux élèves ou aux séances de chaque classe.</p>
+          <h1>${businessTerm('class', 'plural')}</h1>
+          <p class="page-description">Accédez directement aux ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} ou aux ${businessTerm('session', 'plural').toLocaleLowerCase('fr')}.</p>
         </div>
-        <a class="btn btn-primary" href="/classes/new">Ajouter une classe</a>
+        <a class="btn btn-primary" href="/classes/new">Ajouter</a>
       </header>
       ${notice}
       ${classList}`));
   } catch (error) {
     console.error('Unable to list classes:', error);
     const page = renderMessagePage(
-      'Classes indisponibles',
-      'Impossible de charger les classes pour le moment.',
+      'Liste indisponible',
+      'Impossible de charger la liste pour le moment.',
     );
     response.status(page.status).send(page.html);
   }
@@ -127,9 +132,9 @@ router.get('/', async (request, response) => {
 
 router.get('/new', (_request, response) => {
   response.send(renderClassForm({
-    title: 'Ajouter une classe',
+    title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
     action: '/classes',
-    submitLabel: 'Créer la classe',
+    submitLabel: 'Créer',
     values: { name: '', description: '' },
   }));
 });
@@ -139,9 +144,9 @@ router.post('/', async (request, response) => {
 
   if (!values.name) {
     response.status(400).send(renderClassForm({
-      title: 'Ajouter une classe',
+      title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
       action: '/classes',
-      submitLabel: 'Créer la classe',
+      submitLabel: 'Créer',
       values,
       error: 'Le nom est obligatoire.',
     }));
@@ -157,18 +162,18 @@ router.post('/', async (request, response) => {
   } catch (error) {
     console.error('Unable to create class:', error);
     response.status(500).send(renderClassForm({
-      title: 'Ajouter une classe',
+      title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
       action: '/classes',
-      submitLabel: 'Créer la classe',
+      submitLabel: 'Créer',
       values,
-      error: 'Impossible de créer la classe pour le moment.',
+      error: 'Impossible de créer la fiche pour le moment.',
     }));
   }
 });
 
 router.get('/:id', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
     response.status(page.status).send(page.html);
     return;
   }
@@ -215,32 +220,32 @@ router.get('/:id', async (request, response) => {
     ]);
 
     if (classResult.rowCount === 0) {
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
       response.status(page.status).send(page.html);
       return;
     }
 
     const classRecord = classResult.rows[0];
     const notices = {
-      students_added: 'Les élèves sélectionnés ont été ajoutés.',
-      no_students_added: 'Aucune nouvelle affectation n’a été ajoutée.',
-      student_removed: 'L’élève a été retiré de la classe.',
-      membership_deactivated: 'L’affectation de l’élève a été désactivée pour cette classe.',
-      membership_reactivated: 'L’affectation de l’élève a été réactivée pour cette classe.',
+      students_added: 'Les personnes sélectionnées ont été ajoutées.',
+      no_students_added: 'Aucun ajout n’a été effectué.',
+      student_removed: 'La personne a été retirée.',
+      membership_deactivated: `L’${getTerm('membership').toLocaleLowerCase('fr')} a été désactivée.`,
+      membership_reactivated: `L’${getTerm('membership').toLocaleLowerCase('fr')} a été réactivée.`,
     };
     const notice = notices[request.query.notice]
-      ? `<p class="alert alert-success" role="status">${notices[request.query.notice]}</p>`
+      ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const assignedStudents = assignedResult.rows.length === 0
-      ? '<p class="empty-state">Aucune affectation d’élève dans cette classe.</p>'
+      ? `<p class="empty-state">Aucune ${businessTerm('membership').toLocaleLowerCase('fr')} n’est enregistrée ici.</p>`
       : `<section data-filterable-list>
           <div class="search">
-            <label for="class-roster-search">Rechercher dans les affectations</label>
+            <label for="class-roster-search">Rechercher dans les ${businessTerm('membership', 'plural').toLocaleLowerCase('fr')}</label>
             <div class="search-controls">
-              <input class="form-control" id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code élève…" aria-controls="class-roster-list" data-list-search>
+              <input class="form-control" id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…" aria-controls="class-roster-list" data-list-search>
             </div>
           </div>
-          <p class="empty-state" role="status" data-list-no-results hidden>Aucune affectation ne correspond à cette recherche.</p>
+          <p class="empty-state" role="status" data-list-no-results hidden>Aucun résultat.</p>
           <div class="list-group compact-list" id="class-roster-list" data-list-results>${assignedResult.rows.map((student) => `
           <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
@@ -248,33 +253,33 @@ router.get('/:id', async (request, response) => {
               <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
-              <span class="badge status-badge status-${student.membership_active ? 'active' : 'inactive'}">Dans cette classe : ${student.membership_active ? 'actif' : 'inactif'}</span>
+              <span class="badge status-badge status-${student.membership_active ? 'active' : 'inactive'}">${businessTerm('membership')} : ${student.membership_active ? 'active' : 'inactive'}</span>
             </div>
             <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
-              <a class="btn btn-light" href="/students/${student.id}/edit">Modifier l’élève</a>
+              <a class="btn btn-light" href="/students/${student.id}/edit">Modifier la fiche</a>
               <form method="post" action="/classes/${classRecord.id}/students/${student.id}/${student.membership_active ? 'deactivate' : 'reactivate'}">
-                <button class="btn btn-outline-secondary" type="submit">${student.membership_active ? 'Désactiver pour cette classe' : 'Réactiver pour cette classe'}</button>
+                <button class="btn btn-outline-secondary" type="submit">${student.membership_active ? 'Désactiver' : 'Réactiver'}</button>
               </form>
-              ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.id}/students/${student.id}/remove" data-confirm="Retirer cet élève de la classe ?">
-                <button class="btn btn-outline-danger" type="submit">Retirer de la classe</button>
+              ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.id}/students/${student.id}/remove" data-confirm="Retirer ce ${businessTerm('student').toLocaleLowerCase('fr')} de cette ${businessTerm('class').toLocaleLowerCase('fr')} ?">
+                <button class="btn btn-outline-danger" type="submit">Retirer</button>
               </form>`}
             </div>
           </article>`).join('')}</div>
         </section>`;
     const availableStudents = !canSearch
-      ? '<p class="empty-state">Saisissez au moins 2 caractères pour rechercher un élève actif.</p>'
+      ? `<p class="empty-state">Saisissez au moins 2 caractères pour rechercher un ${businessTerm('student').toLocaleLowerCase('fr')} actif.</p>`
       : availableResult.rows.length === 0
-      ? '<p class="empty-state">Aucun élève actif disponible ne correspond à cette recherche.</p>'
+      ? '<p class="empty-state">Aucun résultat disponible.</p>'
       : `<form class="card card-body app-form" method="post" action="/classes/${classRecord.id}/students">
           <fieldset>
-            <legend>Élèves à ajouter</legend>
+            <legend>${businessTerm('student', 'plural')} à ajouter</legend>
             <div class="checkbox-list">${availableResult.rows.map((student) => `
               <label class="checkbox-option">
                 <input class="form-check-input" name="student_ids" type="checkbox" value="${student.id}">
                 <span>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}<small>${escapeHtml(student.email)}</small></span>
               </label>`).join('')}</div>
           </fieldset>
-          <button class="btn btn-primary" type="submit">Ajouter les élèves sélectionnés</button>
+          <button class="btn btn-primary" type="submit">Ajouter la sélection</button>
         </form>`;
 
     response.send(renderPage(classRecord.name, `
@@ -285,34 +290,34 @@ router.get('/:id', async (request, response) => {
             ? escapeHtml(classRecord.description)
             : '<span class="muted">Aucune description</span>'}</p>
         </div>
-        <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}/edit">Modifier la classe</a>
+        <a class="btn btn-outline-secondary" href="/classes/${classRecord.id}/edit">Modifier la fiche</a>
       </header>
-      <nav class="nav nav-pills context-tabs" aria-label="Gestion de la classe">
-        <a class="nav-link active" href="/classes/${classRecord.id}" aria-current="page">Gérer les élèves</a>
-        <a class="nav-link" href="/sessions?class_id=${classRecord.id}">Gérer les séances</a>
+      <nav class="nav nav-pills context-tabs" aria-label="Gestion de « ${escapeHtml(classRecord.name)} »">
+        <a class="nav-link active" href="/classes/${classRecord.id}" aria-current="page">${businessTerm('student', 'plural')}</a>
+        <a class="nav-link" href="/sessions?class_id=${classRecord.id}">${businessTerm('session', 'plural')}</a>
       </nav>
       ${notice}
       ${classRecord.membership_locked
-        ? '<p class="alert alert-warning" role="status">Cette classe a déjà commencé. Ses affectations sont conservées pour protéger l’historique. Désactivez une affectation pour exclure l’élève des futures séances de cette classe.</p>'
+        ? `<p class="alert alert-warning" role="status">Cette ${businessTerm('class').toLocaleLowerCase('fr')} a déjà commencé. Les ${businessTerm('membership', 'plural').toLocaleLowerCase('fr')} sont conservées pour protéger l’historique. Désactivez une ${businessTerm('membership').toLocaleLowerCase('fr')} pour les prochaines ${businessTerm('session', 'plural').toLocaleLowerCase('fr')}.</p>`
         : ''}
       <section class="page-section">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2>Élèves de la classe</h2>
-            <p class="section-description">L’état affiché ici concerne uniquement cette classe.</p>
+            <h2>${businessTerm('membership', 'plural')}</h2>
+            <p class="section-description">L’état affiché concerne uniquement cette ${businessTerm('class').toLocaleLowerCase('fr')}.</p>
           </div>
-          <a class="btn btn-outline-secondary" href="/students/import?class_id=${classRecord.id}">Importer des élèves</a>
+          <a class="btn btn-outline-secondary" href="/students/import?class_id=${classRecord.id}">Importer</a>
         </div>
         ${assignedStudents}
       </section>
       <section class="page-section">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2>Ajouter des élèves existants</h2>
+            <h2>Ajouter des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</h2>
           </div>
         </div>
         <form class="search" method="get" action="/classes/${classRecord.id}" role="search">
-          <label for="membership-search">Rechercher un élève actif</label>
+          <label for="membership-search">Rechercher un ${businessTerm('student').toLocaleLowerCase('fr')} actif</label>
           <div class="search-controls">
             <input class="form-control" id="membership-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…">
             <button class="btn btn-primary" type="submit">Rechercher</button>
@@ -323,14 +328,14 @@ router.get('/:id', async (request, response) => {
       </section>`));
   } catch (error) {
     console.error('Unable to load class memberships:', error);
-    const page = renderMessagePage('Classe indisponible', 'Impossible de charger cette classe pour le moment.');
+    const page = renderMessagePage('Fiche indisponible', 'Impossible de charger l’élément demandé pour le moment.');
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id/students', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+    const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -343,7 +348,7 @@ router.post('/:id/students', async (request, response) => {
     const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
     if (classResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -370,7 +375,7 @@ router.post('/:id/students', async (request, response) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to add class memberships:', error);
-    const page = renderMessagePage('Affectation impossible', 'Impossible d’ajouter les élèves à cette classe pour le moment.');
+    const page = renderMessagePage('Ajout impossible', 'Impossible d’ajouter la sélection pour le moment.');
     response.status(page.status).send(page.html);
   } finally {
     client.release();
@@ -390,7 +395,7 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
     const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
     if (classResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -402,7 +407,7 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
       await client.query('ROLLBACK');
       const page = renderMessagePage(
         'Retrait impossible',
-        'Cette classe a déjà commencé. Désactivez l’affectation pour préserver l’historique.',
+        `Cette ${getTerm('class').toLocaleLowerCase('fr')} a déjà commencé. Désactivez la ${getTerm('membership').toLocaleLowerCase('fr')} pour préserver l’historique.`,
         409,
       );
       response.status(page.status).send(page.html);
@@ -429,7 +434,7 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Unable to remove class membership:', error);
-    const page = renderMessagePage('Retrait impossible', 'Impossible de retirer cet élève de la classe pour le moment.');
+    const page = renderMessagePage('Retrait impossible', 'Impossible de retirer cette personne pour le moment.');
     response.status(page.status).send(page.html);
   } finally {
     client.release();
@@ -449,7 +454,7 @@ async function updateMembershipActivity(request, response, active) {
     const classResult = await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [request.params.id]);
     if (classResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -492,7 +497,7 @@ router.post('/:id/students/:studentId/reactivate', (request, response) => (
 
 router.get('/:id/edit', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+    const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -504,13 +509,13 @@ router.get('/:id/edit', async (request, response) => {
     );
 
     if (result.rowCount === 0) {
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
 
     response.send(renderClassForm({
-      title: 'Modifier la classe',
+      title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
       action: `/classes/${result.rows[0].id}`,
       submitLabel: 'Enregistrer',
       values: result.rows[0],
@@ -518,8 +523,8 @@ router.get('/:id/edit', async (request, response) => {
   } catch (error) {
     console.error('Unable to load class:', error);
     const page = renderMessagePage(
-      'Classe indisponible',
-      'Impossible de charger cette classe pour le moment.',
+      'Fiche indisponible',
+      'Impossible de charger l’élément demandé pour le moment.',
     );
     response.status(page.status).send(page.html);
   }
@@ -527,7 +532,7 @@ router.get('/:id/edit', async (request, response) => {
 
 router.post('/:id', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+    const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -536,7 +541,7 @@ router.post('/:id', async (request, response) => {
 
   if (!values.name) {
     response.status(400).send(renderClassForm({
-      title: 'Modifier la classe',
+      title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
       action: `/classes/${request.params.id}`,
       submitLabel: 'Enregistrer',
       values,
@@ -552,7 +557,7 @@ router.post('/:id', async (request, response) => {
     );
 
     if (result.rowCount === 0) {
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -561,18 +566,18 @@ router.post('/:id', async (request, response) => {
   } catch (error) {
     console.error('Unable to update class:', error);
     response.status(500).send(renderClassForm({
-      title: 'Modifier la classe',
+      title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
       action: `/classes/${request.params.id}`,
       submitLabel: 'Enregistrer',
       values,
-      error: 'Impossible de modifier la classe pour le moment.',
+      error: 'Impossible d’enregistrer les modifications pour le moment.',
     }));
   }
 });
 
 router.post('/:id/delete', async (request, response) => {
   if (!isValidId(request.params.id)) {
-    const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+    const page = renderClassNotFoundPage();
     response.status(page.status).send(page.html);
     return;
   }
@@ -584,7 +589,7 @@ router.post('/:id/delete', async (request, response) => {
     );
 
     if (result.rowCount === 0) {
-      const page = renderMessagePage('Classe introuvable', 'Cette classe n’existe pas.', 404);
+      const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
@@ -594,7 +599,7 @@ router.post('/:id/delete', async (request, response) => {
     if (error.code === '23503') {
       const page = renderMessagePage(
         'Suppression impossible',
-        'Cette classe est liée à une séance et ne peut pas être supprimée.',
+        `Cette fiche est liée à une ${getTerm('session').toLocaleLowerCase('fr')} et ne peut pas être supprimée.`,
         409,
       );
       response.status(page.status).send(page.html);
@@ -604,7 +609,7 @@ router.post('/:id/delete', async (request, response) => {
     console.error('Unable to delete class:', error);
     const page = renderMessagePage(
       'Suppression impossible',
-      'Impossible de supprimer cette classe pour le moment.',
+      'Impossible de supprimer la fiche pour le moment.',
     );
     response.status(page.status).send(page.html);
   }

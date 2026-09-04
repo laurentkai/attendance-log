@@ -10,4 +10,8 @@ function getCurrentUser() {
   return requestStorage.getStore()?.request.currentUser || null;
 }
 
-module.exports = { getCurrentUser, requestContextMiddleware };
+function getCurrentRequest() {
+  return requestStorage.getStore()?.request || null;
+}
+
+module.exports = { getCurrentRequest, getCurrentUser, requestContextMiddleware };

@@ -85,8 +85,8 @@ function renderSettingsPage({
     description: 'Configurez un fournisseur SMTP standard pour les futurs envois de l’application.',
     status: `<span class="badge status-badge status-${complete ? 'active' : 'inactive'}">${complete ? 'E-mail configuré' : 'Configuration e-mail incomplète'}</span>`,
     notifications: feedbackMessage,
-    content: `
-      <form class="card card-body app-form" method="post" action="/settings/email" autocomplete="off">
+    content: `<section class="page-section" aria-label="Configuration SMTP">
+        <form class="card card-body app-form" method="post" action="/settings/email" autocomplete="off">
         <div class="form-field">
           <label for="smtp-host">Serveur SMTP <span aria-hidden="true">*</span></label>
           <input class="form-control" id="smtp-host" name="smtp_host" type="text" value="${escapeHtml(values.host)}" autocomplete="off" spellcheck="false" required>
@@ -128,7 +128,8 @@ function renderSettingsPage({
         <div class="form-actions d-flex flex-wrap gap-2">
           <button class="btn btn-primary" type="submit">Enregistrer la configuration</button>
         </div>
-      </form>
+        </form>
+      </section>
 
       <section class="page-section" aria-labelledby="test-email-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
@@ -146,8 +147,7 @@ function renderSettingsPage({
             <button class="btn btn-primary" type="submit">Envoyer un e-mail de test</button>
           </div>
         </form>
-      </section>
-    `,
+      </section>`,
   }));
 }
 

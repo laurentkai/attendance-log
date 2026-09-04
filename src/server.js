@@ -18,6 +18,7 @@ const classesRouter = require('./classes');
 const courseSessionsRouter = require('./course-sessions');
 const { formatDateForDisplay } = require('./date-format');
 const mailSettingsRouter = require('./mail-settings');
+const maintenanceSettingsRouter = require('./maintenance-settings');
 const { isMaintenanceActive, maintenanceMiddleware } = require('./maintenance');
 const reportingRouter = require('./reporting');
 const { cleanupStaleRestoreWorkspaces } = require('./restore');
@@ -32,7 +33,10 @@ const { hasPermission, permissions } = require('./permissions');
 const { requestContextMiddleware } = require('./request-context');
 const studentImportRouter = require('./student-import');
 const studentsRouter = require('./students');
+const terminologySettingsRouter = require('./terminology-settings');
+const { loadTerminology } = require('./terminology');
 const {
+  businessTerm,
   escapeHtml,
   renderMessagePage,
   renderPage,
@@ -103,6 +107,16 @@ app.use(requestContextMiddleware);
 app.use(loadAuthenticatedUser);
 app.use(authRouter);
 app.use(requireAuthentication);
+app.use(async (request, response, next) => {
+  try {
+    request.terminology = await loadTerminology();
+    next();
+  } catch (error) {
+    console.error('Unable to load application terminology:', error.code || error.message);
+    const page = renderMessagePage('Application indisponible', 'Impossible de charger la configuration pour le moment.', 503);
+    response.status(page.status).send(page.html);
+  }
+});
 app.get('/settings', requirePermission(permissions.manageSettings), (_request, response) => response.redirect(303, '/settings/email'));
 app.get('/vendor/qr-scanner/qr-scanner.min.js', (_request, response) => {
   response.sendFile(path.join(
@@ -127,6 +141,8 @@ app.use('/sessions', requirePermission(permissions.viewSessions), courseSessions
 app.use('/settings/email', requirePermission(permissions.manageSettings), mailSettingsRouter);
 app.use('/settings/security', requirePermission(permissions.manageSettings), securitySettingsRouter);
 app.use('/settings/backups', requirePermission(permissions.manageSettings), backupSettingsRouter);
+app.use('/settings/maintenance', requirePermission(permissions.manageSettings), maintenanceSettingsRouter);
+app.use('/settings/terminology', requirePermission(permissions.manageSettings), terminologySettingsRouter);
 app.use('/settings/users', requirePermission(permissions.manageUsers), adminUserSettingsRouter);
 app.use('/reporting', requirePermission(permissions.viewReporting), reportingRouter);
 app.use('/students/import', requirePermission(permissions.manageStudents), studentImportRouter);
@@ -170,10 +186,10 @@ app.get('/', async (request, response) => {
             </div>
             <div class="compact-status">
               <strong class="compact-count"><span data-present-count>${sessionRecord.present_count}</span> / <span data-total-count>${sessionRecord.total_students}</span> présents</strong>
-              <span class="badge status-badge status-open" data-session-state>Séance ouverte</span>
+              <span class="badge status-badge status-open" data-session-state>État : ouvert</span>
             </div>
-            <div class="compact-actions compact-actions--split" aria-label="Actions pour la séance ${escapeHtml(sessionRecord.title)}">
-              <a class="btn btn-primary" href="/sessions/${sessionRecord.id}">Présences</a>
+            <div class="compact-actions compact-actions--split" aria-label="Actions disponibles pour « ${escapeHtml(sessionRecord.title)} »">
+              <a class="btn btn-primary" href="/sessions/${sessionRecord.id}">${businessTerm('attendance', 'plural')}</a>
               ${canManageSessions ? `<span class="session-edit-slot">
                 <a class="btn btn-light" href="/sessions/${sessionRecord.id}/edit" data-session-edit>Modifier</a>
                 <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled hidden>Modifier</button>
@@ -185,27 +201,27 @@ app.get('/', async (request, response) => {
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <h1>Tableau de bord</h1>
-          <p class="page-description">Accédez aux tâches courantes et aux séances actuellement ouvertes.</p>
+          <p class="page-description">Accédez aux tâches courantes et aux ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} actuellement ouvertes.</p>
         </div>
       </header>
       <nav class="dashboard-actions" aria-label="Accès rapides">
         <div class="row g-2 row-cols-1 row-cols-md-2">
-          ${canManageClasses ? '<div class="col"><a class="card card-body dashboard-link h-100" href="/classes"><strong>Classes</strong><span>Gérer les groupes</span></a></div>' : ''}
-          ${canManageStudents ? '<div class="col"><a class="card card-body dashboard-link h-100" href="/students"><strong>Élèves</strong><span>Consulter les élèves actifs</span></a></div>' : ''}
-          <div class="col"><a class="card card-body dashboard-link h-100" href="/sessions"><strong>Séances</strong><span>${canManageSessions ? 'Planifier et prendre les présences' : 'Prendre les présences'}</span></a></div>
-          ${canManageStudents ? '<div class="col"><a class="card card-body dashboard-link h-100" href="/students/import"><strong>Importer des élèves</strong><span>Ajouter un fichier CSV</span></a></div>' : ''}
+          ${canManageClasses ? `<div class="col"><a class="card card-body dashboard-link h-100" href="/classes"><strong>${businessTerm('class', 'plural')}</strong><span>Gérer les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</span></a></div>` : ''}
+          ${canManageStudents ? `<div class="col"><a class="card card-body dashboard-link h-100" href="/students"><strong>${businessTerm('student', 'plural')}</strong><span>Consulter le répertoire actif</span></a></div>` : ''}
+          <div class="col"><a class="card card-body dashboard-link h-100" href="/sessions"><strong>${businessTerm('session', 'plural')}</strong><span>${canManageSessions ? `Planifier et enregistrer les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}` : `Enregistrer les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}`}</span></a></div>
+          ${canManageStudents ? `<div class="col"><a class="card card-body dashboard-link h-100" href="/students/import"><strong>Importer</strong><span>${businessTerm('student', 'plural')} depuis un fichier CSV</span></a></div>` : ''}
         </div>
       </nav>
       <section class="page-section" aria-labelledby="open-sessions-title" data-live-dashboard>
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="open-sessions-title">Séances ouvertes</h2>
-            <p class="section-description">Suivi des présences en cours.</p>
+            <h2 id="open-sessions-title">${businessTerm('session', 'plural')} ouvertes</h2>
+            <p class="section-description">Suivi des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')} en cours.</p>
           </div>
-          <a class="btn btn-light" href="/sessions">Voir toutes les séances</a>
+          <a class="btn btn-light" href="/sessions">Consulter les ${businessTerm('session', 'plural').toLocaleLowerCase('fr')}</a>
         </div>
         ${openSessions}
-        <p class="empty-state" data-live-empty-state${result.rows.length > 0 ? ' hidden' : ''}>Aucune séance ouverte. Les séances planifiées apparaissent dans la rubrique Séances.</p>
+        <p class="empty-state" data-live-empty-state${result.rows.length > 0 ? ' hidden' : ''}>Aucun élément ouvert pour le moment. Consultez la rubrique ${businessTerm('session', 'plural')}.</p>
       </section>`));
   } catch (error) {
     console.error('Unable to load dashboard:', error);
