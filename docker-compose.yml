@@ -15,7 +15,7 @@ services:
     volumes:
       - app_secrets:/app-secrets
     ports:
-      - "${PORT:-3000}:3000"
+      - "${BIND_ADDRESS:-0.0.0.0}:${PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,126 +1,119 @@
 # Attendance Log
 
-Attendance Log est une application d’administration mobile-first destinée au suivi des présences d’une école de navigation.
+Attendance Log is a mobile-first attendance application for a navigation school. It manages students, class memberships, sessions, attendance, rapid manual and QR check-in, student QR delivery by e-mail, SMTP settings, reporting and Excel exports, encrypted provider credentials, and backup and disaster recovery.
 
-Elle couvre actuellement :
-
-- la gestion et l’import CSV des élèves ;
-- la gestion des classes et de leurs membres ;
-- la planification des séances et le suivi des présences ;
-- une prise de présence rapide, manuelle ou par QR élève ;
-- l’affichage, le téléchargement et l’envoi du QR élève par e-mail ;
-- une configuration SMTP générique ;
-- le reporting et les exports Excel ;
-- le chiffrement des secrets fournisseur ;
-- les sauvegardes locales, S3/S3-compatible et Azure Blob ;
-- la préparation et la restauration de sauvegardes depuis un fichier ou le cloud.
+The administration interface is in French. This guide therefore retains UI labels such as **Configuration > Sauvegardes** exactly as they appear in the application.
 
 ## Architecture
 
-- Node.js 22 et Express fournissent l’application HTTP.
-- PostgreSQL 17 est l’unique base de données persistante.
-- L’interface est rendue côté serveur et utilise du HTML, du CSS et du JavaScript sans framework frontend.
-- Docker Compose exécute les services `app` et `postgres` sur le VPS AWS Lightsail.
-- Le conteneur `app` écoute en HTTP sur le port interne `3000`. En production, HTTPS doit être terminé par un reverse proxy externe.
-- Le volume Docker `postgres_data` conserve les données PostgreSQL.
-- Le volume Docker `app_secrets` conserve la clé de chiffrement lorsque la clé est stockée dans le fichier géré par l’application.
+- Node.js 22 and Express serve server-rendered HTML with Bootstrap 5 and lightweight client-side JavaScript.
+- PostgreSQL 17 is the only application database.
+- Docker Compose runs the `app` and `postgres` services on the current production target: an AWS Lightsail VPS.
+- The application listens on plain HTTP port `3000` inside the container. An external reverse proxy must provide HTTPS in production.
+- `postgres_data` stores PostgreSQL data.
+- `app_secrets` stores the generated application encryption key and the non-secret installation instance ID.
 
-Les deux volumes nommés survivent aux reconstructions d’image, remplacements de conteneur, `docker compose up -d` et redémarrages normaux du VPS.
+Both named volumes survive normal image rebuilds, container replacement, `docker compose up -d`, and host restarts.
 
-> **Attention — volumes persistants**
+> **Persistent-volume warning**
 >
-> Ne pas utiliser couramment :
->
-> ```bash
-> docker compose down -v
-> ```
->
-> L’option `-v` supprime les volumes Compose. Elle peut donc détruire la base PostgreSQL et la clé de chiffrement générée dans `app_secrets`. Pour appliquer une configuration ou une nouvelle image, utiliser normalement :
->
-> ```bash
-> docker compose up -d
-> ```
+> Do not use `docker compose down -v` as routine cleanup. The `-v` option removes Compose volumes and can destroy both the PostgreSQL database and the generated application encryption key. Normal deployments use non-volume-destructive commands such as `docker compose up -d`.
 
-## Prérequis sur le VPS
+## VPS prerequisites
 
-- Git ;
-- Docker Engine ;
-- le plugin Docker Compose (`docker compose`) ;
-- un nom de domaine et un certificat HTTPS pour un accès distant ;
-- nginx ou un reverse proxy équivalent si HTTPS n’est pas déjà fourni par l’infrastructure.
+Install:
 
-Node.js, npm, PostgreSQL et les outils PostgreSQL ne doivent pas être installés directement sur le VPS : ils sont inclus dans les images Docker.
+- Git;
+- Docker Engine;
+- the Docker Compose plugin (`docker compose`);
+- a domain name and valid HTTPS certificate for remote use;
+- nginx or another reverse proxy if HTTPS is not provided elsewhere.
 
-L’accès caméra depuis un téléphone nécessite un contexte sécurisé. Hors `localhost`, la page de prise de présence QR doit donc être servie en HTTPS.
+Node.js, npm, PostgreSQL, `pg_dump`, and `pg_restore` do not need to be installed directly on the VPS; the Docker images provide them.
 
-## Installation
+HTTPS is required for production login cookies and for browser camera access on remote/mobile devices. Only `localhost` is treated as a secure camera context without HTTPS.
 
-### 1. Cloner le dépôt
+## Fresh installation
+
+### 1. Clone the repository
 
 ```bash
 git clone <repository-url>
 cd attendance-log
 ```
 
-### 2. Configurer l’environnement
+### 2. Create and configure `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Modifier ensuite `.env` avec des valeurs propres à l’installation. Ne jamais committer ce fichier.
+Edit `.env` with installation-specific values. Never commit this file.
 
-| Variable | Usage | Exigence |
+| Variable | Purpose | Current behavior |
 | --- | --- | --- |
-| `PORT` | Port publié par Docker Compose vers le port interne `3000` | Optionnelle, `3000` par défaut |
-| `NODE_ENV` | Environnement Node.js | Utiliser `production` sur le VPS |
-| `POSTGRES_DB` | Nom de la base PostgreSQL Compose | Important |
-| `POSTGRES_USER` | Utilisateur PostgreSQL Compose | Important |
-| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL Compose | Requis en pratique ; utiliser une valeur forte |
-| `DATABASE_URL` | Connexion PostgreSQL lors d’une exécution directe hors Compose | Présente pour ce cas ; Compose construit sa propre URL avec les trois variables PostgreSQL |
-| `DATABASE_SSL` | Active la vérification TLS PostgreSQL hors Compose | Compose utilise `false` sur son réseau interne |
-| `SESSION_SECRET` | Signature des sessions administrateur | Requis, au moins 32 caractères |
-| `APP_ENCRYPTION_KEY` | Clé maître Base64 de 256 bits fournie par l’environnement | Optionnelle ; prioritaire sur le fichier persistant |
-| `APP_ENCRYPTION_KEY_FILE` | Emplacement du fichier de clé pour une exécution hors Compose | Optionnelle ; Compose impose `/app-secrets/encryption.key` |
-| `BACKUP_TIMEZONE` | Fuseau IANA utilisé par la planification des sauvegardes | Optionnelle, `Europe/Brussels` par défaut |
-| `BACKUP_RESTORE_MAX_MB` | Taille maximale d’un fichier envoyé pour restauration | Optionnelle, `512` Mo par défaut |
+| `BIND_ADDRESS` | Host address on which Docker publishes the application port | Optional; defaults to `0.0.0.0` |
+| `PORT` | Host port mapped to application port `3000` | Optional; defaults to `3000` |
+| `NODE_ENV` | Node environment | Set to `production` on the VPS |
+| `POSTGRES_DB` | Compose PostgreSQL database name | Configure for the installation |
+| `POSTGRES_USER` | Compose PostgreSQL user | Configure for the installation |
+| `POSTGRES_PASSWORD` | Compose PostgreSQL password | Use a strong, unique value |
+| `DATABASE_URL` | PostgreSQL URL for direct, non-Compose execution | Compose constructs its own URL from `POSTGRES_*` |
+| `DATABASE_SSL` | TLS verification for direct database connections | Compose sets this to `false` on its private network |
+| `SESSION_SECRET` | Express session signing secret | Required; at least 32 characters |
+| `APP_ENCRYPTION_KEY` | Environment-supplied 256-bit key in canonical Base64 | Optional; takes precedence over the key file |
+| `APP_ENCRYPTION_KEY_FILE` | Key-file path for direct execution | Optional; Compose fixes it to `/app-secrets/encryption.key` |
+| `APP_INSTANCE_ID_FILE` | Instance-ID file path for direct execution | Optional; Compose fixes it to `/app-secrets/instance-id` |
+| `BACKUP_TIMEZONE` | IANA timezone used by backup scheduling | Optional; defaults to `Europe/Brussels` |
+| `BACKUP_RESTORE_MAX_MB` | Maximum uploaded restore archive size | Optional; defaults to `512` MiB |
 
-En production, utiliser des valeurs distinctes et fortes pour `POSTGRES_PASSWORD` et `SESSION_SECRET`. Une valeur `APP_ENCRYPTION_KEY`, lorsqu’elle est fournie, doit être une clé aléatoire de 256 bits encodée en Base64.
+Use distinct strong values for `POSTGRES_PASSWORD` and `SESSION_SECRET`. If you supply `APP_ENCRYPTION_KEY`, it must be exactly 32 random bytes encoded as canonical Base64. For the standard Compose deployment, leaving it empty allows Attendance Log to generate and persist a key in `app_secrets`.
 
-### 3. Construire l’image
+For local development, `BIND_ADDRESS=0.0.0.0` makes the published port reachable through the development host's network interfaces. On the Lightsail VPS, where nginx is the public entry point, use:
+
+```dotenv
+BIND_ADDRESS=127.0.0.1
+PORT=3000
+NODE_ENV=production
+```
+
+This restricts the application port to the VPS loopback interface while nginx serves public HTTPS traffic. A local `docker-compose.override.yml` is no longer required to change the bind address for this deployment.
+
+### 3. Build the image
 
 ```bash
 docker compose build
 ```
 
-### 4. Appliquer les migrations
+### 4. Apply database migrations
 
 ```bash
 docker compose run --rm app npm run migrate
 ```
 
-La commande de migration applique les migrations PostgreSQL absentes. Elle est conçue pour être relancée : les migrations déjà enregistrées dans `schema_migrations` ne sont pas réappliquées.
+This command applies pending ordered SQL migrations and records them in `schema_migrations`. It is safe to rerun: already applied migrations are not applied again.
 
-### 5. Créer le compte administrateur d’urgence
+### 5. Create the break-glass administrator
 
 ```bash
 docker compose run --rm \
-  -e CREATE_ADMIN_USERNAME="admin-secours" \
-  -e CREATE_ADMIN_PASSWORD="VotreMotDePasseLongEtSolide" \
+  -e CREATE_ADMIN_USERNAME="emergency-admin" \
+  -e CREATE_ADMIN_NAME="Emergency Administrator" \
+  -e CREATE_ADMIN_PASSWORD="Use-A-Long-Unique-Password" \
   app npm run create-admin
 ```
 
-`CREATE_ADMIN_NAME` peut aussi être fourni pour personnaliser le nom affiché. Les options `-e` transmettent ces valeurs uniquement au conteneur ponctuel créé par `docker compose run --rm`. Elles ne doivent pas être ajoutées à `.env` et ne constituent pas une configuration d’exécution permanente. La commande refuse de créer un second compte d’urgence et exige un mot de passe d’au moins 12 caractères.
+`CREATE_ADMIN_NAME` is optional. `CREATE_ADMIN_USERNAME` and `CREATE_ADMIN_PASSWORD` are required; the password must contain at least 12 characters. These values are passed only to this one-shot container and do not need to be stored in `.env`. The command creates the single local break-glass account and refuses to create another one.
 
-Ce compte local est le seul à utiliser un nom d’utilisateur et un mot de passe. Il sert uniquement d’accès de secours indépendant de SMTP. En fonctionnement normal, les comptes et leurs rôles se gèrent depuis **Configuration > Utilisateurs** ; cette commande ne fait pas partie de la procédure de mise à jour.
+The break-glass account is always an administrator and is the only account that authenticates with a local username and password. Store its credentials securely; it is independent of SMTP.
 
-### 6. Démarrer ou recréer l’application
+### 6. Start the application
 
 ```bash
 docker compose up -d
 ```
 
-### 7. Vérifier les services
+### 7. Verify services and health
 
 ```bash
 docker compose ps
@@ -128,21 +121,28 @@ docker compose logs --tail=100
 curl http://localhost:3000/health
 ```
 
-Une réponse saine ressemble à :
+A healthy response is:
 
 ```json
 {"status":"ok","database":"connected"}
 ```
 
-### 8. Se connecter
+### 8. Complete initial configuration
 
-Ouvrir Attendance Log, saisir le nom d’utilisateur créé à l’étape 5 dans le champ d’identification unique, puis renseigner son mot de passe. Configurer ensuite SMTP dans **Configuration > E-mail** et créer les comptes nominatifs dans **Configuration > Utilisateurs**. Ces comptes saisissent leur adresse e-mail dans le même champ, puis se connectent avec un code à six chiffres reçu par e-mail ; ils n’ont pas de mot de passe local.
+1. Open the application through its HTTPS URL.
+2. Enter the break-glass username in the single identifier field, then enter its password when prompted.
+3. Open **Configuration > E-mail**, save the SMTP configuration, and use **Envoyer un e-mail de test**.
+4. Open **Configuration > Utilisateurs** and create the named `administrator`, `manager`, and `attendance_operator` accounts required by the organization.
+5. Export the recovery key from **Configuration > Sécurité** and store it securely outside the VPS and separately from database backups.
+6. Configure and test backups in **Configuration > Sauvegardes**.
 
-## HTTPS et reverse proxy
+Normal users authenticate passwordlessly: they enter their e-mail address in the same identifier field and then enter the six-digit OTP sent by Attendance Log. SMTP must be configured and working before they can receive a code. If SMTP is unavailable, the local break-glass username still switches the unified login flow to password entry; there is no separate emergency-login page.
 
-Le dépôt ne fournit pas de configuration nginx. Sur le VPS, le reverse proxy doit transmettre le trafic HTTPS vers `http://127.0.0.1:3000` et fournir au minimum les en-têtes d’origine attendus par Express.
+## HTTPS reverse proxy
 
-Exemple minimal de bloc `location` nginx à intégrer dans une configuration HTTPS gérée séparément :
+The repository does not include an nginx configuration. Configure the VPS reverse proxy separately so that its HTTPS virtual host forwards to `http://127.0.0.1:3000` and supplies the original protocol.
+
+Minimal nginx `location` example:
 
 ```nginx
 location / {
@@ -153,29 +153,35 @@ location / {
 }
 ```
 
-Avec `NODE_ENV=production`, Attendance Log fait confiance au premier reverse proxy et utilise des cookies de session sécurisés. Le proxy doit donc transmettre correctement `X-Forwarded-Proto` et présenter un certificat HTTPS valide.
+With `NODE_ENV=production`, Attendance Log trusts the first proxy and sets secure session cookies. The public endpoint must therefore use a valid certificate and the proxy must forward `X-Forwarded-Proto` correctly.
 
-## Clé de chiffrement et récupération
+## Authentication and roles
 
-Attendance Log chiffre les mots de passe et credentials fournisseur récupérables avant leur stockage dans PostgreSQL.
+- The unified login accepts either a normal account e-mail or the unique break-glass username.
+- Normal users receive a single-use six-digit OTP by e-mail. The code expires after 10 minutes, has server-enforced request/resend limits, and permits at most five verification attempts.
+- Sessions use a 30-day sliding inactivity lifetime and a 90-day absolute authentication lifetime.
+- Administrators manage normal accounts in **Configuration > Utilisateurs**. Do not rerun `npm run create-admin` for routine user management.
+- `administrator` has full access, `manager` has operational management/reporting access without Settings, and `attendance_operator` has attendance-focused access.
 
-Le chargement de la clé suit cet ordre :
+## Encryption key, recovery key, and instance identity
 
-1. `APP_ENCRYPTION_KEY`, si elle est définie ;
-2. le fichier persistant indiqué par `APP_ENCRYPTION_KEY_FILE` ;
-3. génération sécurisée de ce fichier lors d’une première installation sans clé existante.
+Recoverable provider credentials are encrypted before storage in PostgreSQL. Attendance Log loads its master key in this order:
 
-Avec Docker Compose, le fichier se trouve dans `app_secrets` et n’est pas stocké dans PostgreSQL. Il reste disponible après un remplacement normal du conteneur.
+1. `APP_ENCRYPTION_KEY`, when set;
+2. the persistent file at `APP_ENCRYPTION_KEY_FILE`;
+3. a securely generated key written to that file on first initialization.
 
-Après la première connexion, ouvrir **Configuration > Sécurité**, puis utiliser **Exporter la clé**. Conserver ce fichier de récupération séparément des sauvegardes de base de données, dans un emplacement sécurisé.
+The standard Compose deployment mounts `app_secrets` at `/app-secrets`, so the generated key survives rebuilds and container replacement. The raw key is not stored in PostgreSQL and is never included in a backup archive.
 
-Une sauvegarde restaurée sans la clé correspondante restitue les élèves, classes, séances, présences, rapports et autres données ordinaires. En revanche, les credentials SMTP/S3/Azure chiffrés restent inutilisables jusqu’à l’import de la bonne clé de récupération ou leur reconfiguration.
+Use **Configuration > Sécurité > Exporter la clé** and keep the recovery-key file in a separate secure location. A database can be restored without the matching key, but encrypted SMTP, S3, and Azure credentials then remain unusable until the matching recovery key is imported or those credentials are reconfigured.
 
-## Mise à jour de l’application
+Attendance Log also generates a random, non-secret instance UUID in `/app-secrets/instance-id`. It survives normal deployments and isolates each installation's cloud backup objects. It is not derived from a hostname, database name, or administrator identity. Do not copy another live installation's instance-ID file: a restored installation intentionally keeps its own identity and writes future backups under its own cloud prefix.
 
-Avant une mise à jour importante, vérifier qu’une sauvegarde récente existe dans **Configuration > Sauvegardes**. Si une destination cloud est configurée, l’action **Sauvegarder maintenant** crée une sauvegarde immédiate.
+## Updating Attendance Log
 
-Séquence recommandée :
+Before a significant update, confirm that a recent backup succeeded in **Configuration > Sauvegardes**. When a cloud destination is configured, **Sauvegarder maintenant** creates an immediate cloud backup.
+
+Use this sequence:
 
 ```bash
 git pull
@@ -184,17 +190,11 @@ docker compose run --rm app npm run migrate
 docker compose up -d
 ```
 
-La migration doit être exécutée **après** `docker compose build` afin d’utiliser la nouvelle image, qui contient les nouveaux fichiers de migration.
+Run migrations after `docker compose build` so the migration command uses the newly built image containing the new SQL files. `docker compose run --rm app npm run migrate` updates the database schema; it does not recreate the running application service, so `docker compose up -d` is still required.
 
-La commande :
+Do not recreate the first administrator during normal updates. Existing users and the break-glass account are database data managed by migrations and **Configuration > Utilisateurs**.
 
-```bash
-docker compose run --rm app npm run migrate
-```
-
-applique le schéma, mais ne remplace pas les conteneurs actifs. La commande `docker compose up -d` reste nécessaire pour démarrer ou recréer l’application avec la nouvelle image.
-
-Contrôler ensuite :
+Verify the deployment afterward:
 
 ```bash
 docker compose ps
@@ -202,21 +202,21 @@ docker compose logs --tail=100
 curl http://localhost:3000/health
 ```
 
-## Redémarrage et reconstruction
+## Routine operations
 
-Redémarrer les conteneurs existants sans reconstruire l’image :
+Restart existing containers without rebuilding:
 
 ```bash
 docker compose restart
 ```
 
-Redémarrer uniquement l’application :
+Restart only the application:
 
 ```bash
 docker compose restart app
 ```
 
-Après un changement de code ou de dépendances :
+Rebuild and recreate after code or dependency changes:
 
 ```bash
 docker compose build
@@ -224,149 +224,142 @@ docker compose run --rm app npm run migrate
 docker compose up -d
 ```
 
-Un simple `restart` ne reconstruit pas l’image et n’applique pas de nouvelles migrations.
+A restart does not rebuild the image or apply migrations.
 
-## Logs et état des services
-
-Logs de l’application :
+Useful logs and status commands:
 
 ```bash
 docker compose logs -f app
-```
-
-Logs PostgreSQL :
-
-```bash
 docker compose logs -f postgres
-```
-
-Dernières lignes de tous les services :
-
-```bash
 docker compose logs --tail=100
-```
-
-État des conteneurs :
-
-```bash
 docker compose ps
 ```
 
-Arrêter temporairement les services sans supprimer les volumes :
+Temporarily stop services without deleting persistent volumes:
 
 ```bash
 docker compose stop
 ```
 
-Les relancer :
+Start them again:
 
 ```bash
 docker compose up -d
 ```
 
-## Migrations PostgreSQL
+## Database migrations
 
-La commande normale est :
+The normal migration command is:
 
 ```bash
 docker compose run --rm app npm run migrate
 ```
 
-L’utiliser :
+Run it on first installation and after building an application version that contains new migrations. The migration runner uses a PostgreSQL advisory lock, creates/uses `schema_migrations`, and skips previously applied files. Do not manually edit migration history or deployed migration files as a routine operation.
 
-- lors de la première installation ;
-- après avoir récupéré et construit une version contenant de nouvelles migrations ;
-- pour vérifier que le schéma est à jour.
+## Backup
 
-Le système crée `schema_migrations`, prend un verrou PostgreSQL pendant l’exécution et enregistre chaque migration appliquée. Ne pas modifier manuellement cette table ni les migrations déjà déployées dans le cadre des opérations courantes.
+**Configuration > Sauvegardes** provides:
 
-## Sauvegardes
+- **Télécharger une sauvegarde** for an immediate local download;
+- one S3/S3-compatible or Azure Blob Storage destination;
+- **Tester la destination**;
+- **Sauvegarder maintenant** for an immediate cloud backup;
+- daily or weekly application-managed scheduling, execution time, and retention;
+- backup execution history and safe failure summaries.
 
-La page **Configuration > Sauvegardes** propose :
+Set `BACKUP_TIMEZONE` to the site's operational IANA timezone. Attendance Log manages scheduling inside the application; no VPS cron entry or Docker scheduler is required.
 
-- **Télécharger une sauvegarde** : crée immédiatement une archive locale ;
-- une destination S3/S3-compatible ou Azure Blob Storage ;
-- **Tester la destination** ;
-- **Sauvegarder maintenant** vers la destination configurée ;
-- une planification quotidienne ou hebdomadaire avec heure et rétention ;
-- l’historique des exécutions et leurs erreurs normalisées.
-
-La planification est gérée par Attendance Log. Aucun cron VPS ne doit être ajouté. Régler `BACKUP_TIMEZONE` avec le fuseau IANA opérationnel du site.
-
-Une archive contient exactement :
+Each ZIP archive contains exactly:
 
 ```text
 database.dump
 manifest.json
 ```
 
-`database.dump` est une sauvegarde logique PostgreSQL au format personnalisé. Le manifeste contient uniquement des métadonnées non sensibles, dont l’identifiant de la clé de chiffrement. La clé brute, `.env`, les secrets du système de fichiers et les sessions administrateur ne sont pas inclus.
+`database.dump` is a transactionally consistent PostgreSQL custom-format logical dump. `manifest.json` contains non-sensitive metadata, including the source instance ID and encryption-key fingerprint. The archive excludes the raw encryption/recovery key, `.env`, filesystem secrets, source code, and active login/OTP state.
 
-Les credentials fournisseur présents dans PostgreSQL restent chiffrés dans le dump. L’archive ZIP elle-même n’est pas chiffrée par Attendance Log : conserver les téléchargements locaux dans un emplacement sûr et activer la protection au repos proposée par le fournisseur cloud.
+Provider credentials remain individually encrypted inside the database dump. The ZIP itself is intentionally not encrypted by Attendance Log. Protect local downloads appropriately. Cloud objects remain private and use provider-side encryption at rest.
 
-## Restauration V1
+New S3/Azure objects are stored beneath an instance-owned prefix equivalent to:
 
-La restauration actuelle se trouve dans **Configuration > Sauvegardes > Restaurer une sauvegarde**. Elle prend en charge :
+```text
+<configured-prefix>/attendance-log/<instance-id>/...
+```
 
-- l’envoi d’une archive ZIP locale ;
-- la sélection d’une sauvegarde Attendance Log depuis la destination S3/Azure actuellement configurée ;
-- l’inspection du manifeste avant toute modification ;
-- l’avertissement en cas de clé de chiffrement différente ;
-- une confirmation destructive explicite ;
-- une sauvegarde de sécurité avant le remplacement d’une base contenant des données ;
-- l’application automatique des migrations après restauration.
+Listing, download, restore listing, and retention are restricted to that prefix, so independent installations can share a bucket/container without deleting or exposing each other's backups through Attendance Log.
 
-Pour une installation neuve avec une sauvegarde cloud :
+## Restore and disaster recovery
 
-1. installer et démarrer Attendance Log ;
-2. créer puis utiliser le compte administrateur d’urgence de la nouvelle installation ;
-3. configurer les credentials S3/Azure actuels dans **Configuration > Sauvegardes** ;
-4. utiliser **Tester la destination** ;
-5. ouvrir **Restaurer une sauvegarde**, sélectionner la sauvegarde cloud et l’inspecter ;
-6. vérifier les fingerprints de clé et confirmer la restauration ;
-7. attendre le redémarrage automatique de l’application, puis se reconnecter.
+Open **Configuration > Sauvegardes > Restaurer une sauvegarde**. Restore V1 supports:
 
-La restauration est également possible avec une clé différente. Les données métier sont restaurées et les ciphertexts fournisseur sont conservés. Ouvrir ensuite **Configuration > Sécurité** pour importer la clé de récupération correspondante, ou reconfigurer les connexions externes.
+- an Attendance Log ZIP uploaded from local storage;
+- an owned backup listed from the currently configured S3/S3-compatible or Azure destination;
+- manifest, ZIP, PostgreSQL dump, format, and schema compatibility validation before production data is touched;
+- encryption-key fingerprint comparison without blocking ordinary business-data recovery;
+- an explicit destructive confirmation;
+- a mandatory safety backup before replacing a database containing meaningful data;
+- restore into an isolated staging database, current migrations, validation, and a guarded database swap;
+- automatic application restart and scheduler recalculation after success.
 
-Une sauvegarde provenant d’une migration plus récente que l’application est refusée. Mettre d’abord Attendance Log à jour, exécuter ses migrations, puis recommencer l’inspection.
+Restore replaces the whole application database; it does not merge records or selectively restore students/sessions. Old login sessions and OTP challenges are not restored as active authentication state.
 
-La restauration V1 remplace toute la base ; elle ne fusionne pas les données et ne restaure pas des élèves ou séances individuellement. Avant un premier usage en production, tester le parcours complet avec une copie récente de la sauvegarde et de la clé de récupération dans un environnement isolé.
+### Matching or different encryption keys
 
-## Configuration SMTP et QR par e-mail
+With the matching recovery key, restored SMTP and cloud credentials remain usable. With a different key, restore still preserves all business data and encrypted credential ciphertext. Core features remain available, while affected integrations fail safely until the matching key is imported from **Configuration > Sécurité** or credentials are re-entered.
 
-La page **Configuration > E-mail** accepte une configuration SMTP générique : STARTTLS, TLS implicite ou relais non chiffré sans authentification. Une connexion SMTP authentifiée non chiffrée est refusée.
+The source instance ID in the manifest is informational and does not block restore. The target installation retains its own instance ID for future cloud backups.
 
-Le mot de passe SMTP est chiffré dans PostgreSQL et n’est jamais réaffiché dans le formulaire. Utiliser **Envoyer un e-mail de test** avant l’envoi des QR élèves.
+### Fresh-install recovery
 
-Depuis la fiche QR d’un élève, **Envoyer le QR** transmet le QR personnel existant à l’adresse enregistrée de l’élève, avec une version intégrée et une pièce jointe PNG.
+For a fresh installation:
 
-## Contrôles après déploiement
+1. follow the installation procedure through `docker compose up -d` and log in with the newly created break-glass account;
+2. if the source recovery key is available, import it from **Configuration > Sécurité** before or after restore;
+3. open **Configuration > Sauvegardes > Restaurer une sauvegarde**;
+4. upload the backup ZIP, inspect its metadata, acknowledge the warnings, and confirm restore;
+5. wait for the application to restart, then sign in using an account contained in the restored database.
 
-Après une installation ou une mise à jour :
+Restore replaces the fresh database, including its newly bootstrapped user records. The temporary break-glass account created on the fresh installation therefore does not survive the database replacement. Ensure credentials for an account contained in the backup are available. If SMTP credentials will be unreadable because the key differs, possession of the source installation's break-glass credentials is especially important.
 
-1. vérifier `docker compose ps` ;
-2. vérifier `/health` ;
-3. ouvrir la page de connexion ;
-4. contrôler **Configuration > Sécurité** ;
-5. vérifier la configuration SMTP si elle est utilisée ;
-6. vérifier la destination et l’historique des sauvegardes ;
-7. depuis un téléphone en HTTPS, tester la prise de présence manuelle et l’accès caméra QR.
+Cloud backup listing is deliberately restricted to the current instance ID. A fresh installation receives a new instance ID and therefore does **not** list another installation's instance-isolated objects, even in the same bucket/container. For cross-instance disaster recovery, retrieve the required ZIP using the storage provider's management tools and use **Restaurer depuis un fichier**. Pre-instance-isolation archives remain restorable by local upload. Do not replace the new installation's instance ID with the source ID merely to discover old objects.
 
-## Dépannage rapide
+A backup whose schema migration version is newer than the running application is rejected. Update Attendance Log, build the new image, run migrations, and inspect the archive again.
 
-### Le conteneur `app` redémarre en boucle
+Periodically test a current backup and recovery key in an isolated environment. A backup is only useful when its restore path and administrator access have been verified.
 
-Consulter :
+## SMTP, OTP, and student QR e-mail
+
+**Configuration > E-mail** supports provider-neutral SMTP with STARTTLS, implicit TLS, or an explicitly unencrypted unauthenticated relay. Authenticated SMTP over an unencrypted connection is rejected. Amazon SES is used through its ordinary SMTP endpoint and SMTP credentials; no AWS mail SDK is required.
+
+The SMTP password is encrypted in PostgreSQL and never rendered back into the form. Use **Envoyer un e-mail de test** before relying on OTP login or student QR delivery.
+
+From a student's QR page, **Envoyer le QR** sends the student's existing personal QR to the stored student e-mail address as an embedded image and PNG attachment.
+
+## Post-deployment checklist
+
+After installation or update:
+
+1. confirm `docker compose ps` shows healthy/running services;
+2. confirm `/health` reports a connected database;
+3. open the HTTPS login page;
+4. inspect **Configuration > Sécurité** and securely export the recovery key;
+5. test SMTP and a normal user's OTP login;
+6. test the configured cloud destination and inspect backup history;
+7. create a fresh backup;
+8. from a phone over HTTPS, test manual and QR rapid attendance.
+
+## Troubleshooting
+
+### `app` repeatedly restarts
 
 ```bash
 docker compose logs --tail=100 app
 ```
 
-Vérifier en priorité les variables requises dans `.env`, notamment `SESSION_SECRET` et les paramètres PostgreSQL. Vérifier également que les migrations ont été appliquées et que le compte administrateur d’urgence existe dans `admin_users`. Si SMTP est indisponible, saisir le nom d’utilisateur local dans le formulaire de connexion normal ; le mot de passe sera demandé à l’étape suivante.
+Check `.env`, especially `SESSION_SECRET` and `POSTGRES_*`, confirm migrations ran, and confirm the database contains a break-glass administrator. SMTP failure does not prevent break-glass login: enter its local username in the normal identifier field.
 
-### Une migration manque
-
-Reconstruire d’abord l’image, puis relancer :
+### A migration is missing
 
 ```bash
 docker compose build
@@ -374,22 +367,22 @@ docker compose run --rm app npm run migrate
 docker compose up -d
 ```
 
-### La clé ne correspond pas aux secrets restaurés
+### The active key does not match restored secrets
 
-Les fonctions métier restent disponibles. Ouvrir **Configuration > Sécurité** et importer la clé exportée avec la sauvegarde concernée. Sans cette clé, reconfigurer les credentials SMTP/S3/Azure.
+Core business data remains available. Import the corresponding recovery key from **Configuration > Sécurité**, or reconfigure SMTP/S3/Azure credentials. Never put the recovery key in `.env` unless intentionally using it as `APP_ENCRYPTION_KEY` under an external secrets-management process.
 
-### La caméra QR ne démarre pas sur un téléphone
+### QR camera access fails on a phone
 
-Vérifier que l’application est ouverte en HTTPS, que le navigateur dispose de l’autorisation caméra et qu’aucune autre application ne monopolise la caméra. La prise de présence manuelle reste disponible.
+Confirm the application is served over HTTPS, browser camera permission is granted, and another application is not holding the camera. Manual rapid attendance remains available.
 
-### Une sauvegarde planifiée ne s’exécute pas
+### A scheduled backup does not run
 
-Vérifier `BACKUP_TIMEZONE`, l’état de la planification, **Tester la destination**, puis l’historique dans **Configuration > Sauvegardes** et les logs `app`.
+Check `BACKUP_TIMEZONE`, ensure automatic backups are enabled, run **Tester la destination**, inspect backup history in **Configuration > Sauvegardes**, and review `docker compose logs --tail=100 app`.
 
-## Règles d’exploitation essentielles
+## Essential operating rules
 
-- Ne jamais committer `.env`, une clé de récupération ou des credentials réels.
-- Exporter et conserver la clé de récupération séparément des sauvegardes PostgreSQL.
-- Vérifier régulièrement qu’une sauvegarde cloud récente a réussi.
-- Tester périodiquement une restauration dans un environnement isolé.
-- Ne pas utiliser `docker compose down -v` sauf si la destruction des données et de la clé est explicitement voulue.
+- Never commit `.env`, real credentials, an exported recovery key, or generated instance-identity files.
+- Keep the recovery key separate from database backups.
+- Regularly verify that cloud backups succeed and periodically test restoration.
+- Never use `docker compose down -v` unless destruction of both persistent database and application-secret volumes is explicitly intended.
+- Do not recreate the break-glass administrator during normal updates.
