@@ -131,13 +131,21 @@ function renderPage(title, content, {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f4f7f9">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Attendance">
     <title>${escapeHtml(title)} · Attendance Log</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/attendance-log-192.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
     <link rel="stylesheet" href="/vendor/bootstrap/css/bootstrap.min.css">
     <link rel="stylesheet" href="/css/styles.css">
     <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" defer></script>
     <script src="/js/otp-resend.js" defer></script>
     <script src="/js/classes.js" defer></script>
     <script src="/js/live-attendance.js" defer></script>
+    <script src="/js/pwa.js" defer></script>
   </head>
   <body class="bg-body-tertiary${authenticated && navigation ? ' app-shell' : ''}" data-term-session="${businessTerm('session')}" data-term-attendance="${businessTerm('attendance')}">
     <a class="skip-link visually-hidden-focusable" href="#main-content">Aller au contenu</a>

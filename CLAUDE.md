@@ -63,6 +63,8 @@ Check:
 
 Use a real browser/runtime inspection for high-risk interactive behavior when available. Do not claim physical-device, camera, focus, or pixel-level validation from static inspection alone.
 
+For PWA or service-worker changes, review the worker's scope and explicit cache boundary, sensitive-response exclusion, non-GET interception or replay risk, offline mutation behavior, and cache-version/update staleness handling. Attendance writes must remain network-authoritative.
+
 ## Security review skill
 
 For meaningful reviews involving authentication, authorization, sessions, OTP, password handling, rate limiting, account recovery, security-sensitive routes, or broader application-security findings, read and apply:

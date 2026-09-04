@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Attendance Log">
+  <rect width="512" height="512" fill="#f4f7f9"/>
+  <rect x="48" y="48" width="416" height="416" rx="112" fill="#09647a"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M136 168h64M136 256h64M136 344h64" stroke-width="28" opacity=".82"/>
+    <path d="m272 304 40 40 88-120" stroke-width="36"/>
+  </g>
+</svg>

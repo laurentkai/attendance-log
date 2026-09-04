@@ -157,6 +157,19 @@ location / {
 
 With `NODE_ENV=production`, Attendance Log trusts the first proxy and sets secure session cookies. The public endpoint must therefore use a valid certificate and the proxy must forward `X-Forwarded-Proto` correctly.
 
+## Install as a web app (PWA)
+
+Attendance Log can be installed from a supported mobile browser without a separate app-store package:
+
+- on Android, open the HTTPS site in Chrome and use **Install app** or **Add to Home screen** from the browser menu;
+- on iPhone or iPad, open the HTTPS site, use the Share menu, then choose **Add to Home Screen**.
+
+On iOS and iPadOS, the installed app may use a storage and session context separate from Safari. A user who is already signed in in Safari may therefore need to authenticate once more on the first launch from the Home Screen; this is expected, and the normal e-mail OTP flow is unchanged.
+
+The installed app opens in a standalone window and keeps a small static shell for offline launch failures. Attendance Log does not cache authenticated pages or business data. Viewing current data, receiving OTP codes, scanning QR codes into attendance, manual attendance changes, Reporting, Settings, Backup, and Restore all remain network-dependent. No attendance action is queued or replayed offline.
+
+Service-worker updates activate without forcibly reloading an operator's current screen. Static files are refreshed from the network when connectivity is available and retained only as offline shell assets; obsolete Attendance Log shell caches are removed when the cache version changes.
+
 ## Authentication and roles
 
 - The unified login accepts either a normal account e-mail or the unique break-glass username.

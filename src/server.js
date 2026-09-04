@@ -64,6 +64,13 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 app.use(express.urlencoded({ extended: false }));
+app.get('/service-worker.js', (_request, response) => {
+  response.set({
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Service-Worker-Allowed': '/',
+  });
+  response.sendFile(path.join(__dirname, '..', 'public', 'service-worker.js'));
+});
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/vendor/bootstrap', express.static(path.join(
   __dirname,

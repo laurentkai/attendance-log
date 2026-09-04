@@ -131,6 +131,13 @@ CSV Import belongs to student management and is accessed contextually from Stude
 - Standard authenticated pages share one discreet `Powered by Elinaka Labs` footer inside the canonical application frame; Quick Attendance remains excluded.
 - Keep its visual footprint approximately 20–25 px high where practical, with a small icon, subtle typography, and minimal vertical padding. Do not turn it into a card, panel, or competing content area.
 
+### Progressive Web App shell
+
+- Attendance Log has a lightweight, root-scoped PWA shell. Cache only an explicit allowlist of public static assets; never apply broad caching to application GET requests.
+- Never cache authenticated HTML, PII, OTP/authentication responses, Reporting, Settings, Backup/Restore, attendance data, or provider configuration. Never intercept, queue, or replay non-GET mutations.
+- Attendance and Quick Attendance writes remain network-authoritative and online-required. Do not add an offline mutation queue or Background Sync without explicit approval.
+- Explicit cache-version management is the V1 convention. Any service-worker cache or allowlist change requires a deliberate version/update decision and validation of stale-cache cleanup without disruptive reload behavior.
+
 ## Business integrity
 
 ### Authentication and administration
