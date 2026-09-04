@@ -1,0 +1,89 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: attendance-log-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Lightsail VPS
+    runs-on:
+      - self-hosted
+      - linux
+      - attendance-log-production
+    timeout-minutes: 30
+    environment: production
+    env:
+      DEPLOY_PATH: ${{ vars.PRODUCTION_DEPLOY_PATH }}
+
+    steps:
+      - name: Validate production checkout
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${DEPLOY_PATH}" || "${DEPLOY_PATH}" != /* ]]; then
+            echo "PRODUCTION_DEPLOY_PATH must be configured as an absolute repository variable." >&2
+            exit 1
+          fi
+
+          test -d "${DEPLOY_PATH}/.git"
+          test -f "${DEPLOY_PATH}/docker-compose.yml"
+          test -f "${DEPLOY_PATH}/.env"
+
+          if git -C "${DEPLOY_PATH}" ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "The production .env must not be tracked by Git." >&2
+            exit 1
+          fi
+
+      - name: Update production checkout and deploy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "${DEPLOY_PATH}"
+
+          git fetch origin
+          git checkout main
+          git reset --hard origin/main
+
+          docker compose build
+          docker compose run --rm app npm run migrate
+          docker compose up -d
+
+      - name: Validate production deployment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "${DEPLOY_PATH}"
+
+          docker compose ps
+
+          for attempt in {1..30}; do
+            if docker compose exec -T app node -e '
+              fetch("http://127.0.0.1:3000/health", { signal: AbortSignal.timeout(2000) })
+                .then(async (response) => {
+                  const body = await response.json();
+                  if (!response.ok || body.status !== "ok" || body.database !== "connected") {
+                    process.exit(1);
+                  }
+                  console.log(JSON.stringify(body));
+                })
+                .catch(() => process.exit(1));
+            '; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Attendance Log did not become healthy within the validation window." >&2
+          docker compose logs --tail=100 app
+          exit 1

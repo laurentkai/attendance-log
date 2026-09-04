@@ -202,6 +202,73 @@ docker compose logs --tail=100
 curl http://localhost:3000/health
 ```
 
+## Automatic production deployment
+
+The repository includes `.github/workflows/deploy.yml`. A push to `main` deploys automatically through a self-hosted GitHub Actions runner installed on the Lightsail VPS. The workflow operates directly in the existing production checkout; it does not use `actions/checkout` or maintain a second production copy.
+
+### Register the self-hosted runner
+
+1. In the GitHub repository, open **Settings > Actions > Runners** and choose **New self-hosted runner**.
+2. Select the VPS operating system and architecture, then run GitHub's generated download and registration commands on the VPS in a permanent runner directory.
+3. Add the custom label `attendance-log-production` during registration, for example by appending `--labels attendance-log-production` to GitHub's generated `./config.sh` command.
+4. Run the runner under a dedicated VPS account that can read and update the existing Attendance Log checkout and run Docker Compose. That account must also be able to authenticate `git fetch origin` for this repository.
+5. From the runner directory, install and start it as a service using the supplied service script:
+
+   ```bash
+   sudo ./svc.sh install
+   sudo ./svc.sh start
+   sudo ./svc.sh status
+   ```
+
+6. In **Settings > Secrets and variables > Actions > Variables**, create `PRODUCTION_DEPLOY_PATH` with the absolute path of the existing production checkout, for example `/opt/attendance-log`.
+7. Ensure that checkout contains the production `.env` with at least the production bind settings:
+
+   ```dotenv
+   BIND_ADDRESS=127.0.0.1
+   PORT=3000
+   NODE_ENV=production
+   ```
+
+The workflow checks that `.env` exists and is not tracked. `git reset --hard origin/main` updates tracked application files but does not remove the untracked/ignored production `.env`. The workflow never runs `docker compose down`, removes volumes, or changes deployment credentials. The `postgres_data` and `app_secrets` volumes therefore remain attached across deployments.
+
+### Deployment behavior
+
+Every push to `main` runs this sequence in `PRODUCTION_DEPLOY_PATH`:
+
+```bash
+git fetch origin
+git checkout main
+git reset --hard origin/main
+docker compose build
+docker compose run --rm app npm run migrate
+docker compose up -d
+```
+
+It then runs `docker compose ps` and checks the application's `/health` response from inside the application container. A build, migration, startup, or health failure fails the workflow. Production deployments share one concurrency group; a new deployment waits for an active deployment and does not cancel it.
+
+### Manual deployment and diagnostics
+
+- To deploy manually, open **Actions > Deploy production**, choose **Run workflow**, select `main`, and confirm the run.
+- Use the same workflow page to inspect deployment history, step output, duration, and failures.
+- On the VPS, `sudo ./svc.sh status` from the runner directory reports runner service status. Attendance Log runtime logs remain available through `docker compose logs --tail=100` in the production checkout.
+
+### Disable or remove the runner
+
+To stop automatic deployment temporarily, disable the workflow from its GitHub **Actions** page or stop the runner service from its installation directory:
+
+```bash
+sudo ./svc.sh stop
+```
+
+To remove the runner permanently, open the runner in **Settings > Actions > Runners**, choose **Remove**, and follow GitHub's generated removal instructions. Stop and uninstall the service before running the generated removal command:
+
+```bash
+sudo ./svc.sh stop
+sudo ./svc.sh uninstall
+```
+
+Removing the runner does not require deleting the Attendance Log checkout, `.env`, `postgres_data`, or `app_secrets`.
+
 ## Routine operations
 
 Restart existing containers without rebuilding:
