@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { recordAuditEvent } = require('./audit');
 const { pool, withTransaction } = require('./db/client');
 const { normalizeEmail } = require('./admin-users');
 const { sendMail } = require('./mail');
@@ -256,12 +257,17 @@ async function verifyOtp(challengeId, code) {
       `UPDATE admin_users
        SET last_login_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND active = TRUE AND account_type = 'otp'
-       RETURNING id, role, session_version`,
+       RETURNING id, public_id, name, role, session_version`,
       [challenge.user_id],
     );
     if (userResult.rowCount === 0) {
       throw new OtpError('INVALID_CODE');
     }
+    await recordAuditEvent({
+      client, actor: userResult.rows[0], category: 'security', action: 'authentication.otp.success',
+      targetType: 'admin_user', targetPublicId: userResult.rows[0].public_id,
+      targetLabel: userResult.rows[0].name, summary: 'Connexion par code e-mail réussie.',
+    });
     return { user: userResult.rows[0] };
   });
   if (result.error) throw result.error;

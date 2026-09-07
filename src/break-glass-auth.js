@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { recordAuditEvent } = require('./audit');
 const { normalizeUsername, verifyPassword } = require('./admin-users');
 const { pool, withTransaction } = require('./db/client');
 
@@ -48,7 +49,7 @@ async function authenticateBreakGlass({ username: usernameValue, password, ip })
     }
 
     const result = await client.query(
-      `SELECT id, password_hash, role, session_version
+      `SELECT id, public_id, name, password_hash, role, session_version
        FROM admin_users
        WHERE account_type = 'break_glass'
          AND LOWER(username) = LOWER($1)
@@ -76,12 +77,17 @@ async function authenticateBreakGlass({ username: usernameValue, password, ip })
       `UPDATE admin_users
        SET last_login_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND active = TRUE AND account_type = 'break_glass'
-       RETURNING id, role, session_version`,
+       RETURNING id, public_id, name, role, session_version`,
       [user.id],
     );
     if (loginResult.rowCount === 0) {
       throw new BreakGlassAuthError('INVALID_CREDENTIALS');
     }
+    await recordAuditEvent({
+      client, actor: loginResult.rows[0], category: 'security', action: 'authentication.break_glass.success',
+      targetType: 'admin_user', targetPublicId: loginResult.rows[0].public_id,
+      targetLabel: loginResult.rows[0].name, summary: 'Connexion locale d’urgence réussie.',
+    });
     return { user: loginResult.rows[0] };
   });
   if (result.error) throw result.error;

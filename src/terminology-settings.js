@@ -1,4 +1,6 @@
 const express = require('express');
+const { recordAuditEvent } = require('./audit');
+const { pool, withTransaction } = require('./db/client');
 const {
   DEFAULT_TERMINOLOGY,
   MAX_TERMINOLOGY_LENGTH,
@@ -20,6 +22,13 @@ const fieldGroups = [
   ['instructor', 'Responsable'],
   ['membership', 'Inscription'],
 ];
+
+function auditValues(values) {
+  return Object.fromEntries(fieldGroups.flatMap(([concept]) => [
+    [`${concept}_singular`, values[concept].singular],
+    [`${concept}_plural`, values[concept].plural],
+  ]));
+}
 
 function renderTerminologyPage({ values, error = '', notice = '' }) {
   const notifications = error
@@ -102,7 +111,14 @@ router.post('/', async (request, response) => {
     return;
   }
   try {
-    await saveTerminology(values);
+    await withTransaction(pool, async (client) => {
+      const before = await loadTerminology(client);
+      await saveTerminology(values, client);
+      await recordAuditEvent({
+        client, category: 'terminology', action: 'terminology.update',
+        summary: 'Terminologie métier mise à jour.', beforeData: auditValues(before), afterData: auditValues(values),
+      });
+    });
     response.redirect(303, '/settings/terminology?notice=saved');
   } catch (error) {
     console.error('Unable to save terminology settings:', error.code || error.message);
@@ -115,7 +131,14 @@ router.post('/', async (request, response) => {
 
 router.post('/reset', async (_request, response) => {
   try {
-    await resetTerminology();
+    await withTransaction(pool, async (client) => {
+      const before = await loadTerminology(client);
+      await resetTerminology(client);
+      await recordAuditEvent({
+        client, category: 'terminology', action: 'terminology.reset',
+        summary: 'Terminologie métier réinitialisée.', beforeData: auditValues(before), afterData: auditValues(DEFAULT_TERMINOLOGY),
+      });
+    });
     response.redirect(303, '/settings/terminology?notice=reset');
   } catch (error) {
     console.error('Unable to reset terminology settings:', error.code || error.message);

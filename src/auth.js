@@ -1,4 +1,5 @@
 const express = require('express');
+const { recordAuditEventSafely } = require('./audit');
 const { normalizeEmail, normalizeUsername, validateEmail } = require('./admin-users');
 const { authenticateBreakGlass } = require('./break-glass-auth');
 const { pool } = require('./db/client');
@@ -93,7 +94,7 @@ async function loadAuthenticatedUser(request, response, next) {
   if (!userId) return next();
   try {
     const result = await pool.query(
-      `SELECT id, name, email, username, account_type, role, session_version FROM admin_users WHERE id = $1 AND active = TRUE`,
+      `SELECT id, public_id, name, email, username, account_type, role, session_version FROM admin_users WHERE id = $1 AND active = TRUE`,
       [userId],
     );
     const user = result.rows[0];
@@ -231,9 +232,20 @@ router.post('/login/password', async (request, response) => {
   }
 });
 
-router.post('/logout', requireAuthentication, (request, response) => {
-  request.session.destroy((error) => {
+router.post('/logout', requireAuthentication, async (request, response) => {
+  const auditEvent = {
+    actor: request.currentUser,
+    request,
+    category: 'security',
+    action: 'authentication.logout',
+    targetType: 'admin_user',
+    targetPublicId: request.currentUser.public_id,
+    targetLabel: request.currentUser.name,
+    summary: 'Déconnexion réussie.',
+  };
+  request.session.destroy(async (error) => {
     if (error) return response.status(500).send(renderLogin({ message: 'Impossible de se déconnecter pour le moment.' }));
+    await recordAuditEventSafely(auditEvent);
     response.clearCookie('attendance_log_session');
     response.redirect(303, '/login');
   });
@@ -246,8 +258,12 @@ function requireAuthentication(request, response, next) {
 }
 
 function requirePermission(permission) {
-  return function permissionMiddleware(request, response, next) {
+  return async function permissionMiddleware(request, response, next) {
     if (hasPermission(request.currentUser, permission)) return next();
+    await recordAuditEventSafely({
+      category: 'security', action: 'authorization.denied', result: 'denied',
+      summary: 'Accès refusé par la politique d’autorisation.', metadata: { reason: permission },
+    });
     if (wantsJson(request)) return response.status(403).json({ error: 'Vous n’avez pas accès à cette fonctionnalité.' });
     const page = renderMessagePage('Accès refusé', 'Vous n’avez pas accès à cette fonctionnalité.', 403);
     response.status(page.status).send(page.html);

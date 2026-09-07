@@ -13,6 +13,7 @@ const permissions = Object.freeze({
   viewReporting: 'reporting.view',
   manageSettings: 'settings.manage',
   manageUsers: 'users.manage',
+  viewAuditLog: 'audit.view',
 });
 
 const rolePermissions = Object.freeze({

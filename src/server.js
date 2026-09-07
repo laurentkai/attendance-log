@@ -12,6 +12,7 @@ const {
   router: authRouter,
 } = require('./auth');
 const adminUserSettingsRouter = require('./admin-user-settings');
+const auditSettingsRouter = require('./audit-settings');
 const backupSettingsRouter = require('./backup-settings');
 const brandingSettingsRouter = require('./branding-settings');
 const { getStoredBackupSecretStatus, startBackupScheduler } = require('./backup');
@@ -154,6 +155,7 @@ app.use('/settings/branding', requirePermission(permissions.manageSettings), bra
 app.use('/settings/maintenance', requirePermission(permissions.manageSettings), maintenanceSettingsRouter);
 app.use('/settings/terminology', requirePermission(permissions.manageSettings), terminologySettingsRouter);
 app.use('/settings/users', requirePermission(permissions.manageUsers), adminUserSettingsRouter);
+app.use('/settings/audit', requirePermission(permissions.viewAuditLog), auditSettingsRouter);
 app.use('/reporting', requirePermission(permissions.viewReporting), reportingRouter);
 app.use('/students/import', requirePermission(permissions.manageStudents), studentImportRouter);
 app.use('/students/qr-print', requirePermission(permissions.manageStudents), studentQrPrintRouter);

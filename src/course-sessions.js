@@ -1,4 +1,5 @@
 const express = require('express');
+const { recordAuditEvent } = require('./audit');
 const { requirePermission } = require('./auth');
 const { pool, withTransaction } = require('./db/client');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
@@ -379,14 +380,20 @@ router.post('/', requireSessionManagement, async (request, response) => {
   }
 
   try {
-    const result = await pool.query(
-      `INSERT INTO course_sessions (class_id, date, title, instructor, notes)
-       SELECT c.id, $2, $3, $4, $5
-       FROM classes c
-       WHERE c.public_id = $1
-       RETURNING public_id`,
-      [values.class_id, values.date, values.title, values.instructor, values.notes || null],
-    );
+    const result = await withTransaction(pool, async (client) => {
+      const inserted = await client.query(
+        `INSERT INTO course_sessions (class_id, date, title, instructor, notes)
+         SELECT c.id, $2, $3, $4, $5 FROM classes c WHERE c.public_id = $1
+         RETURNING public_id`,
+        [values.class_id, values.date, values.title, values.instructor, values.notes || null],
+      );
+      if (inserted.rowCount > 0) await recordAuditEvent({
+        client, category: 'session', action: 'session.create', targetType: 'session',
+        targetPublicId: inserted.rows[0].public_id, targetLabel: values.title,
+        summary: 'Session créée.', afterData: { date: values.date, title: values.title, instructor: values.instructor, notes: values.notes || null, state: 'scheduled' },
+      });
+      return inserted;
+    });
     if (result.rowCount === 0) {
       const classes = await getClasses();
       response.status(400).send(renderSessionForm({
@@ -499,13 +506,23 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   }
 
   try {
-    const result = await pool.query(
-      `UPDATE course_sessions
-       SET date = $1, title = $2, instructor = $3, notes = $4
-       WHERE id = $5 AND class_id = (SELECT id FROM classes WHERE public_id = $6) AND state IN ('scheduled', 'open')
-       RETURNING id`,
-      [values.date, values.title, values.instructor, values.notes || null, request.courseSessionId, values.class_id],
-    );
+    const result = await withTransaction(pool, async (client) => {
+      const current = await client.query('SELECT public_id, date, title, instructor, notes, state FROM course_sessions WHERE id = $1 FOR UPDATE', [request.courseSessionId]);
+      if (current.rowCount === 0) return current;
+      const updated = await client.query(
+        `UPDATE course_sessions SET date = $1, title = $2, instructor = $3, notes = $4
+         WHERE id = $5 AND class_id = (SELECT id FROM classes WHERE public_id = $6) AND state IN ('scheduled', 'open')
+         RETURNING id`,
+        [values.date, values.title, values.instructor, values.notes || null, request.courseSessionId, values.class_id],
+      );
+      if (updated.rowCount > 0) await recordAuditEvent({
+        client, category: 'session', action: 'session.update', targetType: 'session',
+        targetPublicId: current.rows[0].public_id, targetLabel: values.title, summary: 'Session mise à jour.',
+        beforeData: { date: current.rows[0].date, title: current.rows[0].title, instructor: current.rows[0].instructor, notes: current.rows[0].notes },
+        afterData: { date: values.date, title: values.title, instructor: values.instructor, notes: values.notes || null },
+      });
+      return updated;
+    });
     if (result.rowCount === 0) {
       const sessionResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.courseSessionId]);
       const page = sessionResult.rows[0]?.state === 'closed'
@@ -842,6 +859,13 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
         };
       }
 
+      if (result.changed) await recordAuditEvent({
+        client, category: 'attendance', action: 'attendance.qr.present', targetType: 'student',
+        targetPublicId: student.public_id, targetLabel: `${student.first_name} ${student.last_name}`,
+        summary: 'Présence enregistrée par QR.', beforeData: { status: result.previousStatus }, afterData: { status: 'present' },
+        metadata: { source: 'quick_attendance' },
+      });
+
       const { allowed: _allowed, studentId: _studentId, ...attendanceResult } = result;
       return {
         status: 200,
@@ -873,11 +897,19 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
   }
 
   try {
-    const result = await withTransaction(pool, (client) => markStudentPresent(
-      client,
-      request.courseSessionId,
-      request.studentId,
-    ));
+    const result = await withTransaction(pool, async (client) => {
+      const attendance = await markStudentPresent(client, request.courseSessionId, request.studentId);
+      if (attendance.changed) {
+        const student = await client.query('SELECT first_name, last_name FROM students WHERE id = $1', [request.studentId]);
+        await recordAuditEvent({
+          client, category: 'attendance', action: 'attendance.quick.present', targetType: 'student',
+          targetPublicId: request.params.studentId, targetLabel: student.rowCount ? `${student.rows[0].first_name} ${student.rows[0].last_name}` : null,
+          summary: 'Présence enregistrée en mode rapide.', beforeData: { status: attendance.previousStatus }, afterData: { status: 'present' },
+          metadata: { source: 'quick_attendance' },
+        });
+      }
+      return attendance;
+    });
     if (!result.allowed) {
       response.status(409).json({
         error: `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte et la personne doit être active et admissible.`,
@@ -929,6 +961,15 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
          RETURNING status`,
         [previousStatus, request.courseSessionId, request.studentId, expectedVersion],
       );
+      if (updateResult.rowCount > 0) {
+        const student = await client.query('SELECT first_name, last_name FROM students WHERE id = $1', [request.studentId]);
+        await recordAuditEvent({
+          client, category: 'attendance', action: 'attendance.undo', targetType: 'student',
+          targetPublicId: request.params.studentId, targetLabel: student.rowCount ? `${student.rows[0].first_name} ${student.rows[0].last_name}` : null,
+          summary: 'Dernière présence rapide annulée.', beforeData: { status: 'present' }, afterData: { status: previousStatus },
+          metadata: { source: 'quick_attendance' },
+        });
+      }
       return { status: updateResult.rowCount > 0 ? 'updated' : 'stale' };
     });
     if (outcome.status === 'not_allowed') {
@@ -974,6 +1015,8 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
         request.studentId,
       );
       if (allowedResult.rowCount === 0) return false;
+      const previousResult = await client.query('SELECT status FROM attendance_records WHERE session_id = $1 AND student_id = $2 FOR UPDATE', [request.courseSessionId, request.studentId]);
+      const previousStatus = previousResult.rows[0]?.status || 'pending';
       await client.query(
         `INSERT INTO attendance_records (session_id, student_id, status)
          VALUES ($1, $2, $3)
@@ -981,6 +1024,13 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
          DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP`,
         [request.courseSessionId, request.studentId, request.body.status],
       );
+      const student = await client.query('SELECT first_name, last_name FROM students WHERE id = $1', [request.studentId]);
+      await recordAuditEvent({
+        client, category: 'attendance', action: 'attendance.manual.update', targetType: 'student',
+        targetPublicId: request.params.studentId, targetLabel: student.rowCount ? `${student.rows[0].first_name} ${student.rows[0].last_name}` : null,
+        summary: 'Présence modifiée manuellement.', beforeData: { status: previousStatus }, afterData: { status: request.body.status },
+        metadata: { source: 'attendance_page' },
+      });
       return true;
     });
     if (!updated) {
@@ -1011,7 +1061,7 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
   try {
     const outcome = await withTransaction(pool, async (client) => {
       const sessionResult = await client.query(
-        'SELECT id, class_id, state, closed_at FROM course_sessions WHERE id = $1 FOR UPDATE',
+        'SELECT id, public_id, title, class_id, state, closed_at FROM course_sessions WHERE id = $1 FOR UPDATE',
         [request.courseSessionId],
       );
       if (sessionResult.rowCount === 0) return 'not_found';
@@ -1047,6 +1097,11 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
          WHERE id = $1`,
         [request.courseSessionId],
       );
+      await recordAuditEvent({
+        client, category: 'session', action: 'session.close', targetType: 'session',
+        targetPublicId: sessionResult.rows[0].public_id, targetLabel: sessionResult.rows[0].title,
+        summary: 'Session clôturée.', beforeData: { state: 'open' }, afterData: { state: 'closed' },
+      });
       return 'closed';
     });
     if (outcome === 'not_found') {
@@ -1077,7 +1132,7 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
   try {
     const outcome = await withTransaction(pool, async (client) => {
       const sessionResult = await client.query(
-        'SELECT id, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
+        'SELECT id, public_id, title, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
         [request.courseSessionId],
       );
       if (sessionResult.rowCount > 0) {
@@ -1090,7 +1145,16 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
          RETURNING id`,
         [request.courseSessionId],
       );
-      if (result.rowCount > 0) return 'opened';
+      if (result.rowCount > 0) {
+        const previousState = sessionResult.rows[0].state;
+        await recordAuditEvent({
+          client, category: 'session', action: previousState === 'closed' ? 'session.reopen' : 'session.open', targetType: 'session',
+          targetPublicId: sessionResult.rows[0].public_id, targetLabel: sessionResult.rows[0].title,
+          summary: previousState === 'closed' ? 'Session rouverte.' : 'Session ouverte.',
+          beforeData: { state: previousState }, afterData: { state: 'open' },
+        });
+        return 'opened';
+      }
       return sessionResult.rowCount > 0 ? 'already_open' : 'not_found';
     });
     if (outcome === 'already_open') {

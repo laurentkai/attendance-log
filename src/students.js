@@ -1,4 +1,5 @@
 const express = require('express');
+const { recordAuditEvent } = require('./audit');
 const { pool, withTransaction } = require('./db/client');
 const { sendMail } = require('./mail');
 const { getEffectiveLogoForStudent } = require('./branding');
@@ -297,6 +298,13 @@ router.post('/', async (request, response) => {
       }
       const student = await insertStudent(client, values);
       await addMemberships(client, student.id, selectedClassIds);
+      await recordAuditEvent({
+        client, category: 'student', action: 'student.create', targetType: 'student',
+        targetPublicId: student.public_id, targetLabel: `${values.firstName} ${values.lastName}`,
+        summary: 'Fiche participant créée.',
+        afterData: { name: `${values.firstName} ${values.lastName}`, email: values.email, active: true },
+        metadata: { counts: { memberships: selectedClassIds.length } },
+      });
     });
     response.redirect(303, '/students?notice=created');
   } catch (error) {
@@ -508,7 +516,7 @@ router.post('/:id', async (request, response) => {
   values.active = request.body.active === 'true';
   const selectedClassIds = getSelectedClassIds(request.body);
   const classes = await loadClasses();
-  const currentResult = await pool.query('SELECT id, student_code FROM students WHERE public_id = $1', [request.params.id]);
+  const currentResult = await pool.query('SELECT id, public_id, first_name, last_name, email, active, student_code FROM students WHERE public_id = $1', [request.params.id]);
 
   if (currentResult.rowCount === 0) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
@@ -583,6 +591,15 @@ router.post('/:id', async (request, response) => {
         );
       }
       await addMemberships(client, currentResult.rows[0].id, selectedClassIds);
+      const current = currentResult.rows[0];
+      await recordAuditEvent({
+        client, category: 'student', action: !current.active && values.active ? 'student.reactivate' : current.active && !values.active ? 'student.deactivate' : 'student.update', targetType: 'student',
+        targetPublicId: current.public_id, targetLabel: `${values.firstName} ${values.lastName}`,
+        summary: 'Fiche participant mise à jour.',
+        beforeData: { name: `${current.first_name} ${current.last_name}`, email: current.email, active: current.active },
+        afterData: { name: `${values.firstName} ${values.lastName}`, email: values.email, active: values.active },
+        metadata: { counts: { memberships: selectedClassIds.length } },
+      });
       return {};
     });
     if (outcome.protectedClassName) {
@@ -643,9 +660,17 @@ router.post('/:id/deactivate', async (request, response) => {
         [request.params.id],
       );
       const result = await client.query(
-        'UPDATE students SET active = FALSE WHERE public_id = $1 AND active = TRUE RETURNING id',
+        'UPDATE students SET active = FALSE WHERE public_id = $1 AND active = TRUE RETURNING public_id, first_name, last_name',
         [request.params.id],
       );
+      if (result.rowCount > 0) {
+        const student = result.rows[0];
+        await recordAuditEvent({
+          client, category: 'student', action: 'student.deactivate', targetType: 'student',
+          targetPublicId: student.public_id, targetLabel: `${student.first_name} ${student.last_name}`,
+          summary: 'Fiche participant désactivée.', beforeData: { active: true }, afterData: { active: false },
+        });
+      }
       return result.rowCount > 0;
     });
     if (!changed) {

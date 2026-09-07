@@ -1,4 +1,5 @@
 const express = require('express');
+const { recordAuditEventSafely } = require('./audit');
 const multer = require('multer');
 const { pool } = require('./db/client');
 const { getStoredBackupSecretStatus } = require('./backup');
@@ -146,12 +147,14 @@ router.get('/', async (request, response) => {
   }
 });
 
-router.post('/key', (_request, response) => {
+router.post('/key', async (_request, response) => {
+  await recordAuditEventSafely({ category: 'security', action: 'security.recovery_key.view', summary: 'Clé de récupération affichée.' });
   response.set('Cache-Control', 'no-store');
   response.json({ key: getRecoveryKey(), fingerprint: getKeyInfo().fingerprint });
 });
 
-router.post('/key/export', (_request, response) => {
+router.post('/key/export', async (_request, response) => {
+  await recordAuditEventSafely({ category: 'security', action: 'security.recovery_key.export', summary: 'Clé de récupération exportée.' });
   response.set({
     'Cache-Control': 'no-store',
     'Content-Disposition': 'attachment; filename="attendance-log-recovery-key.txt"',
@@ -191,8 +194,10 @@ router.post('/key/import', (request, response) => {
         encryptedValues: await getEncryptedSecrets(),
         confirmed: true,
       });
+      await recordAuditEventSafely({ category: 'security', action: 'security.recovery_key.import', summary: 'Clé de récupération importée et activée.' });
       response.redirect(303, '/settings/security?notice=imported');
     } catch (error) {
+      await recordAuditEventSafely({ category: 'security', action: 'security.recovery_key.import', result: 'failed', summary: 'Échec de l’import de la clé de récupération.', metadata: { error_code: error.code || 'IMPORT_FAILED' } });
       console.error('Unable to import recovery key:', error.code || 'IMPORT_FAILED');
       try {
         response.status(400).send(renderSecurityPage({

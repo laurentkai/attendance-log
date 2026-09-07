@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const { recordAuditEvent } = require('./audit');
 const {
   getClassLogo,
   logoUpload,
@@ -201,10 +202,17 @@ router.post('/', async (request, response) => {
   }
 
   try {
-    await pool.query(
-      'INSERT INTO classes (name, description) VALUES ($1, $2)',
-      [values.name, values.description || null],
-    );
+    await withTransaction(pool, async (client) => {
+      const result = await client.query(
+        'INSERT INTO classes (name, description) VALUES ($1, $2) RETURNING public_id',
+        [values.name, values.description || null],
+      );
+      await recordAuditEvent({
+        client, category: 'class', action: 'class.create', targetType: 'class',
+        targetPublicId: result.rows[0].public_id, targetLabel: values.name,
+        summary: 'Activité créée.', afterData: { name: values.name, description: values.description || null },
+      });
+    });
     response.redirect(303, '/classes?notice=created');
   } catch (error) {
     console.error('Unable to create class:', error);
@@ -391,7 +399,7 @@ router.post('/:id/students', async (request, response) => {
 
   try {
     const outcome = await withTransaction(pool, async (client) => {
-      const classResult = await client.query('SELECT id, public_id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      const classResult = await client.query('SELECT id, public_id, name FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
       if (classResult.rowCount === 0) return { status: 'not_found' };
       if (studentIds.length === 0) return { status: 'empty' };
 
@@ -403,6 +411,11 @@ router.post('/:id/students', async (request, response) => {
          ON CONFLICT DO NOTHING`,
         [classResult.rows[0].id, studentIds],
       );
+      if (result.rowCount > 0) await recordAuditEvent({
+        client, category: 'class', action: 'membership.add', targetType: 'class',
+        targetPublicId: classResult.rows[0].public_id, targetLabel: classResult.rows[0].name,
+        summary: 'Participants ajoutés à l’activité.', metadata: { counts: { memberships: result.rowCount } },
+      });
       return { status: result.rowCount > 0 ? 'added' : 'empty' };
     });
     if (outcome.status === 'not_found') {
@@ -431,7 +444,7 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
 
   try {
     const outcome = await withTransaction(pool, async (client) => {
-      const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      const classResult = await client.query('SELECT id, public_id, name FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
       if (classResult.rowCount === 0) return { status: 'class_not_found' };
       const startedResult = await client.query(
         'SELECT 1 FROM course_sessions WHERE class_id = $1 AND started_at IS NOT NULL LIMIT 1',
@@ -448,6 +461,11 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
          RETURNING sc.student_id`,
         [classResult.rows[0].id, request.params.studentId],
       );
+      if (result.rowCount > 0) await recordAuditEvent({
+        client, category: 'class', action: 'membership.remove', targetType: 'class',
+        targetPublicId: classResult.rows[0].public_id, targetLabel: classResult.rows[0].name,
+        summary: 'Participant retiré de l’activité.', metadata: { counts: { memberships: 1 } },
+      });
       return { status: result.rowCount > 0 ? 'removed' : 'membership_not_found' };
     });
     if (outcome.status === 'class_not_found') {
@@ -486,7 +504,7 @@ async function updateMembershipActivity(request, response, active) {
 
   try {
     const outcome = await withTransaction(pool, async (client) => {
-      const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      const classResult = await client.query('SELECT id, public_id, name FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
       if (classResult.rowCount === 0) return { status: 'class_not_found' };
       const result = await client.query(
         `UPDATE student_classes sc
@@ -499,6 +517,12 @@ async function updateMembershipActivity(request, response, active) {
          RETURNING sc.student_id`,
         [classResult.rows[0].id, request.params.studentId, active],
       );
+      if (result.rowCount > 0) await recordAuditEvent({
+        client, category: 'class', action: active ? 'membership.reactivate' : 'membership.deactivate', targetType: 'class',
+        targetPublicId: classResult.rows[0].public_id, targetLabel: classResult.rows[0].name,
+        summary: active ? 'Inscription réactivée.' : 'Inscription désactivée.',
+        beforeData: { active: !active }, afterData: { active }, metadata: { counts: { memberships: 1 } },
+      });
       return { status: result.rowCount > 0 ? 'updated' : 'membership_not_found' };
     });
     if (outcome.status === 'class_not_found') {
@@ -596,7 +620,20 @@ router.post('/:id/logo', (request, response) => {
     }
     try {
       const logo = await normalizeLogoUpload(request.file);
-      if (!await saveClassLogo(request.params.id, logo)) {
+      const saved = await withTransaction(pool, async (client) => {
+        const current = await getClassLogo(request.params.id, client);
+        if (current === undefined) return false;
+        await saveClassLogo(request.params.id, logo, client);
+        const classResult = await client.query('SELECT name FROM classes WHERE public_id = $1', [request.params.id]);
+        await recordAuditEvent({
+          client, category: 'branding', action: current ? 'class.logo.replace' : 'class.logo.add', targetType: 'class',
+          targetPublicId: request.params.id, targetLabel: classResult.rows[0].name,
+          summary: current ? 'Logo de l’activité remplacé.' : 'Logo de l’activité ajouté.',
+          metadata: { logo_change: current ? 'replaced' : 'added' },
+        });
+        return true;
+      });
+      if (!saved) {
         const page = renderClassNotFoundPage();
         response.status(page.status).send(page.html);
         return;
@@ -620,7 +657,19 @@ router.post('/:id/logo/remove', async (request, response) => {
     return;
   }
   try {
-    if (!await removeClassLogo(request.params.id)) {
+    const removed = await withTransaction(pool, async (client) => {
+      const current = await getClassLogo(request.params.id, client);
+      if (current === undefined) return false;
+      await removeClassLogo(request.params.id, client);
+      const classResult = await client.query('SELECT name FROM classes WHERE public_id = $1', [request.params.id]);
+      await recordAuditEvent({
+        client, category: 'branding', action: 'class.logo.remove', targetType: 'class',
+        targetPublicId: request.params.id, targetLabel: classResult.rows[0].name,
+        summary: 'Logo de l’activité supprimé.', metadata: { logo_change: 'removed' },
+      });
+      return true;
+    });
+    if (!removed) {
       const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
@@ -669,10 +718,20 @@ router.post('/:id', async (request, response) => {
   }
 
   try {
-    const result = await pool.query(
-      'UPDATE classes SET name = $1, description = $2 WHERE public_id = $3 RETURNING id',
-      [values.name, values.description || null, request.params.id],
-    );
+    const result = await withTransaction(pool, async (client) => {
+      const current = await client.query('SELECT public_id, name, description FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      if (current.rowCount === 0) return current;
+      const updated = await client.query(
+        'UPDATE classes SET name = $1, description = $2 WHERE public_id = $3 RETURNING id',
+        [values.name, values.description || null, request.params.id],
+      );
+      await recordAuditEvent({
+        client, category: 'class', action: 'class.update', targetType: 'class',
+        targetPublicId: request.params.id, targetLabel: values.name, summary: 'Activité mise à jour.',
+        beforeData: { name: current.rows[0].name, description: current.rows[0].description }, afterData: { name: values.name, description: values.description || null },
+      });
+      return updated;
+    });
 
     if (result.rowCount === 0) {
       const page = renderClassNotFoundPage();
@@ -703,10 +762,18 @@ router.post('/:id/delete', async (request, response) => {
   }
 
   try {
-    const result = await pool.query(
-      'DELETE FROM classes WHERE public_id = $1 RETURNING id',
-      [request.params.id],
-    );
+    const result = await withTransaction(pool, async (client) => {
+      const deleted = await client.query(
+        'DELETE FROM classes WHERE public_id = $1 RETURNING public_id, name',
+        [request.params.id],
+      );
+      if (deleted.rowCount > 0) await recordAuditEvent({
+        client, category: 'class', action: 'class.delete', targetType: 'class',
+        targetPublicId: deleted.rows[0].public_id, targetLabel: deleted.rows[0].name,
+        summary: 'Activité supprimée.', beforeData: { name: deleted.rows[0].name },
+      });
+      return deleted;
+    });
 
     if (result.rowCount === 0) {
       const page = renderClassNotFoundPage();

@@ -1,4 +1,5 @@
 const express = require('express');
+const { recordAuditEvent, recordAuditEventSafely } = require('./audit');
 const {
   createAdminUser,
   hashPassword,
@@ -185,11 +186,28 @@ router.get('/new', (_request, response) => response.send(renderCreatePage()));
 router.post('/', async (request, response) => {
   const values = normalValues(request.body);
   try {
-    const user = await createAdminUser(values);
+    const user = await withTransaction(pool, async (client) => {
+      const created = await createAdminUser(values, client);
+      await recordAuditEvent({
+        client, category: 'user', action: 'user.create', targetType: 'admin_user',
+        targetPublicId: created.public_id, targetLabel: created.name, summary: 'Compte utilisateur créé.',
+        afterData: { name: created.name, email: created.email, role: created.role, active: created.active },
+      });
+      return created;
+    });
     try {
       await sendAdminInvitation(user.id);
+      await recordAuditEventSafely({
+        category: 'user', action: 'user.invitation.send', targetType: 'admin_user',
+        targetPublicId: user.public_id, targetLabel: user.name, summary: 'Invitation utilisateur envoyée.',
+      });
       response.redirect(303, '/settings/users?notice=created_invited');
     } catch (invitationError) {
+      await recordAuditEventSafely({
+        category: 'user', action: 'user.invitation.send', targetType: 'admin_user',
+        targetPublicId: user.public_id, targetLabel: user.name, result: 'failed',
+        summary: 'Échec de l’envoi de l’invitation utilisateur.', metadata: { error_code: invitationError.code || 'DELIVERY_FAILED' },
+      });
       console.warn('Administrator account created but invitation delivery failed:', invitationError.code || 'DELIVERY_FAILED');
       response.redirect(303, '/settings/users?notice=created_invitation_failed');
     }
@@ -206,8 +224,20 @@ router.post('/:id/invitation', async (request, response) => {
     const user = await findUser(request.params.id);
     if (!user) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
     await sendAdminInvitation(user.id);
+    await recordAuditEventSafely({
+      category: 'user', action: 'user.invitation.resend', targetType: 'admin_user',
+      targetPublicId: user.public_id, targetLabel: user.name, summary: 'Invitation utilisateur renvoyée.',
+    });
     response.redirect(303, '/settings/users?notice=invitation_sent');
   } catch (error) {
+    if (isValidPublicId(request.params.id)) {
+      const user = await findUser(request.params.id).catch(() => null);
+      if (user) await recordAuditEventSafely({
+        category: 'user', action: 'user.invitation.resend', targetType: 'admin_user',
+        targetPublicId: user.public_id, targetLabel: user.name, result: error.code === 'INVITATION_RATE_LIMITED' || error.code === 'USER_INACTIVE' ? 'denied' : 'failed',
+        summary: 'Invitation utilisateur non envoyée.', metadata: { reason: error.code || 'DELIVERY_FAILED' },
+      });
+    }
     const notice = error.code === 'INVITATION_RATE_LIMITED'
       ? 'invitation_rate_limited'
       : error.code === 'USER_INACTIVE'
@@ -271,6 +301,13 @@ router.post('/:id', async (request, response) => {
              updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
           [name, username, passwordHash, target.id],
         );
+        await recordAuditEvent({
+          client, category: 'user', action: password ? 'user.break_glass.password_change' : 'user.edit', targetType: 'admin_user',
+          targetPublicId: target.public_id, targetLabel: name, summary: password ? 'Mot de passe du compte d’urgence modifié.' : 'Compte d’urgence modifié.',
+          beforeData: { name: target.name, username: target.username },
+          afterData: { name, username },
+          metadata: password ? { changed_fields: ['password'] } : null,
+        });
         return { status: 303 };
       }
 
@@ -281,6 +318,11 @@ router.post('/:id', async (request, response) => {
       const removesLastAdmin = target.role === roles.administrator && target.active
         && (!values.active || values.role !== roles.administrator) && activeAdmins.rowCount === 1;
       if (removesLastAdmin) {
+        await recordAuditEvent({
+          client, category: 'user', action: 'user.edit', targetType: 'admin_user',
+          targetPublicId: target.public_id, targetLabel: target.name, result: 'denied',
+          summary: 'Modification refusée pour protéger le dernier administrateur actif.', metadata: { reason: 'LAST_ACTIVE_ADMINISTRATOR' },
+        });
         return { status: 409, edited, validationError: 'Le dernier administrateur actif ne peut pas être désactivé ni changer de rôle.' };
       }
       await client.query(
@@ -289,6 +331,12 @@ router.post('/:id', async (request, response) => {
            updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
         [values.name, values.email, values.role, values.active, target.id],
       );
+      await recordAuditEvent({
+        client, category: 'user', action: target.active !== values.active ? (values.active ? 'user.activate' : 'user.deactivate') : target.role !== values.role ? 'user.role_change' : 'user.edit',
+        targetType: 'admin_user', targetPublicId: target.public_id, targetLabel: values.name, summary: 'Compte utilisateur modifié.',
+        beforeData: { name: target.name, email: target.email, role: target.role, active: target.active },
+        afterData: { name: values.name, email: values.email, role: values.role, active: values.active },
+      });
       return { status: 303 };
     });
     if (outcome.status === 404) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
@@ -305,7 +353,15 @@ router.post('/:id', async (request, response) => {
 router.post('/:id/revoke-sessions', async (request, response) => {
   if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   try {
-    const result = await pool.query('UPDATE admin_users SET session_version = session_version + 1, updated_at = CURRENT_TIMESTAMP WHERE public_id = $1 RETURNING id', [request.params.id]);
+    const result = await withTransaction(pool, async (client) => {
+      const updated = await client.query('UPDATE admin_users SET session_version = session_version + 1, updated_at = CURRENT_TIMESTAMP WHERE public_id = $1 RETURNING id, public_id, name', [request.params.id]);
+      if (updated.rowCount > 0) await recordAuditEvent({
+        client, category: 'user', action: 'user.sessions.revoke', targetType: 'admin_user',
+        targetPublicId: updated.rows[0].public_id, targetLabel: updated.rows[0].name,
+        summary: 'Toutes les sessions du compte ont été révoquées.',
+      });
+      return updated;
+    });
     if (result.rowCount === 0) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
     if (String(request.currentUser.id) === String(result.rows[0].id)) {
       request.session.destroy((error) => {
@@ -331,15 +387,27 @@ router.post('/:id/delete', async (request, response) => {
   try {
     const outcome = await withTransaction(pool, async (client) => {
       const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
-      const targetResult = await client.query('SELECT id, account_type, role, active FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      const targetResult = await client.query('SELECT id, public_id, name, email, account_type, role, active FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
       if (targetResult.rowCount === 0) return { status: 404 };
       const target = targetResult.rows[0];
-      if (target.account_type === 'break_glass') return { status: 403 };
-      if (String(target.id) === String(request.currentUser.id)) return { status: 409, self: true };
+      if (target.account_type === 'break_glass') {
+        await recordAuditEvent({ client, category: 'user', action: 'user.delete', targetType: 'admin_user', targetPublicId: target.public_id, targetLabel: target.name, result: 'denied', summary: 'Suppression du compte d’urgence refusée.', metadata: { reason: 'BREAK_GLASS_PROTECTED' } });
+        return { status: 403 };
+      }
+      if (String(target.id) === String(request.currentUser.id)) {
+        await recordAuditEvent({ client, category: 'user', action: 'user.delete', targetType: 'admin_user', targetPublicId: target.public_id, targetLabel: target.name, result: 'denied', summary: 'Auto-suppression du compte connecté refusée.', metadata: { reason: 'SELF_DELETE_PROTECTED' } });
+        return { status: 409, self: true };
+      }
       if (target.role === roles.administrator && target.active && activeAdmins.rowCount === 1) {
+        await recordAuditEvent({ client, category: 'user', action: 'user.delete', targetType: 'admin_user', targetPublicId: target.public_id, targetLabel: target.name, result: 'denied', summary: 'Suppression refusée pour protéger le dernier administrateur actif.', metadata: { reason: 'LAST_ACTIVE_ADMINISTRATOR' } });
         return { status: 409, lastAdmin: true };
       }
       await client.query("DELETE FROM admin_users WHERE id = $1 AND account_type = 'otp'", [target.id]);
+      await recordAuditEvent({
+        client, category: 'user', action: 'user.delete', targetType: 'admin_user',
+        targetPublicId: target.public_id, targetLabel: target.name, summary: 'Compte utilisateur supprimé.',
+        beforeData: { name: target.name, email: target.email, role: target.role, active: target.active },
+      });
       return { status: 303 };
     });
     if (outcome.status === 404) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);

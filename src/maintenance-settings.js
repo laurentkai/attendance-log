@@ -1,4 +1,5 @@
 const express = require('express');
+const { recordAuditEventSafely } = require('./audit');
 const { createManualDownload } = require('./backup');
 const {
   getOperationalDataCounts,
@@ -158,7 +159,8 @@ router.post('/safety-download', async (request, response) => {
 });
 
 router.post('/reset', async (request, response) => {
-  if (request.body.understood !== 'yes' || request.body.confirmation !== 'EFFACER') {
+    if (request.body.understood !== 'yes' || request.body.confirmation !== 'EFFACER') {
+    await recordAuditEventSafely({ category: 'maintenance', action: 'operational_data.reset', result: 'denied', summary: 'Réinitialisation des données métier refusée faute de confirmation.', metadata: { reason: 'RESET_CONFIRMATION_REQUIRED' } });
     return renderCurrent(response, request, {
       type: 'error', message: resetErrorMessage('RESET_CONFIRMATION_REQUIRED'),
     }, 400);
@@ -184,6 +186,7 @@ router.post('/reset', async (request, response) => {
       console.warn('Cloud safety backup unavailable for operational reset:', error.causeCode);
     }
     console.error('Operational data reset failed:', error.code || 'RESET_FAILED');
+    await recordAuditEventSafely({ category: 'maintenance', action: 'operational_data.reset', result: error.code === 'RESET_SAFETY_BACKUP_REQUIRED' || error.code === 'RESET_IN_PROGRESS' || error.code === 'BACKUP_IN_PROGRESS' ? 'denied' : 'failed', summary: 'Réinitialisation des données métier non exécutée.', metadata: { reason: error.code || 'RESET_FAILED' } });
     const conflictCodes = new Set([
       'BACKUP_IN_PROGRESS',
       'RESET_IN_PROGRESS',

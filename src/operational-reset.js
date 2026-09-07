@@ -1,4 +1,5 @@
 const { pool } = require('./db/client');
+const { recordAuditEvent } = require('./audit');
 const {
   loadBackupConfiguration,
   runCloudBackup,
@@ -58,6 +59,10 @@ async function deleteOperationalData() {
       const result = await client.query(`DELETE FROM ${table}`);
       counts[key] = result.rowCount;
     }
+    await recordAuditEvent({
+      client, category: 'maintenance', action: 'operational_data.reset',
+      summary: 'Données métier réinitialisées.', metadata: { counts },
+    });
     await client.query('COMMIT');
     return counts;
   } catch (error) {

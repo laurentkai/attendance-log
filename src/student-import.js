@@ -1,4 +1,5 @@
 const express = require('express');
+const { recordAuditEventSafely } = require('./audit');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
 const { pool, withTransaction } = require('./db/client');
@@ -186,20 +187,22 @@ router.post('/', receiveCsvFile, async (request, response) => {
     }
 
     try {
-      await withTransaction(pool, async (client) => {
+      const outcome = await withTransaction(pool, async (client) => {
         await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [selectedClass.id]);
         const existingResult = await client.query(
           'SELECT id FROM students WHERE LOWER(email) = LOWER($1) FOR UPDATE',
           [values.email],
         );
         let studentId;
+        let created = 0;
+        let matchedExisting = 0;
         if (existingResult.rowCount > 0) {
           studentId = existingResult.rows[0].id;
-          summary.matchedExisting += 1;
+          matchedExisting = 1;
         } else {
           const student = await insertStudent(client, values);
           studentId = student.id;
-          summary.created += 1;
+          created = 1;
         }
 
         const membershipResult = await client.query(
@@ -210,13 +213,30 @@ router.post('/', receiveCsvFile, async (request, response) => {
            WHERE student_classes.active = FALSE`,
           [studentId, selectedClass.id],
         );
-        summary.newlyAssigned += membershipResult.rowCount;
+        return { created, matchedExisting, newlyAssigned: membershipResult.rowCount };
       });
+      summary.created += outcome.created;
+      summary.matchedExisting += outcome.matchedExisting;
+      summary.newlyAssigned += outcome.newlyAssigned;
     } catch (error) {
-      console.error('Unable to import CSV row:', error);
+      console.error('Unable to import CSV row:', error.code || 'DATABASE_ERROR');
       summary.skipped += 1;
     }
   }
+
+  await recordAuditEventSafely({
+    category: 'import', action: 'student.import', targetType: 'class',
+    targetPublicId: selectedClass.public_id, targetLabel: selectedClass.name,
+    summary: 'Import CSV de participants terminé.',
+    metadata: {
+      counts: {
+        created: summary.created,
+        matched_existing: summary.matchedExisting,
+        newly_assigned: summary.newlyAssigned,
+        skipped: summary.skipped,
+      },
+    },
+  });
 
   response.send(renderImportPage({ classes, selectedClassId, summary }));
 });

@@ -39,7 +39,7 @@ async function insertStudent(client, values) {
       const result = await client.query(
         `INSERT INTO students (first_name, last_name, email, student_code)
          VALUES ($1, $2, $3, $4)
-         RETURNING id, student_code`,
+         RETURNING id, public_id, student_code`,
         [values.firstName, values.lastName, values.email, studentCode],
       );
       await client.query('RELEASE SAVEPOINT student_code_generation');

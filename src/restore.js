@@ -8,6 +8,7 @@ const { pipeline } = require('node:stream/promises');
 const { Transform } = require('node:stream');
 const { Client } = require('pg');
 const unzipper = require('unzipper');
+const { recordAuditEvent, recordAuditEventSafely } = require('./audit');
 const { pool } = require('./db/client');
 const {
   BackupError,
@@ -24,6 +25,7 @@ const { createStorageBackend } = require('./backup-storage');
 const { enterMaintenance, exitMaintenance } = require('./maintenance');
 const { getInstanceId, isValidInstanceId } = require('./instance');
 const { getKeyInfo } = require('./secrets');
+const { getCurrentUser } = require('./request-context');
 
 const preparedRestores = new Map();
 const restoreLifetimeMs = 30 * 60 * 1000;
@@ -357,6 +359,20 @@ async function prepareStagingDatabase(prepared, name) {
   }
 }
 
+async function recordSuccessfulRestore(prepared, actorSnapshot) {
+  const client = clientFor(databaseName());
+  await client.connect();
+  try {
+    await recordAuditEvent({
+      client, actor: actorSnapshot ? { ...actorSnapshot, id: null } : null, request: null,
+      category: 'restore', action: 'restore.success', summary: 'Restauration de la base terminée.',
+      metadata: { source: prepared.source, filename: prepared.filename, fingerprint_match: prepared.fingerprintMatch },
+    });
+  } finally {
+    await client.end();
+  }
+}
+
 async function swapDatabaseNames(admin, { currentName, previousName, stagingName }) {
   await admin.query(
     'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ($1, $2)',
@@ -434,6 +450,12 @@ async function ensureSafetyBackup(prepared) {
 
 async function performRestore(token) {
   const prepared = getPreparedRestore(token);
+  const currentActor = getCurrentUser();
+  const actorSnapshot = currentActor ? { name: currentActor.name, role: currentActor.role } : null;
+  await recordAuditEventSafely({
+    category: 'restore', action: 'restore.start', summary: 'Restauration de la base démarrée.',
+    metadata: { source: prepared.source, filename: prepared.filename, fingerprint_match: prepared.fingerprintMatch },
+  });
   pauseBackupScheduler();
   try {
     return await withBackupOperationLock(async () => {
@@ -450,6 +472,11 @@ async function performRestore(token) {
           }
           throw error;
         }
+        try {
+          await recordSuccessfulRestore(prepared, actorSnapshot);
+        } catch (error) {
+          console.error('Restore completed, but its audit event could not be recorded:', error.code || 'AUDIT_INSERT_FAILED');
+        }
         await cleanupPreparedRestore(token);
         return { restartRequired: true, fingerprintMatch: prepared.fingerprintMatch };
       } finally {
@@ -458,6 +485,10 @@ async function performRestore(token) {
     });
   } catch (error) {
     await recordFailedRestore(prepared, error.code || 'RESTORE_FAILED');
+    await recordAuditEventSafely({
+      category: 'restore', action: 'restore.failed', result: 'failed', summary: 'Échec de la restauration de la base.',
+      metadata: { source: prepared.source, filename: prepared.filename, fingerprint_match: prepared.fingerprintMatch, error_code: error.code || 'RESTORE_FAILED' },
+    });
     throw error;
   } finally {
     resumeBackupScheduler();

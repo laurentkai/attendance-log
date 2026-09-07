@@ -1,5 +1,6 @@
 const express = require('express');
-const { pool } = require('./db/client');
+const { recordAuditEvent, recordAuditEventSafely } = require('./audit');
+const { pool, withTransaction } = require('./db/client');
 const {
   BackupError,
   calculateNextRunAt,
@@ -381,7 +382,8 @@ router.post('/', async (request, response) => {
         weekday: values.frequency === 'weekly' ? Number(values.weekday) : null,
       })
       : null;
-    await pool.query(
+    await withTransaction(pool, async (client) => {
+      await client.query(
       `UPDATE backup_configuration SET
          enabled = $1, provider = $2, frequency = $3, execution_time = $4,
          weekday = $5, retention_days = $6, next_run_at = $7,
@@ -405,7 +407,32 @@ router.post('/', async (request, response) => {
         values.provider === 'azure' ? values.azure.containerName : null,
         values.provider === 'azure' ? azureKey : null,
       ],
-    );
+      );
+      await recordAuditEvent({
+        client, category: 'backup', action: 'backup.configuration.update',
+        summary: 'Configuration des sauvegardes mise à jour.',
+        beforeData: existing ? {
+          enabled: existing.enabled, provider: existing.provider, frequency: existing.frequency,
+          execution_time: existing.executionTime, weekly_day: existing.weekday, retention_days: existing.retentionDays,
+          s3_bucket: existing.s3.bucket, s3_region: existing.s3.region, s3_endpoint: existing.s3.endpoint,
+          s3_prefix: existing.s3.prefix, azure_account_name: existing.azure.accountName,
+          azure_container_name: existing.azure.containerName,
+        } : null,
+        afterData: {
+          enabled: values.enabled, provider: values.provider || null, frequency: values.frequency,
+          execution_time: values.executionTime, weekly_day: values.frequency === 'weekly' ? Number(values.weekday) : null,
+          retention_days: Number(values.retentionDays), s3_bucket: values.provider === 's3' ? values.s3.bucket : null,
+          s3_region: values.provider === 's3' ? values.s3.region : null, s3_endpoint: values.provider === 's3' ? values.s3.endpoint || null : null,
+          s3_prefix: values.provider === 's3' ? values.s3.prefix || null : null,
+          azure_account_name: values.provider === 'azure' ? values.azure.accountName : null,
+          azure_container_name: values.provider === 'azure' ? values.azure.containerName : null,
+        },
+        metadata: {
+          schedule_enabled: values.enabled, provider: values.provider || 'none',
+          credential_change: Boolean(values.s3.secretAccessKey || values.azure.accountKey),
+        },
+      });
+    });
     response.redirect(303, '/settings/backups?notice=saved');
   } catch (error) {
     console.error('Unable to save backup settings:', error.code || 'DATABASE_ERROR');
@@ -427,6 +454,11 @@ router.post('/download', async (_request, response) => {
       headers: { 'Cache-Control': 'private, no-store' },
     }, async (error) => {
       await artifact.cleanup();
+      await recordAuditEventSafely({
+        category: 'backup', action: 'backup.manual.download', result: error ? 'failed' : 'success',
+        summary: error ? 'Téléchargement de la sauvegarde interrompu.' : 'Sauvegarde manuelle téléchargée.',
+        metadata: { backup_type: 'manual_download', filename: artifact.filename, size: artifact.size || null, error_code: error?.code || null },
+      });
       if (error && !response.headersSent) {
         response.redirect(303, '/settings/backups?error=BACKUP_FAILED');
       }
@@ -434,6 +466,7 @@ router.post('/download', async (_request, response) => {
   } catch (error) {
     if (artifact) await artifact.cleanup();
     console.error('Manual backup download failed:', error.code || 'BACKUP_FAILED');
+    await recordAuditEventSafely({ category: 'backup', action: 'backup.manual.download', result: 'failed', summary: 'Échec de la sauvegarde manuelle.', metadata: { error_code: error.code || 'BACKUP_FAILED' } });
     response.redirect(303, `/settings/backups?error=${encodeURIComponent(error.code || 'BACKUP_FAILED')}`);
   }
 });
@@ -450,10 +483,12 @@ router.post('/test', async (_request, response) => {
 
 router.post('/run', async (_request, response) => {
   try {
-    await runCloudBackup('manual_cloud');
+    const result = await runCloudBackup('manual_cloud');
+    await recordAuditEventSafely({ category: 'backup', action: 'backup.cloud.run', summary: 'Sauvegarde cloud terminée.', metadata: { backup_type: 'manual_cloud', provider: result?.provider || null, filename: result?.filename || null, size: result?.size || null } });
     response.redirect(303, '/settings/backups?notice=completed');
   } catch (error) {
     console.error('Cloud backup failed:', error.code || 'BACKUP_FAILED');
+    await recordAuditEventSafely({ category: 'backup', action: 'backup.cloud.run', result: 'failed', summary: 'Échec de la sauvegarde cloud.', metadata: { backup_type: 'manual_cloud', error_code: error.code || 'BACKUP_FAILED' } });
     response.redirect(303, `/settings/backups?error=${encodeURIComponent(error.code || 'BACKUP_FAILED')}`);
   }
 });

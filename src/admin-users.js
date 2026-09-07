@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
-const { pool } = require('./db/client');
+const { recordAuditEvent } = require('./audit');
+const { pool, withTransaction } = require('./db/client');
 const { roles } = require('./permissions');
 
 const PASSWORD_MIN_LENGTH = 12;
@@ -60,7 +61,7 @@ async function verifyPassword(password, passwordHash) {
   return bcrypt.compare(password, passwordHash);
 }
 
-async function createAdminUser({ name, email, role = roles.manager }) {
+async function createAdminUser({ name, email, role = roles.manager }, client = pool) {
   const normalized = {
     name: typeof name === 'string' ? name.trim() : '',
     email: normalizeEmail(email),
@@ -74,10 +75,10 @@ async function createAdminUser({ name, email, role = roles.manager }) {
   }
 
   try {
-    const result = await pool.query(
+    const result = await client.query(
       `INSERT INTO admin_users (name, email, password_hash, role, active, account_type)
        VALUES ($1, $2, NULL, $3, TRUE, 'otp')
-       RETURNING id, name, email, role, active, account_type, session_version,
+      RETURNING id, public_id, name, email, role, active, account_type, session_version,
                  created_at, updated_at, last_login_at`,
       [normalized.name, normalized.email, normalized.role],
     );
@@ -115,15 +116,24 @@ async function createBreakGlassUser({ name, username, password }) {
   }
   const passwordHash = await hashPassword(password);
   try {
-    const result = await pool.query(
-      `INSERT INTO admin_users
-         (name, email, username, password_hash, role, active, account_type)
-       VALUES ($1, NULL, $2, $3, 'administrator', TRUE, 'break_glass')
-       RETURNING id, name, username, role, active, account_type, session_version,
-                 created_at, updated_at, last_login_at`,
-      [normalizedName, normalizedUsername, passwordHash],
-    );
-    return result.rows[0];
+    return await withTransaction(pool, async (client) => {
+      const result = await client.query(
+        `INSERT INTO admin_users
+           (name, email, username, password_hash, role, active, account_type)
+         VALUES ($1, NULL, $2, $3, 'administrator', TRUE, 'break_glass')
+         RETURNING id, public_id, name, username, role, active, account_type, session_version,
+                   created_at, updated_at, last_login_at`,
+        [normalizedName, normalizedUsername, passwordHash],
+      );
+      const user = result.rows[0];
+      await recordAuditEvent({
+        client, actor: null, request: null, category: 'user', action: 'user.break_glass.create',
+        targetType: 'admin_user', targetPublicId: user.public_id, targetLabel: user.name,
+        summary: 'Compte local d’urgence créé.', afterData: { name: user.name, role: user.role, active: user.active },
+        metadata: { source: 'create_admin_cli' },
+      });
+      return user;
+    });
   } catch (error) {
     if (error.code === '23505') {
       const duplicateError = new Error('Un compte d’urgence existe déjà.');

@@ -12,7 +12,21 @@ const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./u
 
 const router = express.Router();
 const MAX_PARTICIPANTS_PER_PDF = 2000;
+const MAX_BADGE_TITLE_LENGTH = 40;
 const selectionModes = new Set(['all', 'class', 'manual']);
+
+function normalizeBadgeTitle(value) {
+  if (value === undefined || value === '') return '';
+  if (typeof value !== 'string') {
+    throw Object.assign(new Error('Le titre est invalide.'), { code: 'VALIDATION_ERROR' });
+  }
+  const title = value.trim();
+  if (Array.from(title).length > MAX_BADGE_TITLE_LENGTH
+      || /[<>\u0000-\u001f\u007f\u2028\u2029]/u.test(title)) {
+    throw Object.assign(new Error('Le titre doit contenir au maximum 40 caractères, sans balise HTML.'), { code: 'VALIDATION_ERROR' });
+  }
+  return title;
+}
 
 function normalizeSelection(body = {}) {
   const mode = typeof body.selection_mode === 'string' ? body.selection_mode : '';
@@ -26,6 +40,7 @@ function normalizeSelection(body = {}) {
     studentIds,
     includeActivity: body.include_activity === 'true',
     includeWarning: body.include_warning === 'true',
+    title: normalizeBadgeTitle(body.title),
   };
 }
 
@@ -163,6 +178,11 @@ function renderPrintPage({ students, classes, error = '' }) {
             <label class="form-label" for="first-position">Première étiquette disponible</label>
             <input class="form-control" id="first-position" name="first_position" type="number" min="1" max="21" value="1" inputmode="numeric" data-first-position required>
           </div>
+        </div>
+        <div class="mt-3">
+          <label class="form-label" for="qr-print-title">Titre <span class="text-body-secondary fw-normal">(facultatif)</span></label>
+          <input class="form-control" id="qr-print-title" name="title" type="text" maxlength="${MAX_BADGE_TITLE_LENGTH}" autocomplete="off" aria-describedby="qr-print-title-help">
+          <p class="help-text mt-2 mb-0" id="qr-print-title-help">Ex. Carte étudiant, Élève 2026-2027</p>
         </div>
         <div class="form-check mt-3">
           <input class="form-check-input" id="include-warning" name="include_warning" type="checkbox" value="true" data-warning-option aria-describedby="include-warning-help">
@@ -306,6 +326,7 @@ router.post('/pdf', async (request, response) => {
       firstPosition: options.firstPosition,
       activityName,
       includeWarning: selection.includeWarning,
+      title: selection.title,
       logo,
     });
     sendPdf(response, pdf, `attendance-log-qr-${options.profile.reference.toLowerCase()}.pdf`);

@@ -402,6 +402,8 @@ Open **Configuration > Sauvegardes > Restaurer une sauvegarde**. Restore V1 supp
 
 Restore replaces the whole application database; it does not merge records or selectively restore students/sessions. Old login sessions and OTP challenges are not restored as active authentication state.
 
+Restore compatibility was validated with a backup predating migration 018: staging restore succeeded, the normal migration runner applied `018_admin_audit_log.sql`, the database swap completed, restored business data remained intact, and the post-swap `restore.success` audit event was inserted successfully.
+
 ### Matching or different encryption keys
 
 With the matching recovery key, restored SMTP and cloud credentials remain usable. With a different key, restore still preserves all business data and encrypted credential ciphertext. Core features remain available, while affected integrations fail safely until the matching key is imported from **Configuration > Sécurité** or credentials are re-entered.

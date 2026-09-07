@@ -1,5 +1,6 @@
 const express = require('express');
-const { pool } = require('./db/client');
+const { recordAuditEvent, recordAuditEventSafely } = require('./audit');
+const { pool, withTransaction } = require('./db/client');
 const {
   isCompleteMailConfiguration,
   migratePlaintextMailPassword,
@@ -229,7 +230,9 @@ router.post('/', async (request, response) => {
     const password = values.username
       ? values.password ? encryptSecret(values.password) : current?.password || null
       : null;
-    await pool.query(
+    await withTransaction(pool, async (client) => {
+      const beforeResult = await client.query('SELECT smtp_host, smtp_port, security_mode, smtp_username, sender_email, sender_name, reply_to FROM mail_configuration WHERE id = 1');
+      await client.query(
       `INSERT INTO mail_configuration (
          id, smtp_host, smtp_port, security_mode, smtp_username, smtp_password,
          sender_email, sender_name, reply_to
@@ -254,7 +257,15 @@ router.post('/', async (request, response) => {
         values.senderName,
         values.replyTo || null,
       ],
-    );
+      );
+      const current = beforeResult.rows[0] || {};
+      await recordAuditEvent({
+        client, category: 'mail', action: 'mail.configuration.update', summary: 'Configuration e-mail mise à jour.',
+        beforeData: current,
+        afterData: { smtp_host: values.host, smtp_port: Number(values.port), security_mode: values.securityMode, smtp_username: values.username || null, sender_email: values.senderEmail, sender_name: values.senderName, reply_to: values.replyTo || null },
+        metadata: { credential_change: Boolean(values.password) },
+      });
+    });
     response.redirect(303, '/settings/email?notice=saved');
   } catch (error) {
     console.error('Unable to save mail configuration:', error.code || 'DATABASE_ERROR');
@@ -318,8 +329,10 @@ router.post('/test', async (request, response) => {
       text: 'Cet e-mail confirme que la configuration SMTP d’Attendance Log fonctionne.',
       html: '<p>Cet e-mail confirme que la configuration SMTP d’Attendance Log fonctionne.</p>',
     });
+    await recordAuditEventSafely({ category: 'mail', action: 'mail.test', summary: 'Test de la configuration e-mail réussi.' });
     response.redirect(303, '/settings/email?notice=test_sent');
   } catch (error) {
+    await recordAuditEventSafely({ category: 'mail', action: 'mail.test', result: 'failed', summary: 'Échec du test de la configuration e-mail.', metadata: { error_code: error.code || 'DELIVERY_FAILED' } });
     console.error('Unable to send test email:', error.code || 'DELIVERY_FAILED');
     try {
       await renderCurrentSettings(response.status(error.code === 'NOT_CONFIGURED' ? 400 : 502), {

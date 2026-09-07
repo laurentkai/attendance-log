@@ -1,5 +1,7 @@
 const express = require('express');
 const multer = require('multer');
+const { recordAuditEvent } = require('./audit');
+const { pool, withTransaction } = require('./db/client');
 const {
   getGlobalLogo,
   logoUpload,
@@ -91,7 +93,15 @@ router.post('/logo', (request, response) => {
     }
     try {
       const logo = await normalizeLogoUpload(request.file);
-      await saveGlobalLogo(logo);
+      await withTransaction(pool, async (client) => {
+        const current = await getGlobalLogo(client);
+        await saveGlobalLogo(logo, client);
+        await recordAuditEvent({
+          client, category: 'branding', action: current ? 'branding.logo.replace' : 'branding.logo.add',
+          summary: current ? 'Logo de l’installation remplacé.' : 'Logo de l’installation ajouté.',
+          metadata: { logo_change: current ? 'replaced' : 'added' },
+        });
+      });
       response.redirect(303, '/settings/branding?notice=saved');
     } catch (error) {
       if (['INVALID_LOGO', 'LOGO_TOO_LARGE'].includes(error.code)) {
@@ -106,7 +116,13 @@ router.post('/logo', (request, response) => {
 
 router.post('/logo/remove', async (_request, response) => {
   try {
-    await removeGlobalLogo();
+    await withTransaction(pool, async (client) => {
+      await removeGlobalLogo(client);
+      await recordAuditEvent({
+        client, category: 'branding', action: 'branding.logo.remove', summary: 'Logo de l’installation supprimé.',
+        metadata: { logo_change: 'removed' },
+      });
+    });
     response.redirect(303, '/settings/branding?notice=removed');
   } catch (error) {
     console.error('Unable to remove installation logo:', error.code || 'DATABASE_ERROR');

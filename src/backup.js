@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { recordAuditEventSafely } = require('./audit');
 const { Client } = require('pg');
 const { pool } = require('./db/client');
 const { createStorageBackend } = require('./backup-storage');
@@ -415,6 +416,15 @@ async function runCloudBackup(runType = 'manual_cloud', { alreadyLocked = false 
       } catch (error) {
         console.warn('Backup retention cleanup failed:', normalizeBackupError(error).code);
       }
+      if (runType === 'scheduled') await recordAuditEventSafely({
+        category: 'backup', action: 'backup.scheduled.run', summary: 'Sauvegarde planifiée terminée.',
+        metadata: {
+          backup_type: runType,
+          provider: configuration.provider,
+          filename: artifact.filename,
+          size: artifact.size,
+        },
+      });
       return { filename: artifact.filename, objectKey, size: artifact.size };
     };
     return await (alreadyLocked ? action() : withBackupOperationLock(action));
@@ -434,6 +444,10 @@ async function runCloudBackup(runType = 'manual_cloud', { alreadyLocked = false 
     } catch (historyError) {
       console.error('Unable to record backup failure:', historyError.code || 'DATABASE_ERROR');
     }
+    if (runType === 'scheduled') await recordAuditEventSafely({
+      category: 'backup', action: 'backup.scheduled.run', result: 'failed', summary: 'Échec de la sauvegarde planifiée.',
+      metadata: { backup_type: runType, provider: configuration?.provider || null, error_code: error.code },
+    });
     throw error;
   } finally {
     if (artifact) await artifact.cleanup();
