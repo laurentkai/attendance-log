@@ -37,6 +37,8 @@ Avoid broad refactors without a concrete defect. Explicitly say when no blocking
 5. Check logs and browser errors for secrets, stack traces, misleading feedback, and swallowed failures.
 6. Verify that validation is proportional and that reported checks were actually run.
 
+For transaction callbacks, verify that code does not return after writes when rollback was intended.
+
 For stateful operations, actively test partial failure and races rather than reviewing only the happy path. Never use real credentials or destructive production data in review fixtures.
 
 ## UI review
@@ -80,6 +82,14 @@ For reviews involving PDF generation, physical print layouts, Avery labels, badg
 - `print-layout` — `.agents/skills/print-layout/SKILL.md` (discoverable by Claude through `.claude/skills/print-layout/SKILL.md`)
 
 Consult the skill before reviewing those areas; do not restate or substitute its guidance here.
+
+## Refactor review skill
+
+For architecture or refactoring audits, and reviews of significant refactoring work, read and apply:
+
+- `refactor` — `.agents/skills/refactor/SKILL.md` (discoverable by Claude through `.claude/skills/refactor/SKILL.md`)
+
+Consult it when assessing behavior preservation, blast radius, and the smallest safe change; do not restate or substitute its guidance here.
 
 ## Domain integrity review
 

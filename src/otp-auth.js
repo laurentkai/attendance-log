@@ -1,5 +1,5 @@
 const crypto = require('node:crypto');
-const { pool } = require('./db/client');
+const { pool, withTransaction } = require('./db/client');
 const { normalizeEmail } = require('./admin-users');
 const { sendMail } = require('./mail');
 
@@ -164,18 +164,12 @@ async function requestOtp(emailValue, ipValue, { deliver = sendMail, code = gene
   const emailHash = keyedHash('admin-otp-email', email);
   const ipHash = keyedHash('admin-otp-ip', String(ipValue || 'unknown'));
   const challengeId = crypto.randomUUID();
-  const client = await pool.connect();
-  let user = null;
-  let requestTiming = null;
-
-  try {
-    await client.query('BEGIN');
+  const transactionResult = await withTransaction(pool, async (client) => {
     await cleanupExpiredChallenges(client);
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`otp-email:${emailHash}`]);
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`otp-ip:${ipHash}`]);
     const limitState = await readRequestLimitState(client, emailHash, ipHash);
     if (!limitState.allowed) {
-      await client.query('ROLLBACK');
       const error = new OtpError('RATE_LIMITED');
       Object.assign(error, limitState);
       throw error;
@@ -187,7 +181,7 @@ async function requestOtp(emailValue, ipValue, { deliver = sendMail, code = gene
        WHERE account_type = 'otp' AND LOWER(email) = LOWER($1)`,
       [email],
     );
-    user = userResult.rows[0] || null;
+    const user = userResult.rows[0] || null;
     if (user) {
       await client.query(
         `UPDATE admin_otp_challenges
@@ -203,26 +197,18 @@ async function requestOtp(emailValue, ipValue, { deliver = sendMail, code = gene
        RETURNING created_at`,
       [challengeId, user?.id || null, emailHash, ipHash, user?.active ? hashOtp(challengeId, code) : null],
     );
-    requestTiming = timingAfterRequest(insertResult.rows[0].created_at);
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { user, requestTiming: timingAfterRequest(insertResult.rows[0].created_at) };
+  });
 
-  const delivery = user?.active
-    ? deferOtpDelivery({ challengeId, recipient: user.email, code, deliver })
+  const delivery = transactionResult.user?.active
+    ? deferOtpDelivery({ challengeId, recipient: transactionResult.user.email, code, deliver })
     : Promise.resolve({ delivered: false });
-  return { challengeId, delivery, ...requestTiming };
+  return { challengeId, delivery, ...transactionResult.requestTiming };
 }
 
 async function verifyOtp(challengeId, code) {
   if (!/^[0-9]{6}$/.test(code || '')) throw new OtpError('INVALID_CODE');
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const result = await withTransaction(pool, async (client) => {
     const result = await client.query(
       `SELECT c.id, c.user_id, c.otp_hash, c.attempts, c.expires_at,
               c.delivered_at, c.used_at, c.invalidated_at,
@@ -245,7 +231,6 @@ async function verifyOtp(challengeId, code) {
       || new Date(challenge.expires_at).getTime() <= Date.now()
       || challenge.attempts >= MAX_VERIFY_ATTEMPTS
     ) {
-      await client.query('ROLLBACK');
       throw new OtpError('INVALID_CODE');
     }
 
@@ -258,8 +243,7 @@ async function verifyOtp(challengeId, code) {
          WHERE id = $1`,
         [challengeId, MAX_VERIFY_ATTEMPTS],
       );
-      await client.query('COMMIT');
-      throw new OtpError('INVALID_CODE');
+      return { error: new OtpError('INVALID_CODE') };
     }
 
     await client.query(
@@ -276,17 +260,12 @@ async function verifyOtp(challengeId, code) {
       [challenge.user_id],
     );
     if (userResult.rowCount === 0) {
-      await client.query('ROLLBACK');
       throw new OtpError('INVALID_CODE');
     }
-    await client.query('COMMIT');
-    return userResult.rows[0];
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { user: userResult.rows[0] };
+  });
+  if (result.error) throw result.error;
+  return result.user;
 }
 
 module.exports = {

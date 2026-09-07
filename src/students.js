@@ -1,5 +1,5 @@
 const express = require('express');
-const { pool } = require('./db/client');
+const { pool, withTransaction } = require('./db/client');
 const { sendMail } = require('./mail');
 const { getEffectiveLogoForStudent } = require('./branding');
 const {
@@ -287,21 +287,19 @@ router.post('/', async (request, response) => {
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    if (selectedClassIds.length > 0) {
-      await client.query(
-        'SELECT id FROM classes WHERE public_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
-        [selectedClassIds],
-      );
-    }
-    const student = await insertStudent(client, values);
-    await addMemberships(client, student.id, selectedClassIds);
-    await client.query('COMMIT');
+    await withTransaction(pool, async (client) => {
+      if (selectedClassIds.length > 0) {
+        await client.query(
+          'SELECT id FROM classes WHERE public_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
+          [selectedClassIds],
+        );
+      }
+      const student = await insertStudent(client, values);
+      await addMemberships(client, student.id, selectedClassIds);
+    });
     response.redirect(303, '/students?notice=created');
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to create student:', error);
     const message = error.code === '23505'
       ? 'Cette adresse e-mail est déjà utilisée.'
@@ -315,8 +313,6 @@ router.post('/', async (request, response) => {
       selectedClassIds,
       error: message,
     }));
-  } finally {
-    client.release();
   }
 });
 
@@ -538,71 +534,71 @@ router.post('/:id', async (request, response) => {
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const membershipResult = await client.query(
-      'SELECT c.public_id FROM student_classes sc INNER JOIN classes c ON c.id = sc.class_id WHERE sc.student_id = $1 ORDER BY c.id',
-      [currentResult.rows[0].id],
-    );
-    const selectedIds = new Set(selectedClassIds);
-    const removedClassIds = membershipResult.rows
-      .map((membership) => membership.public_id)
-      .filter((classId) => !selectedIds.has(classId));
-    const affectedClassIds = [...new Set([
-      ...selectedClassIds,
-      ...membershipResult.rows.map((membership) => membership.public_id),
-    ])];
-    if (affectedClassIds.length > 0) {
-      await client.query(
-        'SELECT id FROM classes WHERE public_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
-        [affectedClassIds],
+    const outcome = await withTransaction(pool, async (client) => {
+      const membershipResult = await client.query(
+        'SELECT c.public_id FROM student_classes sc INNER JOIN classes c ON c.id = sc.class_id WHERE sc.student_id = $1 ORDER BY c.id',
+        [currentResult.rows[0].id],
       );
-    }
-    if (removedClassIds.length > 0) {
-      const protectedResult = await client.query(
-        `SELECT c.name
-         FROM classes c
-         WHERE c.public_id = ANY($1::uuid[])
-           AND EXISTS (
-             SELECT 1 FROM course_sessions cs
-             WHERE cs.class_id = c.id AND cs.started_at IS NOT NULL
-           )
-         ORDER BY LOWER(c.name)
-         LIMIT 1`,
-        [removedClassIds],
-      );
-      if (protectedResult.rowCount > 0) {
-        await client.query('ROLLBACK');
-        response.status(409).send(renderStudentForm({
-          title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
-          action: `/students/${request.params.id}`,
-          submitLabel: 'Enregistrer',
-          values,
-          classes,
-          selectedClassIds,
-          editing: true,
-          studentId: request.params.id,
-          error: `Le retrait de « ${protectedResult.rows[0].name} » est impossible après le démarrage. Gérez son état depuis la rubrique ${getTerm('class', 'plural')}.`,
-        }));
-        return;
+      const selectedIds = new Set(selectedClassIds);
+      const removedClassIds = membershipResult.rows
+        .map((membership) => membership.public_id)
+        .filter((classId) => !selectedIds.has(classId));
+      const affectedClassIds = [...new Set([
+        ...selectedClassIds,
+        ...membershipResult.rows.map((membership) => membership.public_id),
+      ])];
+      if (affectedClassIds.length > 0) {
+        await client.query(
+          'SELECT id FROM classes WHERE public_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
+          [affectedClassIds],
+        );
       }
-    }
-    await client.query(
-      `UPDATE students
-       SET first_name = $1, last_name = $2, email = $3, active = $4
-       WHERE id = $5`,
-      [values.firstName, values.lastName, values.email, values.active, currentResult.rows[0].id],
-    );
-    if (removedClassIds.length > 0) {
+      if (removedClassIds.length > 0) {
+        const protectedResult = await client.query(
+          `SELECT c.name
+           FROM classes c
+           WHERE c.public_id = ANY($1::uuid[])
+             AND EXISTS (
+               SELECT 1 FROM course_sessions cs
+               WHERE cs.class_id = c.id AND cs.started_at IS NOT NULL
+             )
+           ORDER BY LOWER(c.name)
+           LIMIT 1`,
+          [removedClassIds],
+        );
+        if (protectedResult.rowCount > 0) return { protectedClassName: protectedResult.rows[0].name };
+      }
       await client.query(
-        `DELETE FROM student_classes
-         WHERE student_id = $1 AND class_id IN (SELECT id FROM classes WHERE public_id = ANY($2::uuid[]))`,
-        [currentResult.rows[0].id, removedClassIds],
+        `UPDATE students
+         SET first_name = $1, last_name = $2, email = $3, active = $4
+         WHERE id = $5`,
+        [values.firstName, values.lastName, values.email, values.active, currentResult.rows[0].id],
       );
+      if (removedClassIds.length > 0) {
+        await client.query(
+          `DELETE FROM student_classes
+           WHERE student_id = $1 AND class_id IN (SELECT id FROM classes WHERE public_id = ANY($2::uuid[]))`,
+          [currentResult.rows[0].id, removedClassIds],
+        );
+      }
+      await addMemberships(client, currentResult.rows[0].id, selectedClassIds);
+      return {};
+    });
+    if (outcome.protectedClassName) {
+      response.status(409).send(renderStudentForm({
+        title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
+        action: `/students/${request.params.id}`,
+        submitLabel: 'Enregistrer',
+        values,
+        classes,
+        selectedClassIds,
+        editing: true,
+        studentId: request.params.id,
+        error: `Le retrait de « ${outcome.protectedClassName} » est impossible après le démarrage. Gérez son état depuis la rubrique ${getTerm('class', 'plural')}.`,
+      }));
+      return;
     }
-    await addMemberships(client, currentResult.rows[0].id, selectedClassIds);
-    await client.query('COMMIT');
     response.redirect(
       303,
       values.active
@@ -610,7 +606,6 @@ router.post('/:id', async (request, response) => {
         : '/students?status=inactive&notice=updated',
     );
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to update student:', error);
     const message = error.code === '23505'
       ? 'Cette adresse e-mail est déjà utilisée.'
@@ -626,8 +621,6 @@ router.post('/:id', async (request, response) => {
       studentId: request.params.id,
       error: message,
     }));
-  } finally {
-    client.release();
   }
 });
 
@@ -638,37 +631,33 @@ router.post('/:id/deactivate', async (request, response) => {
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    await client.query(
-      `SELECT c.id
-       FROM classes c
-       INNER JOIN student_classes sc ON sc.class_id = c.id
-       WHERE sc.student_id = (SELECT id FROM students WHERE public_id = $1)
-       ORDER BY c.id
-       FOR UPDATE`,
-      [request.params.id],
-    );
-    const result = await client.query(
-      'UPDATE students SET active = FALSE WHERE public_id = $1 AND active = TRUE RETURNING id',
-      [request.params.id],
-    );
-    if (result.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const changed = await withTransaction(pool, async (client) => {
+      await client.query(
+        `SELECT c.id
+         FROM classes c
+         INNER JOIN student_classes sc ON sc.class_id = c.id
+         WHERE sc.student_id = (SELECT id FROM students WHERE public_id = $1)
+         ORDER BY c.id
+         FOR UPDATE`,
+        [request.params.id],
+      );
+      const result = await client.query(
+        'UPDATE students SET active = FALSE WHERE public_id = $1 AND active = TRUE RETURNING id',
+        [request.params.id],
+      );
+      return result.rowCount > 0;
+    });
+    if (!changed) {
       const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement actif ne correspond à cette demande.', 404);
       response.status(page.status).send(page.html);
       return;
     }
-    await client.query('COMMIT');
     response.redirect(303, '/students?notice=deactivated');
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to deactivate student:', error);
     const page = renderMessagePage('Désactivation impossible', 'Impossible de désactiver la fiche pour le moment.');
     response.status(page.status).send(page.html);
-  } finally {
-    client.release();
   }
 });
 

@@ -30,6 +30,12 @@
       "sourceType": "local",
       "computedHash": "1a124e158e2a3df3f27b5aaecd069dffabb079f5410ef17df45a449ece0ff7a7"
     },
+    "refactor": {
+      "source": "thoreinstein/agents",
+      "sourceType": "github",
+      "skillPath": "skills/refactor/SKILL.md",
+      "computedHash": "27f29a6ba68245cc9b51369f761143d0ae330dbdb1dfadeeee6004f289cfcd20"
+    },
     "web-design-guidelines": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",

@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const { normalizeUsername, verifyPassword } = require('./admin-users');
-const { pool } = require('./db/client');
+const { pool, withTransaction } = require('./db/client');
 
 const MAX_FAILURES = 5;
 const LOCKOUT_MINUTES = 15;
@@ -24,10 +24,7 @@ async function authenticateBreakGlass({ username: usernameValue, password, ip })
   const username = normalizeUsername(usernameValue);
   const usernameHash = rateLimitHash('break-glass-username', username);
   const ipHash = rateLimitHash('break-glass-ip', String(ip || 'unknown'));
-  const client = await pool.connect();
-
-  try {
-    await client.query('BEGIN');
+  const result = await withTransaction(pool, async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`break-glass-username:${usernameHash}`]);
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`break-glass-ip:${ipHash}`]);
     await client.query(
@@ -47,7 +44,6 @@ async function authenticateBreakGlass({ username: usernameValue, password, ip })
       failures.rows[0].username_failures >= MAX_FAILURES
       || failures.rows[0].ip_failures >= MAX_FAILURES
     ) {
-      await client.query('ROLLBACK');
       throw new BreakGlassAuthError('RATE_LIMITED');
     }
 
@@ -68,8 +64,7 @@ async function authenticateBreakGlass({ username: usernameValue, password, ip })
          VALUES ($1, $2)`,
         [usernameHash, ipHash],
       );
-      await client.query('COMMIT');
-      throw new BreakGlassAuthError('INVALID_CREDENTIALS');
+      return { error: new BreakGlassAuthError('INVALID_CREDENTIALS') };
     }
 
     await client.query(
@@ -85,17 +80,12 @@ async function authenticateBreakGlass({ username: usernameValue, password, ip })
       [user.id],
     );
     if (loginResult.rowCount === 0) {
-      await client.query('ROLLBACK');
       throw new BreakGlassAuthError('INVALID_CREDENTIALS');
     }
-    await client.query('COMMIT');
-    return loginResult.rows[0];
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { user: loginResult.rows[0] };
+  });
+  if (result.error) throw result.error;
+  return result.user;
 }
 
 module.exports = {

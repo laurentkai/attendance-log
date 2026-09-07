@@ -34,6 +34,12 @@ Preserve server-rendered routing and the current multi-page architecture. Do not
 - Validate public UUIDs before querying, then resolve them to numeric IDs server-side. Malformed and unknown UUIDs must use the same safe not-found behavior.
 - UUID opacity never replaces authentication or authorization. New user-facing routes for entities with public IDs must not expose their numeric IDs in URLs, forms, links, redirects, or client data.
 
+## Transactions
+
+- Use `withTransaction` for normal application transactions and keep all business writes that must be atomic inside its callback.
+- A thrown error rolls back; a normal return commits. Never return a rejection outcome after writes that should be rolled back.
+- Future Audit Log inserts that must be atomic with business mutations use the same callback transaction client. Do not add automatic audit behavior to `withTransaction`.
+
 ## Frontend architecture
 
 Bootstrap 5 is the default toolkit for layout, navigation, forms, buttons, tables, alerts, badges, dropdowns, modals, offcanvas, utilities, and responsive behavior.
@@ -93,6 +99,14 @@ For meaningful implementation work involving PDF generation, physical print layo
 - `print-layout` — `.agents/skills/print-layout/SKILL.md`
 
 Consult the skill before designing or editing those outputs. It supplements but does not override this file.
+
+### Installed refactor skill
+
+Before meaningful refactoring, architecture cleanup, technical-debt reduction, module-boundary changes, duplication removal, or dead-code cleanup, read and consult:
+
+- `refactor` — `.agents/skills/refactor/SKILL.md`
+
+Use it to assess the proposed change before editing. Preserve observable behavior unless the task explicitly changes it, keep the blast radius minimal, and validate every affected caller and boundary. The skill supplements but does not override this file.
 
 ### Mobile, accessibility, and browser validation
 

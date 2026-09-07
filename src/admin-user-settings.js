@@ -14,7 +14,7 @@ const {
   roleLabels,
   sendAdminInvitation,
 } = require('./admin-invitations');
-const { pool } = require('./db/client');
+const { pool, withTransaction } = require('./db/client');
 const { isValidPublicId } = require('./public-id');
 const { escapeHtml, renderMessagePage, renderPage, renderSettingsLayout } = require('./ui');
 
@@ -248,48 +248,40 @@ router.get('/:id/delete', async (request, response) => {
 
 router.post('/:id', async (request, response) => {
   if (!isValidPublicId(request.params.id)) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
-    const targetResult = await client.query('SELECT * FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
-    if (targetResult.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
-    }
-    const target = targetResult.rows[0];
-    let edited;
-    if (target.account_type === 'break_glass') {
-      const name = typeof request.body.name === 'string' ? request.body.name.trim() : '';
-      const username = normalizeUsername(request.body.username);
-      const password = typeof request.body.password === 'string' ? request.body.password : '';
-      const validationError = !validateName(name) ? 'Le nom doit contenir entre 2 et 120 caractères.' : !validateUsername(username) ? 'Le nom d’utilisateur est invalide.' : validatePassword(password, { required: false });
-      edited = { ...target, name, username };
-      if (validationError) {
-        await client.query('ROLLBACK');
-        return response.status(400).send(renderEditPage(edited, validationError));
+    const outcome = await withTransaction(pool, async (client) => {
+      const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
+      const targetResult = await client.query('SELECT * FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      if (targetResult.rowCount === 0) return { status: 404 };
+
+      const target = targetResult.rows[0];
+      if (target.account_type === 'break_glass') {
+        const name = typeof request.body.name === 'string' ? request.body.name.trim() : '';
+        const username = normalizeUsername(request.body.username);
+        const password = typeof request.body.password === 'string' ? request.body.password : '';
+        const validationError = !validateName(name) ? 'Le nom doit contenir entre 2 et 120 caractères.' : !validateUsername(username) ? 'Le nom d’utilisateur est invalide.' : validatePassword(password, { required: false });
+        const edited = { ...target, name, username };
+        if (validationError) return { status: 400, edited, validationError };
+
+        const passwordHash = password ? await hashPassword(password) : null;
+        await client.query(
+          `UPDATE admin_users SET name = $1, username = $2,
+             password_hash = COALESCE($3, password_hash),
+             session_version = session_version + CASE WHEN $3::text IS NULL THEN 0 ELSE 1 END,
+             updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
+          [name, username, passwordHash, target.id],
+        );
+        return { status: 303 };
       }
-      const passwordHash = password ? await hashPassword(password) : null;
-      await client.query(
-        `UPDATE admin_users SET name = $1, username = $2,
-           password_hash = COALESCE($3, password_hash),
-           session_version = session_version + CASE WHEN $3::text IS NULL THEN 0 ELSE 1 END,
-           updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
-        [name, username, passwordHash, target.id],
-      );
-    } else {
+
       const values = normalValues(request.body);
-      edited = { ...target, ...values };
+      const edited = { ...target, ...values };
       const validationError = validateAdminUserInput(values);
-      if (validationError) {
-        await client.query('ROLLBACK');
-        return response.status(400).send(renderEditPage(edited, validationError));
-      }
+      if (validationError) return { status: 400, edited, validationError };
       const removesLastAdmin = target.role === roles.administrator && target.active
         && (!values.active || values.role !== roles.administrator) && activeAdmins.rowCount === 1;
       if (removesLastAdmin) {
-        await client.query('ROLLBACK');
-        return response.status(409).send(renderEditPage(edited, 'Le dernier administrateur actif ne peut pas être désactivé ni changer de rôle.'));
+        return { status: 409, edited, validationError: 'Le dernier administrateur actif ne peut pas être désactivé ni changer de rôle.' };
       }
       await client.query(
         `UPDATE admin_users SET name = $1, email = $2, role = $3, active = $4,
@@ -297,16 +289,17 @@ router.post('/:id', async (request, response) => {
            updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
         [values.name, values.email, values.role, values.active, target.id],
       );
-    }
-    await client.query('COMMIT');
+      return { status: 303 };
+    });
+    if (outcome.status === 404) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+    if (outcome.status !== 303) return response.status(outcome.status).send(renderEditPage(outcome.edited, outcome.validationError));
     response.redirect(303, '/settings/users?notice=updated');
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
     const duplicate = error.code === '23505';
     if (!duplicate) console.error('Unable to update administrator user:', error);
     const user = await findUser(request.params.id).catch(() => null);
     response.status(duplicate ? 400 : 500).send(user ? renderEditPage(user, duplicate ? 'Cette identité est déjà utilisée.' : 'Impossible de modifier l’utilisateur pour le moment.') : renderMessagePage('Utilisateur indisponible', 'Impossible de modifier cet utilisateur pour le moment.').html);
-  } finally { client.release(); }
+  }
 });
 
 router.post('/:id/revoke-sessions', async (request, response) => {
@@ -335,37 +328,28 @@ router.post('/:id/delete', async (request, response) => {
   if (!user) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
   if (request.body?.confirm_delete !== 'true') return response.status(400).send(renderDeletePage(user, 'Confirmez explicitement la suppression du compte.'));
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
-    const targetResult = await client.query('SELECT id, account_type, role, active FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
-    if (targetResult.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
-    }
-    const target = targetResult.rows[0];
-    if (target.account_type === 'break_glass') {
-      await client.query('ROLLBACK');
-      return response.status(403).send(renderMessagePage('Suppression interdite', 'Ce compte ne peut pas être supprimé.', 403).html);
-    }
-    if (String(target.id) === String(request.currentUser.id)) {
-      await client.query('ROLLBACK');
-      return response.status(409).send(renderMessagePage('Suppression interdite', 'Vous ne pouvez pas supprimer le compte actuellement connecté.', 409).html);
-    }
-    if (target.role === roles.administrator && target.active && activeAdmins.rowCount === 1) {
-      await client.query('ROLLBACK');
-      return response.status(409).send(renderDeletePage(user, 'Le dernier administrateur actif ne peut pas être supprimé.'));
-    }
-    await client.query("DELETE FROM admin_users WHERE id = $1 AND account_type = 'otp'", [target.id]);
-    await client.query('COMMIT');
+    const outcome = await withTransaction(pool, async (client) => {
+      const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
+      const targetResult = await client.query('SELECT id, account_type, role, active FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      if (targetResult.rowCount === 0) return { status: 404 };
+      const target = targetResult.rows[0];
+      if (target.account_type === 'break_glass') return { status: 403 };
+      if (String(target.id) === String(request.currentUser.id)) return { status: 409, self: true };
+      if (target.role === roles.administrator && target.active && activeAdmins.rowCount === 1) {
+        return { status: 409, lastAdmin: true };
+      }
+      await client.query("DELETE FROM admin_users WHERE id = $1 AND account_type = 'otp'", [target.id]);
+      return { status: 303 };
+    });
+    if (outcome.status === 404) return response.status(404).send(renderMessagePage('Utilisateur introuvable', 'Cet utilisateur n’existe pas.', 404).html);
+    if (outcome.status === 403) return response.status(403).send(renderMessagePage('Suppression interdite', 'Ce compte ne peut pas être supprimé.', 403).html);
+    if (outcome.self) return response.status(409).send(renderMessagePage('Suppression interdite', 'Vous ne pouvez pas supprimer le compte actuellement connecté.', 409).html);
+    if (outcome.lastAdmin) return response.status(409).send(renderDeletePage(user, 'Le dernier administrateur actif ne peut pas être supprimé.'));
     response.redirect(303, '/settings/users?notice=deleted');
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
     console.error('Unable to delete administrator user:', error);
     response.status(500).send(renderDeletePage(user, 'Impossible de supprimer cet utilisateur pour le moment.'));
-  } finally {
-    client.release();
   }
 });
 

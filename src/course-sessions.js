@@ -1,6 +1,6 @@
 const express = require('express');
 const { requirePermission } = require('./auth');
-const { pool } = require('./db/client');
+const { pool, withTransaction } = require('./db/client');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const { parseStudentQrPayload } = require('./student-qr');
 const { hasPermission, permissions } = require('./permissions');
@@ -210,12 +210,6 @@ async function markStudentPresent(client, sessionId, studentId) {
   };
 }
 
-async function resolveStudentId(client, publicId) {
-  if (!isValidPublicId(publicId)) return null;
-  const result = await client.query('SELECT id FROM students WHERE public_id = $1', [publicId]);
-  return result.rows[0]?.id || null;
-}
-
 function getStateLabel(state) {
   return {
     scheduled: 'État : planifié',
@@ -230,6 +224,18 @@ router.param('id', async (request, _response, next, value) => {
   try {
     const result = await pool.query('SELECT id FROM course_sessions WHERE public_id = $1', [value]);
     request.courseSessionId = result.rows[0]?.id || null;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.param('studentId', async (request, _response, next, value) => {
+  request.studentId = null;
+  if (!isValidPublicId(value)) return next();
+  try {
+    const result = await pool.query('SELECT id FROM students WHERE public_id = $1', [value]);
+    request.studentId = result.rows[0]?.id || null;
     return next();
   } catch (error) {
     return next(error);
@@ -812,51 +818,45 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
     }
 
     const student = studentResult.rows[0];
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    const outcome = await withTransaction(pool, async (client) => {
       const result = await markStudentPresent(client, request.courseSessionId, student.id);
       if (!result.allowed) {
         const sessionResult = await client.query(
           'SELECT state FROM course_sessions WHERE id = $1',
           [request.courseSessionId],
         );
-        await client.query('ROLLBACK');
-        if (sessionResult.rowCount === 0) {
-          response.status(404).json({ outcome: 'unknown', message: `${getTerm('session')} introuvable.` });
-          return;
-        }
-        if (sessionResult.rows[0].state !== 'open') {
-          response.status(409).json({
+        if (sessionResult.rowCount === 0) return { status: 404, body: { outcome: 'unknown', message: `${getTerm('session')} introuvable.` } };
+        if (sessionResult.rows[0].state !== 'open') return {
+          status: 409,
+          body: {
             outcome: 'session_unavailable',
             message: `La ${getTerm('session').toLocaleLowerCase('fr')} n’est pas ouverte.`,
-          });
-          return;
-        }
-        response.status(409).json({
-          outcome: 'ineligible',
-          message: `Cette personne ne peut pas être enregistrée dans cette ${getTerm('session').toLocaleLowerCase('fr')}.`,
-        });
-        return;
+          },
+        };
+        return {
+          status: 409,
+          body: {
+            outcome: 'ineligible',
+            message: `Cette personne ne peut pas être enregistrée dans cette ${getTerm('session').toLocaleLowerCase('fr')}.`,
+          },
+        };
       }
 
-      await client.query('COMMIT');
       const { allowed: _allowed, studentId: _studentId, ...attendanceResult } = result;
-      response.set('Cache-Control', 'no-store');
-      response.json({
-        ...attendanceResult,
-        studentId: student.public_id,
-        outcome: result.changed ? 'present' : 'already_present',
-        message: result.changed
-          ? `${student.first_name} ${student.last_name} — présent`
-          : `${student.first_name} ${student.last_name} — déjà présent`,
-      });
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+      return {
+        status: 200,
+        body: {
+          ...attendanceResult,
+          studentId: student.public_id,
+          outcome: result.changed ? 'present' : 'already_present',
+          message: result.changed
+            ? `${student.first_name} ${student.last_name} — présent`
+            : `${student.first_name} ${student.last_name} — déjà présent`,
+        },
+      };
+    });
+    if (outcome.status === 200) response.set('Cache-Control', 'no-store');
+    response.status(outcome.status).json(outcome.body);
   } catch (error) {
     console.error('Unable to update attendance from QR:', error);
     response.status(500).json({
@@ -867,48 +867,35 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
 });
 
 router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, async (request, response) => {
-  if (!request.courseSessionId || !isValidPublicId(request.params.studentId)) {
+  if (!request.courseSessionId || !request.studentId) {
     response.status(404).json({ error: 'Enregistrement introuvable.' });
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const studentId = await resolveStudentId(client, request.params.studentId);
-    if (!studentId) {
-      await client.query('ROLLBACK');
-      response.status(404).json({ error: 'Enregistrement introuvable.' });
-      return;
-    }
-    const result = await markStudentPresent(
+    const result = await withTransaction(pool, (client) => markStudentPresent(
       client,
       request.courseSessionId,
-      studentId,
-    );
+      request.studentId,
+    ));
     if (!result.allowed) {
-      await client.query('ROLLBACK');
       response.status(409).json({
         error: `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte et la personne doit être active et admissible.`,
       });
       return;
     }
 
-    await client.query('COMMIT');
     const { allowed: _allowed, studentId: _studentId, ...attendanceResult } = result;
     response.set('Cache-Control', 'no-store');
     response.json({ ...attendanceResult, studentId: request.params.studentId });
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to update quick attendance:', error);
     response.status(500).json({ error: `Impossible d’enregistrer la ${getTerm('attendance').toLocaleLowerCase('fr')}.` });
-  } finally {
-    client.release();
   }
 });
 
 router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement, async (request, response) => {
-  if (!request.courseSessionId || !isValidPublicId(request.params.studentId)) {
+  if (!request.courseSessionId || !request.studentId) {
     response.status(404).json({ error: 'Enregistrement introuvable.' });
     return;
   }
@@ -923,45 +910,38 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const studentId = await resolveStudentId(client, request.params.studentId);
-    if (!studentId) {
-      await client.query('ROLLBACK');
-      response.status(404).json({ error: 'Enregistrement introuvable.' });
-      return;
-    }
-    const allowedResult = await lockEligibleStudent(
-      client,
-      request.courseSessionId,
-      studentId,
-    );
-    if (allowedResult.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const outcome = await withTransaction(pool, async (client) => {
+      const allowedResult = await lockEligibleStudent(
+        client,
+        request.courseSessionId,
+        request.studentId,
+      );
+      if (allowedResult.rowCount === 0) return { status: 'not_allowed' };
+
+      const updateResult = await client.query(
+        `UPDATE attendance_records
+         SET status = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE session_id = $2
+           AND student_id = $3
+           AND status = 'present'
+           AND ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint = $4::bigint
+         RETURNING status`,
+        [previousStatus, request.courseSessionId, request.studentId, expectedVersion],
+      );
+      return { status: updateResult.rowCount > 0 ? 'updated' : 'stale' };
+    });
+    if (outcome.status === 'not_allowed') {
       response.status(409).json({ error: 'Cette action ne peut plus être annulée.' });
       return;
     }
-
-    const updateResult = await client.query(
-      `UPDATE attendance_records
-       SET status = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE session_id = $2
-         AND student_id = $3
-         AND status = 'present'
-         AND ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint = $4::bigint
-       RETURNING status`,
-      [previousStatus, request.courseSessionId, studentId, expectedVersion],
-    );
-    if (updateResult.rowCount === 0) {
-      await client.query('ROLLBACK');
+    if (outcome.status === 'stale') {
       response.status(409).json({
         error: 'Cet enregistrement a été modifié depuis cette action. Annulation ignorée.',
       });
       return;
     }
 
-    await client.query('COMMIT');
     response.set('Cache-Control', 'no-store');
     response.json({
       studentId: request.params.studentId,
@@ -969,16 +949,13 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
       undone: true,
     });
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to undo quick attendance:', error);
     response.status(500).json({ error: 'Impossible d’annuler cette action.' });
-  } finally {
-    client.release();
   }
 });
 
 router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (request, response) => {
-  if (!request.courseSessionId || !isValidPublicId(request.params.studentId)) {
+  if (!request.courseSessionId || !request.studentId) {
     const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
     response.status(page.status).send(page.html);
     return;
@@ -989,23 +966,24 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const studentId = await resolveStudentId(client, request.params.studentId);
-    if (!studentId) {
-      await client.query('ROLLBACK');
-      const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
-      response.status(page.status).send(page.html);
-      return;
-    }
-    const allowedResult = await lockEligibleStudent(
-      client,
-      request.courseSessionId,
-      studentId,
-    );
-    if (allowedResult.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const updated = await withTransaction(pool, async (client) => {
+      const allowedResult = await lockEligibleStudent(
+        client,
+        request.courseSessionId,
+        request.studentId,
+      );
+      if (allowedResult.rowCount === 0) return false;
+      await client.query(
+        `INSERT INTO attendance_records (session_id, student_id, status)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (session_id, student_id)
+         DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP`,
+        [request.courseSessionId, request.studentId, request.body.status],
+      );
+      return true;
+    });
+    if (!updated) {
       const page = renderMessagePage(
         'Modification impossible',
         `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte et la personne doit être active et admissible.`,
@@ -1015,22 +993,11 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
       return;
     }
 
-    await client.query(
-      `INSERT INTO attendance_records (session_id, student_id, status)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (session_id, student_id)
-       DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP`,
-      [request.courseSessionId, studentId, request.body.status],
-    );
-    await client.query('COMMIT');
     response.redirect(303, `/sessions/${request.params.id}?notice=attendance_updated`);
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to update attendance:', error);
     const page = renderMessagePage('Modification impossible', `Impossible de mettre à jour la ${getTerm('attendance').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
-  } finally {
-    client.release();
   }
 });
 
@@ -1041,65 +1008,62 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const sessionResult = await client.query(
-      'SELECT id, class_id, state, closed_at FROM course_sessions WHERE id = $1 FOR UPDATE',
-      [request.courseSessionId],
-    );
-    if (sessionResult.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const outcome = await withTransaction(pool, async (client) => {
+      const sessionResult = await client.query(
+        'SELECT id, class_id, state, closed_at FROM course_sessions WHERE id = $1 FOR UPDATE',
+        [request.courseSessionId],
+      );
+      if (sessionResult.rowCount === 0) return 'not_found';
+      if (sessionResult.rows[0].state !== 'open') return 'not_open';
+      await client.query(
+        'SELECT id FROM classes WHERE id = $1 FOR UPDATE',
+        [sessionResult.rows[0].class_id],
+      );
+
+      if (sessionResult.rows[0].closed_at) {
+        await client.query(
+          `UPDATE attendance_records
+           SET status = 'absent', updated_at = CURRENT_TIMESTAMP
+           WHERE session_id = $1 AND status = 'pending'`,
+          [request.courseSessionId],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO attendance_records (session_id, student_id, status)
+           SELECT $1, s.id, 'absent'
+           FROM student_classes sc
+           INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
+           WHERE sc.class_id = $2 AND sc.active = TRUE
+           ON CONFLICT (session_id, student_id)
+           DO UPDATE SET status = 'absent', updated_at = CURRENT_TIMESTAMP
+           WHERE attendance_records.status = 'pending'`,
+          [request.courseSessionId, sessionResult.rows[0].class_id],
+        );
+      }
+      await client.query(
+        `UPDATE course_sessions
+         SET state = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP)
+         WHERE id = $1`,
+        [request.courseSessionId],
+      );
+      return 'closed';
+    });
+    if (outcome === 'not_found') {
       const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
-    if (sessionResult.rows[0].state !== 'open') {
-      await client.query('ROLLBACK');
+    if (outcome === 'not_open') {
       const page = renderMessagePage('Clôture impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte.`, 409);
       response.status(page.status).send(page.html);
       return;
     }
-    await client.query(
-      'SELECT id FROM classes WHERE id = $1 FOR UPDATE',
-      [sessionResult.rows[0].class_id],
-    );
-
-    if (sessionResult.rows[0].closed_at) {
-      await client.query(
-        `UPDATE attendance_records
-         SET status = 'absent', updated_at = CURRENT_TIMESTAMP
-         WHERE session_id = $1 AND status = 'pending'`,
-        [request.courseSessionId],
-      );
-    } else {
-      await client.query(
-        `INSERT INTO attendance_records (session_id, student_id, status)
-         SELECT $1, s.id, 'absent'
-         FROM student_classes sc
-         INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
-         WHERE sc.class_id = $2 AND sc.active = TRUE
-         ON CONFLICT (session_id, student_id)
-         DO UPDATE SET status = 'absent', updated_at = CURRENT_TIMESTAMP
-         WHERE attendance_records.status = 'pending'`,
-        [request.courseSessionId, sessionResult.rows[0].class_id],
-      );
-    }
-    await client.query(
-      `UPDATE course_sessions
-       SET state = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP)
-       WHERE id = $1`,
-      [request.courseSessionId],
-    );
-    await client.query('COMMIT');
     response.redirect(303, `/sessions/${request.params.id}?notice=closed`);
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to close course session:', error);
     const page = renderMessagePage('Clôture impossible', `Impossible de clôturer la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
-  } finally {
-    client.release();
   }
 });
 
@@ -1110,43 +1074,40 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const sessionResult = await client.query(
-      'SELECT id, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
-      [request.courseSessionId],
-    );
-    if (sessionResult.rowCount > 0) {
-      await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [sessionResult.rows[0].class_id]);
-    }
-    const result = await client.query(
-      `UPDATE course_sessions
-       SET state = 'open', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
-       WHERE id = $1 AND state IN ('scheduled', 'closed')
-       RETURNING id`,
-      [request.courseSessionId],
-    );
-    if (result.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const outcome = await withTransaction(pool, async (client) => {
+      const sessionResult = await client.query(
+        'SELECT id, class_id, state FROM course_sessions WHERE id = $1 FOR UPDATE',
+        [request.courseSessionId],
+      );
       if (sessionResult.rowCount > 0) {
-        const page = renderMessagePage('Ouverture impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} est déjà ouverte.`, 409);
-        response.status(page.status).send(page.html);
-        return;
+        await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [sessionResult.rows[0].class_id]);
       }
+      const result = await client.query(
+        `UPDATE course_sessions
+         SET state = 'open', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+         WHERE id = $1 AND state IN ('scheduled', 'closed')
+         RETURNING id`,
+        [request.courseSessionId],
+      );
+      if (result.rowCount > 0) return 'opened';
+      return sessionResult.rowCount > 0 ? 'already_open' : 'not_found';
+    });
+    if (outcome === 'already_open') {
+      const page = renderMessagePage('Ouverture impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} est déjà ouverte.`, 409);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    if (outcome === 'not_found') {
       const page = renderSessionNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
-    await client.query('COMMIT');
     response.redirect(303, `/sessions/${request.params.id}?notice=opened`);
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to open course session:', error);
     const page = renderMessagePage('Ouverture impossible', `Impossible d’ouvrir la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
-  } finally {
-    client.release();
   }
 });
 

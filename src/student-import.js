@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
-const { pool } = require('./db/client');
+const { pool, withTransaction } = require('./db/client');
 const {
   insertStudent,
   normalizeStudentValues,
@@ -185,40 +185,36 @@ router.post('/', receiveCsvFile, async (request, response) => {
       continue;
     }
 
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [selectedClass.id]);
-      const existingResult = await client.query(
-        'SELECT id FROM students WHERE LOWER(email) = LOWER($1) FOR UPDATE',
-        [values.email],
-      );
-      let studentId;
-      if (existingResult.rowCount > 0) {
-        studentId = existingResult.rows[0].id;
-        summary.matchedExisting += 1;
-      } else {
-        const student = await insertStudent(client, values);
-        studentId = student.id;
-        summary.created += 1;
-      }
+      await withTransaction(pool, async (client) => {
+        await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [selectedClass.id]);
+        const existingResult = await client.query(
+          'SELECT id FROM students WHERE LOWER(email) = LOWER($1) FOR UPDATE',
+          [values.email],
+        );
+        let studentId;
+        if (existingResult.rowCount > 0) {
+          studentId = existingResult.rows[0].id;
+          summary.matchedExisting += 1;
+        } else {
+          const student = await insertStudent(client, values);
+          studentId = student.id;
+          summary.created += 1;
+        }
 
-      const membershipResult = await client.query(
-        `INSERT INTO student_classes (student_id, class_id)
-         VALUES ($1, $2)
-         ON CONFLICT (student_id, class_id)
-         DO UPDATE SET active = TRUE
-         WHERE student_classes.active = FALSE`,
-        [studentId, selectedClass.id],
-      );
-      summary.newlyAssigned += membershipResult.rowCount;
-      await client.query('COMMIT');
+        const membershipResult = await client.query(
+          `INSERT INTO student_classes (student_id, class_id)
+           VALUES ($1, $2)
+           ON CONFLICT (student_id, class_id)
+           DO UPDATE SET active = TRUE
+           WHERE student_classes.active = FALSE`,
+          [studentId, selectedClass.id],
+        );
+        summary.newlyAssigned += membershipResult.rowCount;
+      });
     } catch (error) {
-      await client.query('ROLLBACK');
       console.error('Unable to import CSV row:', error);
       summary.skipped += 1;
-    } finally {
-      client.release();
     }
   }
 

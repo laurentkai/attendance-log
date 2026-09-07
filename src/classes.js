@@ -7,7 +7,7 @@ const {
   removeClassLogo,
   saveClassLogo,
 } = require('./branding');
-const { pool } = require('./db/client');
+const { pool, withTransaction } = require('./db/client');
 const { getTerm } = require('./terminology');
 const { isValidPublicId } = require('./public-id');
 const { businessTerm, escapeHtml, renderPage } = require('./ui');
@@ -389,43 +389,36 @@ router.post('/:id/students', async (request, response) => {
 
   const studentIds = getStudentIds(request.body);
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const classResult = await client.query('SELECT id, public_id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
-    if (classResult.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const outcome = await withTransaction(pool, async (client) => {
+      const classResult = await client.query('SELECT id, public_id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      if (classResult.rowCount === 0) return { status: 'not_found' };
+      if (studentIds.length === 0) return { status: 'empty' };
+
+      const result = await client.query(
+        `INSERT INTO student_classes (student_id, class_id)
+         SELECT s.id, $1
+         FROM students s
+         WHERE s.active = TRUE AND s.public_id = ANY($2::uuid[])
+         ON CONFLICT DO NOTHING`,
+        [classResult.rows[0].id, studentIds],
+      );
+      return { status: result.rowCount > 0 ? 'added' : 'empty' };
+    });
+    if (outcome.status === 'not_found') {
       const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
-
-    if (studentIds.length === 0) {
-      await client.query('ROLLBACK');
+    if (outcome.status === 'empty') {
       response.redirect(303, `/classes/${request.params.id}?notice=no_students_added`);
       return;
     }
-
-    const result = await client.query(
-      `INSERT INTO student_classes (student_id, class_id)
-       SELECT s.id, $1
-       FROM students s
-       WHERE s.active = TRUE AND s.public_id = ANY($2::uuid[])
-       ON CONFLICT DO NOTHING`,
-      [classResult.rows[0].id, studentIds],
-    );
-    await client.query('COMMIT');
-    response.redirect(
-      303,
-      `/classes/${request.params.id}?notice=${result.rowCount > 0 ? 'students_added' : 'no_students_added'}`,
-    );
+    response.redirect(303, `/classes/${request.params.id}?notice=students_added`);
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to add class memberships:', error);
     const page = renderMessagePage('Ajout impossible', 'Impossible d’ajouter la sélection pour le moment.');
     response.status(page.status).send(page.html);
-  } finally {
-    client.release();
   }
 });
 
@@ -436,22 +429,33 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
-    if (classResult.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const outcome = await withTransaction(pool, async (client) => {
+      const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      if (classResult.rowCount === 0) return { status: 'class_not_found' };
+      const startedResult = await client.query(
+        'SELECT 1 FROM course_sessions WHERE class_id = $1 AND started_at IS NOT NULL LIMIT 1',
+        [classResult.rows[0].id],
+      );
+      if (startedResult.rowCount > 0) return { status: 'started' };
+      const result = await client.query(
+        `DELETE FROM student_classes sc
+         USING students s
+         WHERE sc.class_id = $1
+           AND s.public_id = $2
+           AND s.id = sc.student_id
+           AND s.active = TRUE
+         RETURNING sc.student_id`,
+        [classResult.rows[0].id, request.params.studentId],
+      );
+      return { status: result.rowCount > 0 ? 'removed' : 'membership_not_found' };
+    });
+    if (outcome.status === 'class_not_found') {
       const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
-    const startedResult = await client.query(
-      'SELECT 1 FROM course_sessions WHERE class_id = $1 AND started_at IS NOT NULL LIMIT 1',
-      [classResult.rows[0].id],
-    );
-    if (startedResult.rowCount > 0) {
-      await client.query('ROLLBACK');
+    if (outcome.status === 'started') {
       const page = renderMessagePage(
         'Retrait impossible',
         `Cette ${getTerm('class').toLocaleLowerCase('fr')} a déjà commencé. Désactivez la ${getTerm('membership').toLocaleLowerCase('fr')} pour préserver l’historique.`,
@@ -460,31 +464,16 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
       response.status(page.status).send(page.html);
       return;
     }
-    const result = await client.query(
-      `DELETE FROM student_classes sc
-       USING students s
-       WHERE sc.class_id = $1
-         AND s.public_id = $2
-         AND s.id = sc.student_id
-         AND s.active = TRUE
-       RETURNING sc.student_id`,
-      [classResult.rows[0].id, request.params.studentId],
-    );
-    if (result.rowCount === 0) {
-      await client.query('ROLLBACK');
+    if (outcome.status === 'membership_not_found') {
       const page = renderMessagePage('Affectation introuvable', 'Cette affectation active n’existe pas.', 404);
       response.status(page.status).send(page.html);
       return;
     }
-    await client.query('COMMIT');
     response.redirect(303, `/classes/${request.params.id}?notice=student_removed`);
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to remove class membership:', error);
     const page = renderMessagePage('Retrait impossible', 'Impossible de retirer cette personne pour le moment.');
     response.status(page.status).send(page.html);
-  } finally {
-    client.release();
   }
 });
 
@@ -495,42 +484,38 @@ async function updateMembershipActivity(request, response, active) {
     return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
-    if (classResult.rowCount === 0) {
-      await client.query('ROLLBACK');
+    const outcome = await withTransaction(pool, async (client) => {
+      const classResult = await client.query('SELECT id FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      if (classResult.rowCount === 0) return { status: 'class_not_found' };
+      const result = await client.query(
+        `UPDATE student_classes sc
+         SET active = $3
+         FROM students s
+         WHERE sc.class_id = $1
+           AND s.public_id = $2
+           AND s.id = sc.student_id
+           AND s.active = TRUE
+         RETURNING sc.student_id`,
+        [classResult.rows[0].id, request.params.studentId, active],
+      );
+      return { status: result.rowCount > 0 ? 'updated' : 'membership_not_found' };
+    });
+    if (outcome.status === 'class_not_found') {
       const page = renderClassNotFoundPage();
       response.status(page.status).send(page.html);
       return;
     }
-    const result = await client.query(
-      `UPDATE student_classes sc
-       SET active = $3
-       FROM students s
-       WHERE sc.class_id = $1
-         AND s.public_id = $2
-         AND s.id = sc.student_id
-         AND s.active = TRUE
-       RETURNING sc.student_id`,
-      [classResult.rows[0].id, request.params.studentId, active],
-    );
-    if (result.rowCount === 0) {
-      await client.query('ROLLBACK');
+    if (outcome.status === 'membership_not_found') {
       const page = renderMessagePage('Affectation introuvable', 'Cette affectation active ne peut pas être modifiée.', 404);
       response.status(page.status).send(page.html);
       return;
     }
-    await client.query('COMMIT');
     response.redirect(303, `/classes/${request.params.id}?notice=${active ? 'membership_reactivated' : 'membership_deactivated'}`);
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('Unable to update class membership activity:', error);
     const page = renderMessagePage('Modification impossible', 'Impossible de modifier cette affectation pour le moment.');
     response.status(page.status).send(page.html);
-  } finally {
-    client.release();
   }
 }
 
