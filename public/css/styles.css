@@ -1080,6 +1080,26 @@ select {
   background: var(--surface);
 }
 
+.branding-logo-preview {
+  min-height: 6rem;
+  padding: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.branding-logo-preview img {
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 6rem;
+  object-fit: contain;
+}
+
 .settings-layout {
   --bs-gutter-x: 1.5rem;
 }
@@ -1622,6 +1642,71 @@ legend,
   margin-top: -0.35rem;
   color: var(--ink-muted);
   font-size: 0.9rem;
+}
+
+.qr-print-mode {
+  flex-wrap: wrap;
+}
+
+.qr-print-participant-list {
+  max-height: min(22rem, 45vh);
+  overflow-y: auto;
+}
+
+.qr-print-participant {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.qr-print-participant[hidden] {
+  display: none;
+}
+
+.qr-print-participant .form-check-input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.qr-print-participant .compact-identity {
+  display: grid;
+  min-width: 0;
+}
+
+.qr-print-participant .compact-meta {
+  overflow-wrap: anywhere;
+}
+
+.qr-print-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1.5rem;
+}
+
+.qr-print-summary div {
+  min-width: 0;
+}
+
+.qr-print-summary dt {
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.qr-print-summary dd {
+  margin: 0.15rem 0 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 48rem) {
+  .qr-print-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 label,

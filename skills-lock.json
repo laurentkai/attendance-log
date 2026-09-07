@@ -25,6 +25,11 @@
       "skillPath": ".claude/skills/owasp-security/SKILL.md",
       "computedHash": "3441937e14d1be92267310c4b6b17db2ecc04a6d7f60ded24abc122bfb4ae04c"
     },
+    "print-layout": {
+      "source": "/Users/lka/SourceCode/attendance-log/local-skills",
+      "sourceType": "local",
+      "computedHash": "1a124e158e2a3df3f27b5aaecd069dffabb079f5410ef17df45a449ece0ff7a7"
+    },
     "web-design-guidelines": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",

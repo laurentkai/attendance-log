@@ -83,6 +83,7 @@ function renderSettingsNavigation(activeSection) {
     <a class="nav-link${activeSection === 'email' ? ' active' : ''}" href="/settings/email"${activeSection === 'email' ? ' aria-current="page"' : ''}>E-mail</a>
     <a class="nav-link${activeSection === 'security' ? ' active' : ''}" href="/settings/security"${activeSection === 'security' ? ' aria-current="page"' : ''}>Sécurité</a>
     <a class="nav-link${activeSection === 'backups' ? ' active' : ''}" href="/settings/backups"${activeSection === 'backups' ? ' aria-current="page"' : ''}>Sauvegardes</a>
+    <a class="nav-link${activeSection === 'branding' ? ' active' : ''}" href="/settings/branding"${activeSection === 'branding' ? ' aria-current="page"' : ''}>Identité visuelle</a>
     <a class="nav-link${activeSection === 'terminology' ? ' active' : ''}" href="/settings/terminology"${activeSection === 'terminology' ? ' aria-current="page"' : ''}>Terminologie</a>
     <a class="nav-link${activeSection === 'maintenance' ? ' active' : ''}" href="/settings/maintenance"${activeSection === 'maintenance' ? ' aria-current="page"' : ''}>Maintenance</a>
     <a class="nav-link${activeSection === 'users' ? ' active' : ''}" href="/settings/users"${activeSection === 'users' ? ' aria-current="page"' : ''}>Utilisateurs</a>
@@ -145,6 +146,7 @@ function renderPage(title, content, {
     <script src="/js/otp-resend.js" defer></script>
     <script src="/js/classes.js" defer></script>
     <script src="/js/live-attendance.js" defer></script>
+    <script src="/js/student-qr-print.js" defer></script>
     <script src="/js/pwa.js" defer></script>
   </head>
   <body class="bg-body-tertiary${authenticated && navigation ? ' app-shell' : ''}" data-term-session="${businessTerm('session')}" data-term-attendance="${businessTerm('attendance')}">

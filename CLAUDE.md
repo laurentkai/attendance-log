@@ -73,6 +73,14 @@ For meaningful reviews involving authentication, authorization, sessions, OTP, p
 
 Consult the skill before tracing or reporting those security paths. It supplements `AGENTS.md`; do not restate or substitute its guidance here.
 
+## Print-layout review skill
+
+For reviews involving PDF generation, physical print layouts, Avery labels, badges, QR print sheets, calibration, or other fixed-size print geometry, read and apply:
+
+- `print-layout` — `.agents/skills/print-layout/SKILL.md` (discoverable by Claude through `.claude/skills/print-layout/SKILL.md`)
+
+Consult the skill before reviewing those areas; do not restate or substitute its guidance here.
+
 ## Domain integrity review
 
 ### Attendance and reporting

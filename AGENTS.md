@@ -86,6 +86,14 @@ For meaningful implementation work involving authentication, authorization, sess
 
 Consult the skill before editing those code paths. It supplements but does not override this file; do not invoke it mechanically for changes with no material security impact.
 
+### Installed print-layout skill
+
+For meaningful implementation work involving PDF generation, physical print layouts, Avery labels, badges, QR print sheets, calibration, or other fixed-size print geometry, read and apply:
+
+- `print-layout` — `.agents/skills/print-layout/SKILL.md`
+
+Consult the skill before designing or editing those outputs. It supplements but does not override this file.
+
 ### Mobile, accessibility, and browser validation
 
 - Use meaningful touch targets, visible keyboard focus, native semantics, and accessible names for icon-only controls.

@@ -1,4 +1,12 @@
 const express = require('express');
+const multer = require('multer');
+const {
+  getClassLogo,
+  logoUpload,
+  normalizeLogoUpload,
+  removeClassLogo,
+  saveClassLogo,
+} = require('./branding');
 const { pool } = require('./db/client');
 const { getTerm } = require('./terminology');
 const { isValidPublicId } = require('./public-id');
@@ -32,10 +40,51 @@ function getFormValues(body = {}) {
   };
 }
 
-function renderClassForm({ title, action, submitLabel, values, error = '' }) {
+function renderClassForm({
+  title,
+  action,
+  submitLabel,
+  values,
+  classId = '',
+  hasLogo = false,
+  logoNotice = '',
+  error = '',
+}) {
   const errorMessage = error
     ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
+
+  const logoMessages = {
+    saved: ['success', 'Le logo de cette activité a été enregistré.'],
+    removed: ['success', 'Le logo propre à cette activité a été supprimé. Le logo de l’installation sera utilisé.'],
+    invalid: ['danger', 'Choisissez une image PNG ou JPEG valide de 2 Mo maximum.'],
+    failed: ['danger', 'Impossible d’enregistrer le logo pour le moment.'],
+  };
+  const logoFeedback = logoMessages[logoNotice];
+  const logoSection = classId ? `<section class="page-section mt-4" aria-labelledby="activity-logo-title">
+    <div class="section-header">
+      <div>
+        <h2 id="activity-logo-title">Logo de l’${businessTerm('class').toLocaleLowerCase('fr')}</h2>
+        <p class="section-description">Ce logo remplace celui de l’installation pour les badges et e-mails QR liés à cette activité.</p>
+      </div>
+    </div>
+    ${logoFeedback ? `<p class="alert alert-${logoFeedback[0]}" role="${logoFeedback[0] === 'success' ? 'status' : 'alert'}">${escapeHtml(logoFeedback[1])}</p>` : ''}
+    <div class="card card-body app-form">
+      ${hasLogo ? `<div class="branding-logo-preview">
+        <img src="/classes/${escapeHtml(classId)}/logo" width="240" height="96" alt="Logo actuel de cette activité">
+      </div>` : '<p class="empty-state mb-0">Aucun logo propre n’est configuré. Le logo de l’installation est utilisé par défaut.</p>'}
+      <form class="app-form" method="post" action="/classes/${escapeHtml(classId)}/logo" enctype="multipart/form-data">
+        <div class="form-field">
+          <label for="activity-logo">${hasLogo ? 'Remplacer le logo' : 'Choisir un logo'}</label>
+          <input class="form-control" id="activity-logo" name="logo" type="file" accept="image/png,image/jpeg" required>
+        </div>
+        <div class="form-actions"><button class="btn btn-primary" type="submit">${hasLogo ? 'Remplacer' : 'Enregistrer'}</button></div>
+      </form>
+      ${hasLogo ? `<form method="post" action="/classes/${escapeHtml(classId)}/logo/remove" data-confirm="Supprimer le logo propre à cette activité ?">
+        <button class="btn btn-outline-danger" type="submit">Supprimer le logo</button>
+      </form>` : ''}
+    </div>
+  </section>` : '';
 
   return renderPage(title, `
     <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
@@ -59,7 +108,8 @@ function renderClassForm({ title, action, submitLabel, values, error = '' }) {
         <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
         <a class="btn btn-outline-secondary" href="/classes">Annuler</a>
       </div>
-    </form>`);
+    </form>
+    ${logoSection}`);
 }
 
 function getStudentIds(body = {}) {
@@ -501,7 +551,8 @@ router.get('/:id/edit', async (request, response) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, public_id, name, description FROM classes WHERE public_id = $1',
+      `SELECT id, public_id, name, description, (logo_data IS NOT NULL) AS has_logo
+       FROM classes WHERE public_id = $1`,
       [request.params.id],
     );
 
@@ -516,6 +567,9 @@ router.get('/:id/edit', async (request, response) => {
       action: `/classes/${result.rows[0].public_id}`,
       submitLabel: 'Enregistrer',
       values: result.rows[0],
+      classId: result.rows[0].public_id,
+      hasLogo: result.rows[0].has_logo,
+      logoNotice: typeof request.query.logo_notice === 'string' ? request.query.logo_notice : '',
     }));
   } catch (error) {
     console.error('Unable to load class:', error);
@@ -527,6 +581,72 @@ router.get('/:id/edit', async (request, response) => {
   }
 });
 
+router.get('/:id/logo', async (request, response) => {
+  if (!isValidPublicId(request.params.id)) return response.status(404).end();
+  try {
+    const logo = await getClassLogo(request.params.id);
+    if (!logo) return response.status(404).end();
+    response.set({
+      'Cache-Control': 'private, no-store, max-age=0',
+      'Content-Type': logo.mimeType,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return response.send(logo.data);
+  } catch (error) {
+    console.error('Unable to render activity logo:', error.code || 'DATABASE_ERROR');
+    return response.status(500).end();
+  }
+});
+
+router.post('/:id/logo', (request, response) => {
+  if (!isValidPublicId(request.params.id)) {
+    const page = renderClassNotFoundPage();
+    response.status(page.status).send(page.html);
+    return;
+  }
+  logoUpload.single('logo')(request, response, async (uploadError) => {
+    if (uploadError instanceof multer.MulterError || uploadError || !request.file) {
+      response.redirect(303, `/classes/${request.params.id}/edit?logo_notice=invalid`);
+      return;
+    }
+    try {
+      const logo = await normalizeLogoUpload(request.file);
+      if (!await saveClassLogo(request.params.id, logo)) {
+        const page = renderClassNotFoundPage();
+        response.status(page.status).send(page.html);
+        return;
+      }
+      response.redirect(303, `/classes/${request.params.id}/edit?logo_notice=saved`);
+    } catch (error) {
+      if (['INVALID_LOGO', 'LOGO_TOO_LARGE'].includes(error.code)) {
+        response.redirect(303, `/classes/${request.params.id}/edit?logo_notice=invalid`);
+        return;
+      }
+      console.error('Unable to save activity logo:', error.code || 'DATABASE_ERROR');
+      response.redirect(303, `/classes/${request.params.id}/edit?logo_notice=failed`);
+    }
+  });
+});
+
+router.post('/:id/logo/remove', async (request, response) => {
+  if (!isValidPublicId(request.params.id)) {
+    const page = renderClassNotFoundPage();
+    response.status(page.status).send(page.html);
+    return;
+  }
+  try {
+    if (!await removeClassLogo(request.params.id)) {
+      const page = renderClassNotFoundPage();
+      response.status(page.status).send(page.html);
+      return;
+    }
+    response.redirect(303, `/classes/${request.params.id}/edit?logo_notice=removed`);
+  } catch (error) {
+    console.error('Unable to remove activity logo:', error.code || 'DATABASE_ERROR');
+    response.redirect(303, `/classes/${request.params.id}/edit?logo_notice=failed`);
+  }
+});
+
 router.post('/:id', async (request, response) => {
   if (!isValidPublicId(request.params.id)) {
     const page = renderClassNotFoundPage();
@@ -535,6 +655,20 @@ router.post('/:id', async (request, response) => {
   }
 
   const values = getFormValues(request.body);
+  let currentLogo;
+  try {
+    currentLogo = await getClassLogo(request.params.id);
+    if (currentLogo === undefined) {
+      const page = renderClassNotFoundPage();
+      response.status(page.status).send(page.html);
+      return;
+    }
+  } catch (error) {
+    console.error('Unable to load activity branding before update:', error.code || 'DATABASE_ERROR');
+    const page = renderMessagePage('Fiche indisponible', 'Impossible de charger l’élément demandé pour le moment.');
+    response.status(page.status).send(page.html);
+    return;
+  }
 
   if (!values.name) {
     response.status(400).send(renderClassForm({
@@ -542,6 +676,8 @@ router.post('/:id', async (request, response) => {
       action: `/classes/${request.params.id}`,
       submitLabel: 'Enregistrer',
       values,
+      classId: request.params.id,
+      hasLogo: Boolean(currentLogo),
       error: 'Le nom est obligatoire.',
     }));
     return;
@@ -567,6 +703,8 @@ router.post('/:id', async (request, response) => {
       action: `/classes/${request.params.id}`,
       submitLabel: 'Enregistrer',
       values,
+      classId: request.params.id,
+      hasLogo: Boolean(currentLogo),
       error: 'Impossible d’enregistrer les modifications pour le moment.',
     }));
   }

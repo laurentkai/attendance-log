@@ -13,6 +13,7 @@ const {
 } = require('./auth');
 const adminUserSettingsRouter = require('./admin-user-settings');
 const backupSettingsRouter = require('./backup-settings');
+const brandingSettingsRouter = require('./branding-settings');
 const { getStoredBackupSecretStatus, startBackupScheduler } = require('./backup');
 const classesRouter = require('./classes');
 const courseSessionsRouter = require('./course-sessions');
@@ -32,6 +33,7 @@ const { initializeInstanceIdentity } = require('./instance');
 const { hasPermission, permissions } = require('./permissions');
 const { requestContextMiddleware } = require('./request-context');
 const studentImportRouter = require('./student-import');
+const studentQrPrintRouter = require('./student-qr-print');
 const studentsRouter = require('./students');
 const terminologySettingsRouter = require('./terminology-settings');
 const { loadTerminology } = require('./terminology');
@@ -148,11 +150,13 @@ app.use('/sessions', requirePermission(permissions.viewSessions), courseSessions
 app.use('/settings/email', requirePermission(permissions.manageSettings), mailSettingsRouter);
 app.use('/settings/security', requirePermission(permissions.manageSettings), securitySettingsRouter);
 app.use('/settings/backups', requirePermission(permissions.manageSettings), backupSettingsRouter);
+app.use('/settings/branding', requirePermission(permissions.manageSettings), brandingSettingsRouter);
 app.use('/settings/maintenance', requirePermission(permissions.manageSettings), maintenanceSettingsRouter);
 app.use('/settings/terminology', requirePermission(permissions.manageSettings), terminologySettingsRouter);
 app.use('/settings/users', requirePermission(permissions.manageUsers), adminUserSettingsRouter);
 app.use('/reporting', requirePermission(permissions.viewReporting), reportingRouter);
 app.use('/students/import', requirePermission(permissions.manageStudents), studentImportRouter);
+app.use('/students/qr-print', requirePermission(permissions.manageStudents), studentQrPrintRouter);
 app.use('/students', requirePermission(permissions.manageStudents), studentsRouter);
 
 app.get('/', async (request, response) => {

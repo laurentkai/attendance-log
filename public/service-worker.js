@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'attendance-log-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v1`;
+const CACHE_NAME = `${CACHE_PREFIX}v2`;
 const OFFLINE_URL = '/offline.html';
 const STATIC_ASSETS = [
   OFFLINE_URL,
@@ -13,6 +13,7 @@ const STATIC_ASSETS = [
   '/js/otp-resend.js',
   '/js/pwa.js',
   '/js/security.js',
+  '/js/student-qr-print.js',
   '/js/user-actions-dropdown.js',
   '/icons/attendance-log-192.png',
   '/icons/attendance-log-512.png',

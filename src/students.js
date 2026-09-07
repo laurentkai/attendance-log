@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('./db/client');
 const { sendMail } = require('./mail');
+const { getEffectiveLogoForStudent } = require('./branding');
 const {
   insertStudent,
   normalizeStudentValues,
@@ -223,6 +224,7 @@ router.get('/', async (request, response) => {
         <div class="context-actions d-flex flex-wrap gap-2">
           <a class="btn btn-primary" href="/students/new">Ajouter</a>
           <a class="btn btn-outline-secondary" href="/students/import">Importer</a>
+          <a class="btn btn-outline-secondary" href="/students/qr-print">Imprimer les QR</a>
         </div>
       </header>
       <nav class="nav nav-pills view-switch" aria-label="Filtrer les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} par ${businessTerm('class').toLocaleLowerCase('fr')}">
@@ -426,8 +428,11 @@ router.post('/:id/qr/email', async (request, response) => {
 
   let message;
   try {
-    const qrPng = await createStudentQrPng(student.qr_token);
-    message = createStudentQrEmail(student, qrPng);
+    const [qrPng, logo] = await Promise.all([
+      createStudentQrPng(student.qr_token),
+      getEffectiveLogoForStudent(student.id),
+    ]);
+    message = createStudentQrEmail(student, qrPng, logo);
   } catch (error) {
     console.error('Unable to generate student QR email:', error.code || error.name || 'QR_ERROR');
     response.status(500).send(renderStudentQrPage(student, {
