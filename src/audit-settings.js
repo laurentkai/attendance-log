@@ -19,6 +19,7 @@ const COMPACT_RESULT_LABELS = Object.freeze({ success: 'OK', denied: 'Refusé', 
 const RESULT_CLASSES = Object.freeze({ success: 'text-success', denied: 'text-warning-emphasis', failed: 'text-danger' });
 const ACTION_LABELS = Object.freeze({
   'attendance.manual.update': 'Présence modifiée manuellement',
+  'attendance.check_in_time.update': 'Heure d’arrivée corrigée',
   'attendance.qr.present': 'Présence enregistrée par QR',
   'attendance.quick.present': 'Présence enregistrée en mode rapide',
   'attendance.undo': 'Présence rapide annulée',
@@ -50,6 +51,7 @@ const ACTION_LABELS = Object.freeze({
 });
 const COMPACT_ACTION_LABELS = Object.freeze({
   'attendance.manual.update': 'Présence modifiée',
+  'attendance.check_in_time.update': 'Arrivée corrigée',
   'attendance.qr.present': 'Présence QR',
   'attendance.quick.present': 'Présence rapide',
   'attendance.undo': 'Présence annulée',
@@ -90,6 +92,9 @@ const FIELD_LABELS = Object.freeze({
   attendance_plural: 'Présence (pluriel)', instructor_singular: 'Responsable (singulier)',
   instructor_plural: 'Responsable (pluriel)', membership_singular: 'Inscription (singulier)',
   membership_plural: 'Inscription (pluriel)',
+  checked_in_at: 'Heure d’arrivée', start_time: 'Heure de début',
+  punctuality_tolerance_minutes: 'Tolérance de l’activité',
+  punctuality_tolerance_override_minutes: 'Tolérance de la session',
 });
 
 function dateValue(value) {

@@ -13,6 +13,7 @@ const {
 } = require('./auth');
 const adminUserSettingsRouter = require('./admin-user-settings');
 const auditSettingsRouter = require('./audit-settings');
+const { getApplicationTimezone } = require('./application-time');
 const backupSettingsRouter = require('./backup-settings');
 const brandingSettingsRouter = require('./branding-settings');
 const { getStoredBackupSecretStatus, startBackupScheduler } = require('./backup');
@@ -246,6 +247,7 @@ app.get('/', async (request, response) => {
 async function start() {
   try {
     await verifyDatabaseConnection();
+    getApplicationTimezone();
     await cleanupStaleRestoreWorkspaces();
     await initializeInstanceIdentity();
     const keyInfo = await initializeSecrets();

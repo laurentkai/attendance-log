@@ -56,6 +56,7 @@ Edit `.env` with installation-specific values. Never commit this file.
 | `PORT` | Host port mapped to application port `3000` | Optional; defaults to `3000` |
 | `NODE_ENV` | Node environment | Set to `production` on the VPS |
 | `APP_BASE_URL` | Canonical public application URL used in administrator invitation e-mails | Required for invitations; use the public HTTPS origin in production |
+| `APP_TIMEZONE` | IANA timezone used to interpret session dates and local attendance times | Optional; defaults to `Europe/Brussels` |
 | `POSTGRES_DB` | Compose PostgreSQL database name | Configure for the installation |
 | `POSTGRES_USER` | Compose PostgreSQL user | Configure for the installation |
 | `POSTGRES_PASSWORD` | Compose PostgreSQL password | Use a strong, unique value |
@@ -77,9 +78,12 @@ BIND_ADDRESS=127.0.0.1
 PORT=3000
 NODE_ENV=production
 APP_BASE_URL=https://attendance.example.com
+APP_TIMEZONE=Europe/Brussels
 ```
 
 This restricts the application port to the VPS loopback interface while nginx serves public HTTPS traffic. A local `docker-compose.override.yml` is no longer required to change the bind address for this deployment.
+
+Set `APP_TIMEZONE` to the installation's operational IANA timezone. Session start times and manually corrected arrival times are interpreted in this zone, independently of the VPS or container timezone.
 
 ### 3. Build the image
 

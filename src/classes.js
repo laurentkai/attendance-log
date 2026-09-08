@@ -11,6 +11,7 @@ const {
 const { pool, withTransaction } = require('./db/client');
 const { getTerm } = require('./terminology');
 const { isValidPublicId } = require('./public-id');
+const { TOLERANCE_VALUES, isValidTolerance } = require('./punctuality');
 const { businessTerm, escapeHtml, renderPage } = require('./ui');
 
 const router = express.Router();
@@ -38,6 +39,7 @@ function getFormValues(body = {}) {
     description: typeof body.description === 'string'
       ? body.description.trim()
       : '',
+    punctuality_tolerance_minutes: Number.parseInt(body.punctuality_tolerance_minutes || '5', 10),
   };
 }
 
@@ -103,6 +105,14 @@ function renderClassForm({
       <div class="form-field">
         <label for="description">Description</label>
         <textarea class="form-control" id="description" name="description" rows="5" autocomplete="off">${escapeHtml(values.description || '')}</textarea>
+      </div>
+
+      <div class="form-field">
+        <label for="punctuality-tolerance">Tolérance de ponctualité</label>
+        <select class="form-select" id="punctuality-tolerance" name="punctuality_tolerance_minutes" required>
+          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_minutes) === minutes ? ' selected' : ''}>+${minutes} minutes</option>`).join('')}
+        </select>
+        <p class="form-text mb-0">Cette valeur s’applique aux sessions qui héritent du réglage de l’activité.</p>
       </div>
 
       <div class="form-actions d-flex flex-wrap gap-2">
@@ -183,20 +193,20 @@ router.get('/new', (_request, response) => {
     title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
     action: '/classes',
     submitLabel: 'Créer',
-    values: { name: '', description: '' },
+    values: { name: '', description: '', punctuality_tolerance_minutes: 5 },
   }));
 });
 
 router.post('/', async (request, response) => {
   const values = getFormValues(request.body);
 
-  if (!values.name) {
+  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes)) {
     response.status(400).send(renderClassForm({
       title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
       action: '/classes',
       submitLabel: 'Créer',
       values,
-      error: 'Le nom est obligatoire.',
+      error: !values.name ? 'Le nom est obligatoire.' : 'Sélectionnez une tolérance de ponctualité valide.',
     }));
     return;
   }
@@ -204,13 +214,18 @@ router.post('/', async (request, response) => {
   try {
     await withTransaction(pool, async (client) => {
       const result = await client.query(
-        'INSERT INTO classes (name, description) VALUES ($1, $2) RETURNING public_id',
-        [values.name, values.description || null],
+        `INSERT INTO classes (name, description, punctuality_tolerance_minutes)
+         VALUES ($1, $2, $3) RETURNING public_id`,
+        [values.name, values.description || null, values.punctuality_tolerance_minutes],
       );
       await recordAuditEvent({
         client, category: 'class', action: 'class.create', targetType: 'class',
         targetPublicId: result.rows[0].public_id, targetLabel: values.name,
-        summary: 'Activité créée.', afterData: { name: values.name, description: values.description || null },
+        summary: 'Activité créée.', afterData: {
+          name: values.name,
+          description: values.description || null,
+          punctuality_tolerance_minutes: values.punctuality_tolerance_minutes,
+        },
       });
     });
     response.redirect(303, '/classes?notice=created');
@@ -560,7 +575,8 @@ router.get('/:id/edit', async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, public_id, name, description, (logo_data IS NOT NULL) AS has_logo
+      `SELECT id, public_id, name, description, punctuality_tolerance_minutes,
+              (logo_data IS NOT NULL) AS has_logo
        FROM classes WHERE public_id = $1`,
       [request.params.id],
     );
@@ -704,7 +720,7 @@ router.post('/:id', async (request, response) => {
     return;
   }
 
-  if (!values.name) {
+  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes)) {
     response.status(400).send(renderClassForm({
       title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
       action: `/classes/${request.params.id}`,
@@ -712,23 +728,38 @@ router.post('/:id', async (request, response) => {
       values,
       classId: request.params.id,
       hasLogo: Boolean(currentLogo),
-      error: 'Le nom est obligatoire.',
+      error: !values.name ? 'Le nom est obligatoire.' : 'Sélectionnez une tolérance de ponctualité valide.',
     }));
     return;
   }
 
   try {
     const result = await withTransaction(pool, async (client) => {
-      const current = await client.query('SELECT public_id, name, description FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      const current = await client.query(
+        `SELECT public_id, name, description, punctuality_tolerance_minutes
+         FROM classes WHERE public_id = $1 FOR UPDATE`,
+        [request.params.id],
+      );
       if (current.rowCount === 0) return current;
       const updated = await client.query(
-        'UPDATE classes SET name = $1, description = $2 WHERE public_id = $3 RETURNING id',
-        [values.name, values.description || null, request.params.id],
+        `UPDATE classes
+         SET name = $1, description = $2, punctuality_tolerance_minutes = $3
+         WHERE public_id = $4 RETURNING id`,
+        [values.name, values.description || null, values.punctuality_tolerance_minutes, request.params.id],
       );
       await recordAuditEvent({
         client, category: 'class', action: 'class.update', targetType: 'class',
         targetPublicId: request.params.id, targetLabel: values.name, summary: 'Activité mise à jour.',
-        beforeData: { name: current.rows[0].name, description: current.rows[0].description }, afterData: { name: values.name, description: values.description || null },
+        beforeData: {
+          name: current.rows[0].name,
+          description: current.rows[0].description,
+          punctuality_tolerance_minutes: current.rows[0].punctuality_tolerance_minutes,
+        },
+        afterData: {
+          name: values.name,
+          description: values.description || null,
+          punctuality_tolerance_minutes: values.punctuality_tolerance_minutes,
+        },
       });
       return updated;
     });

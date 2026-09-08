@@ -1,4 +1,5 @@
 const ExcelJS = require('exceljs');
+const { formatLocalTime, normalizeClockTime } = require('./application-time');
 const { formatDateForInput } = require('./date-format');
 const { getTerm } = require('./terminology');
 
@@ -51,6 +52,12 @@ function addSummarySheet(workbook, title, summary, extraRows = []) {
     ['Présents', summary.present],
     ['Absents', summary.absent],
     [attendanceRateLabel, summary.attendanceRate],
+    ...(summary.punctualityApplicable ? [
+      ['Présents avec heure connue', summary.punctualityKnown],
+      ['À l’heure', summary.onTime],
+      ['En retard', summary.late],
+      ['Taux de ponctualité', summary.punctualityRate],
+    ] : []),
     ['Généré le', new Date()],
   ];
   rows.forEach(([label, value]) => sheet.addRow({ label, value }));
@@ -60,6 +67,8 @@ function addSummarySheet(workbook, title, summary, extraRows = []) {
   });
   const rateRow = rows.findIndex(([label]) => label === attendanceRateLabel) + 2;
   sheet.getCell(rateRow, 2).numFmt = '0.0%';
+  const punctualityRateRow = rows.findIndex(([label]) => label === 'Taux de ponctualité');
+  if (punctualityRateRow >= 0) sheet.getCell(punctualityRateRow + 2, 2).numFmt = '0.0%';
   return sheet;
 }
 
@@ -68,13 +77,18 @@ function addSessionRows(sheet, sessions) {
     date: toExcelDate(session.date),
     title: session.title,
     instructor: session.instructor,
+    startTime: normalizeClockTime(session.start_time || '') || null,
     expected: session.opportunities,
     present: session.present,
     absent: session.absent,
     rate: session.attendanceRate,
+    onTime: session.punctualityApplicable ? session.onTime : null,
+    late: session.punctualityApplicable ? session.late : null,
+    punctualityRate: session.punctualityApplicable ? session.punctualityRate : null,
   }));
   sheet.getColumn('date').numFmt = 'dd/mm/yyyy';
   sheet.getColumn('rate').numFmt = '0.0%';
+  sheet.getColumn('punctualityRate').numFmt = '0.0%';
 }
 
 function addStudentRows(sheet, students) {
@@ -100,6 +114,12 @@ function addDetailRows(sheet, details, { includeStudent = true, includeCourse = 
       code: row.student_code,
       email: row.email,
       status: STATUS_LABELS[row.status] || row.status,
+      startTime: normalizeClockTime(row.start_time || '') || null,
+      arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || 'Inconnue' : null,
+      delayMinutes: row.punctuality?.delayMinutes ?? null,
+      punctuality: row.punctuality?.available
+        ? row.punctuality.status === 'late' ? 'En retard' : 'À l’heure'
+        : null,
     };
     if (!includeStudent) {
       delete values.student;
@@ -123,10 +143,14 @@ function buildCourseWorkbook(report) {
     { header: 'Date', key: 'date', width: 14 },
     { header: getTerm('session'), key: 'title', width: 30 },
     { header: getTerm('instructor'), key: 'instructor', width: 24 },
+    { header: 'Heure de début', key: 'startTime', width: 16 },
     { header: `${getTerm('student', 'plural')} attendus`, key: 'expected', width: 18 },
     { header: 'Présents', key: 'present', width: 12 },
     { header: 'Absents', key: 'absent', width: 12 },
     { header: `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`, key: 'rate', width: 19 },
+    { header: 'À l’heure', key: 'onTime', width: 12 },
+    { header: 'En retard', key: 'late', width: 12 },
+    { header: 'Taux de ponctualité', key: 'punctualityRate', width: 20 },
   ]);
   addSessionRows(sessionSheet, report.sessions);
 
@@ -150,6 +174,10 @@ function buildCourseWorkbook(report) {
     { header: 'Code d’identification', key: 'code', width: 20 },
     { header: 'E-mail', key: 'email', width: 34 },
     { header: 'Statut', key: 'status', width: 14 },
+    { header: 'Heure de début', key: 'startTime', width: 16 },
+    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
+    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
+    { header: 'Ponctualité', key: 'punctuality', width: 15 },
   ]);
   addDetailRows(detailSheet, report.details);
   return workbook;
@@ -164,6 +192,10 @@ function buildSessionWorkbook(report) {
     [getTerm('class'), report.session.class_name],
     ['Date', toExcelDate(report.session.date)],
     [getTerm('instructor'), report.session.instructor],
+    ['Heure de début', normalizeClockTime(report.session.start_time || '') || 'Non définie'],
+    ['Tolérance de ponctualité', report.session.start_time
+      ? `+${report.session.effective_tolerance_minutes} minutes`
+      : 'Non applicable'],
   ]);
 
   const sheet = workbook.addWorksheet('Présences');
@@ -172,12 +204,20 @@ function buildSessionWorkbook(report) {
     { header: 'Code d’identification', key: 'code', width: 20 },
     { header: 'E-mail', key: 'email', width: 34 },
     { header: 'Statut', key: 'status', width: 14 },
+    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
+    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
+    { header: 'Ponctualité', key: 'punctuality', width: 15 },
   ]);
   report.details.forEach((row) => sheet.addRow({
     student: `${row.first_name} ${row.last_name}`,
     code: row.student_code,
     email: row.email,
     status: STATUS_LABELS[row.status] || row.status,
+    arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || 'Inconnue' : null,
+    delayMinutes: row.punctuality?.delayMinutes ?? null,
+    punctuality: row.punctuality?.available
+      ? row.punctuality.status === 'late' ? 'En retard' : 'À l’heure'
+      : null,
   }));
   return workbook;
 }
@@ -198,6 +238,10 @@ function buildStudentWorkbook(report) {
     { header: getTerm('session'), key: 'session', width: 30 },
     { header: getTerm('instructor'), key: 'instructor', width: 24 },
     { header: 'Statut', key: 'status', width: 14 },
+    { header: 'Heure de début', key: 'startTime', width: 16 },
+    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
+    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
+    { header: 'Ponctualité', key: 'punctuality', width: 15 },
   ]);
   addDetailRows(sheet, report.details, { includeStudent: false });
   return workbook;
@@ -216,6 +260,10 @@ function buildGlobalWorkbook(report) {
     { header: 'Code d’identification', key: 'code', width: 20 },
     { header: 'E-mail', key: 'email', width: 34 },
     { header: 'Statut', key: 'status', width: 14 },
+    { header: 'Heure de début', key: 'startTime', width: 16 },
+    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
+    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
+    { header: 'Ponctualité', key: 'punctuality', width: 15 },
   ]);
   addDetailRows(sheet, report.details);
   return workbook;

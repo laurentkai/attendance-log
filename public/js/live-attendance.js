@@ -11,6 +11,21 @@ const attendanceLabels = {
   absent: 'Absent',
 };
 
+const sessionClassSelect = document.querySelector('[data-session-class]');
+const sessionToleranceSelect = document.querySelector('[data-session-tolerance]');
+const inheritedToleranceOption = sessionToleranceSelect?.querySelector('[data-inherit-option]');
+
+function updateInheritedToleranceLabel() {
+  if (!sessionClassSelect || !inheritedToleranceOption) return;
+  const tolerance = sessionClassSelect.selectedOptions[0]?.dataset.punctualityTolerance;
+  inheritedToleranceOption.textContent = tolerance
+    ? `Hériter de l’activité (+${tolerance} min)`
+    : 'Hériter de l’activité';
+}
+
+sessionClassSelect?.addEventListener('change', updateInheritedToleranceLabel);
+updateInheritedToleranceLabel();
+
 function redirectOnUnauthorized(response) {
   if (response.status !== 401) return false;
   window.location.assign('/login');
@@ -94,16 +109,28 @@ if (liveSession) {
       stateLabels[status.state],
     );
 
-    const roster = new Map(status.roster.map((entry) => [entry.studentId, entry.status]));
+    const roster = new Map(status.roster.map((entry) => [entry.studentId, entry]));
     attendanceRows.forEach((row) => {
-      const attendanceStatus = roster.get(row.dataset.studentId);
-      row.dataset.inRoster = String(Boolean(attendanceStatus));
-      if (attendanceStatus) {
+      const attendance = roster.get(row.dataset.studentId);
+      row.dataset.inRoster = String(Boolean(attendance));
+      if (attendance) {
         updateStatusBadge(
           row.querySelector('[data-attendance-status]'),
-          attendanceStatus,
-          attendanceLabels[attendanceStatus],
+          attendance.status,
+          attendanceLabels[attendance.status],
         );
+        row.querySelector('[data-attendance-arrival]')?.replaceChildren(attendance.arrivalLabel);
+        const punctuality = row.querySelector('[data-attendance-punctuality]');
+        if (punctuality) {
+          punctuality.classList.remove('punctuality-on_time', 'punctuality-late');
+          if (attendance.punctualityStatus) punctuality.classList.add(`punctuality-${attendance.punctualityStatus}`);
+          punctuality.textContent = attendance.punctualityLabel;
+        }
+        const timeEdit = row.querySelector('[data-attendance-time-edit]');
+        if (timeEdit) {
+          timeEdit.hidden = status.state !== 'open' || attendance.status !== 'present';
+          timeEdit.dataset.currentTime = attendance.arrivalTime || '';
+        }
       }
     });
     filterAttendanceRows();
@@ -150,6 +177,21 @@ document.querySelectorAll('[data-attendance-form]').forEach((form) => {
     }
   });
 });
+
+const arrivalTimeModal = document.querySelector('#arrival-time-modal');
+if (arrivalTimeModal) {
+  const form = arrivalTimeModal.querySelector('[data-arrival-time-form]');
+  const input = arrivalTimeModal.querySelector('[data-arrival-time-input]');
+  const student = arrivalTimeModal.querySelector('[data-arrival-time-student]');
+  arrivalTimeModal.addEventListener('show.bs.modal', (event) => {
+    const trigger = event.relatedTarget?.closest?.('[data-attendance-time-edit]');
+    if (!trigger) return;
+    form.action = trigger.dataset.action;
+    input.value = trigger.dataset.currentTime || '';
+    student.textContent = trigger.dataset.studentName || '';
+  });
+  arrivalTimeModal.addEventListener('shown.bs.modal', () => input.focus());
+}
 
 document.querySelectorAll('[data-live-session-card]').forEach((card) => {
   startPolling(async () => {

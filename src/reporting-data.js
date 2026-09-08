@@ -1,4 +1,6 @@
 const { pool } = require('./db/client');
+const { getApplicationTimezone } = require('./application-time');
+const { calculatePunctuality, summarizePunctuality } = require('./punctuality');
 
 function calculateRate(present, total) {
   return total > 0 ? present / total : null;
@@ -13,6 +15,7 @@ function summarizeRows(rows) {
     present,
     absent,
     attendanceRate: calculateRate(present, rows.length),
+    ...summarizePunctuality(rows),
   };
 }
 
@@ -50,10 +53,29 @@ async function getCourseSummaries() {
 async function getSessionSummaries({ classId = null, dateFrom = null, dateTo = null } = {}) {
   const result = await pool.query(
     `SELECT cs.id, cs.public_id, cs.class_id, c.public_id AS class_public_id, cs.date, cs.title, cs.instructor,
+            cs.start_time,
+            COALESCE(cs.punctuality_tolerance_override_minutes,
+                     c.punctuality_tolerance_minutes) AS effective_tolerance_minutes,
             c.name AS class_name,
             COUNT(ar.student_id)::integer AS opportunities,
             COUNT(ar.student_id) FILTER (WHERE ar.status = 'present')::integer AS present,
-            COUNT(ar.student_id) FILTER (WHERE ar.status = 'absent')::integer AS absent
+            COUNT(ar.student_id) FILTER (WHERE ar.status = 'absent')::integer AS absent,
+            COUNT(ar.student_id) FILTER (
+              WHERE ar.status = 'present' AND cs.start_time IS NOT NULL
+                AND ar.checked_in_at IS NOT NULL
+                AND FLOOR(EXTRACT(EPOCH FROM (
+                  ar.checked_in_at - ((cs.date + cs.start_time) AT TIME ZONE $4)
+                )) / 60) <= COALESCE(cs.punctuality_tolerance_override_minutes,
+                                      c.punctuality_tolerance_minutes)
+            )::integer AS on_time,
+            COUNT(ar.student_id) FILTER (
+              WHERE ar.status = 'present' AND cs.start_time IS NOT NULL
+                AND ar.checked_in_at IS NOT NULL
+                AND FLOOR(EXTRACT(EPOCH FROM (
+                  ar.checked_in_at - ((cs.date + cs.start_time) AT TIME ZONE $4)
+                )) / 60) > COALESCE(cs.punctuality_tolerance_override_minutes,
+                                     c.punctuality_tolerance_minutes)
+            )::integer AS late
      FROM course_sessions cs
      INNER JOIN classes c ON c.id = cs.class_id
      LEFT JOIN attendance_records ar ON ar.session_id = cs.id
@@ -61,20 +83,27 @@ async function getSessionSummaries({ classId = null, dateFrom = null, dateTo = n
        AND ($1::uuid IS NULL OR c.public_id = $1)
        AND ($2::date IS NULL OR cs.date >= $2)
        AND ($3::date IS NULL OR cs.date <= $3)
-     GROUP BY cs.id, c.public_id, c.name
+     GROUP BY cs.id, c.id
      ORDER BY cs.date DESC, LOWER(cs.title), cs.id DESC`,
-    [classId, dateFrom, dateTo],
+    [classId, dateFrom, dateTo, getApplicationTimezone()],
   );
 
   return result.rows.map((row) => {
     const opportunities = Number(row.opportunities);
     const present = Number(row.present);
+    const onTime = Number(row.on_time);
+    const late = Number(row.late);
     return {
       ...row,
       opportunities,
       present,
       absent: Number(row.absent),
       attendanceRate: calculateRate(present, opportunities),
+      punctualityApplicable: Boolean(row.start_time),
+      punctualityKnown: onTime + late,
+      onTime,
+      late,
+      punctualityRate: calculateRate(onTime, onTime + late),
     };
   });
 }
@@ -102,7 +131,11 @@ async function getAttendanceDetails({ classId = null, studentId = null, sessionI
     `SELECT cs.id AS session_id, cs.public_id AS session_public_id, cs.date, cs.title, cs.instructor,
             c.id AS class_id, c.public_id AS class_public_id, c.name AS class_name,
             s.id AS student_id, s.public_id AS student_public_id, s.first_name, s.last_name, s.email, s.student_code,
-            ar.status
+            ar.status, ar.checked_in_at, cs.start_time,
+            COALESCE(cs.punctuality_tolerance_override_minutes,
+                     c.punctuality_tolerance_minutes) AS effective_tolerance_minutes,
+            CASE WHEN cs.start_time IS NULL THEN NULL
+                 ELSE (cs.date + cs.start_time) AT TIME ZONE $6 END AS scheduled_start_at
      FROM course_sessions cs
      INNER JOIN classes c ON c.id = cs.class_id
      INNER JOIN attendance_records ar ON ar.session_id = cs.id
@@ -115,10 +148,18 @@ async function getAttendanceDetails({ classId = null, studentId = null, sessionI
        AND ($5::date IS NULL OR cs.date <= $5)
      ORDER BY cs.date, LOWER(c.name), LOWER(cs.title),
               LOWER(s.last_name), LOWER(s.first_name), s.id`,
-    [classId, studentId, sessionId, dateFrom, dateTo],
+    [classId, studentId, sessionId, dateFrom, dateTo, getApplicationTimezone()],
   );
 
-  return result.rows;
+  return result.rows.map((row) => ({
+    ...row,
+    punctuality: calculatePunctuality({
+      status: row.status,
+      checkedInAt: row.checked_in_at,
+      scheduledStartAt: row.scheduled_start_at,
+      toleranceMinutes: row.effective_tolerance_minutes,
+    }),
+  }));
 }
 
 function aggregateStudents(rows) {
@@ -178,12 +219,17 @@ async function getCourseReport(classId) {
 
 async function getSessionReport(sessionId) {
   const sessionResult = await pool.query(
-    `SELECT cs.id, cs.public_id, cs.class_id, c.public_id AS class_public_id, cs.date, cs.title, cs.instructor, cs.state,
+    `SELECT cs.id, cs.public_id, cs.class_id, c.public_id AS class_public_id, cs.date, cs.title,
+            cs.instructor, cs.state, cs.start_time,
+            COALESCE(cs.punctuality_tolerance_override_minutes,
+                     c.punctuality_tolerance_minutes) AS effective_tolerance_minutes,
+            CASE WHEN cs.start_time IS NULL THEN NULL
+                 ELSE (cs.date + cs.start_time) AT TIME ZONE $2 END AS scheduled_start_at,
             c.name AS class_name
      FROM course_sessions cs
      INNER JOIN classes c ON c.id = cs.class_id
      WHERE cs.public_id = $1`,
-    [sessionId],
+    [sessionId, getApplicationTimezone()],
   );
   if (sessionResult.rowCount === 0) return null;
 
@@ -192,7 +238,14 @@ async function getSessionReport(sessionId) {
     ? await getAttendanceDetails({ sessionId })
     : [];
 
-  return { session, summary: summarizeRows(details), details };
+  return {
+    session,
+    summary: {
+      ...summarizeRows(details),
+      punctualityApplicable: Boolean(session.start_time),
+    },
+    details,
+  };
 }
 
 async function getStudentReport(studentId) {

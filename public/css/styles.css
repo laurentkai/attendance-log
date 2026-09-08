@@ -1718,6 +1718,55 @@ legend,
   font-variant-numeric: tabular-nums;
 }
 
+.attendance-roster-header {
+  display: none;
+}
+
+.attendance-roster .student-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.attendance-roster .student-identity,
+.attendance-roster .compact-actions--attendance {
+  grid-column: 1 / -1;
+}
+
+.attendance-arrival,
+.attendance-punctuality {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  min-width: 0;
+}
+
+.attendance-field-label {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.attendance-arrival-value,
+.attendance-punctuality-value {
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.attendance-time-edit {
+  min-height: auto;
+  padding: 0.05rem 0;
+  font-size: 0.75rem;
+}
+
+.punctuality-on_time {
+  color: var(--success);
+  font-weight: 650;
+}
+
+.punctuality-late {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .import-summary h2 {
   margin-bottom: 0.75rem;
 }
@@ -1939,6 +1988,32 @@ a:focus-visible,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+}
+
+@media (min-width: 62rem) {
+  .attendance-roster-header,
+  .attendance-roster .student-row {
+    grid-template-columns: minmax(11rem, 1fr) 6.5rem 7.5rem 7rem minmax(13rem, auto);
+    gap: 0.65rem;
+    align-items: center;
+  }
+
+  .attendance-roster-header {
+    display: grid;
+    padding: 0 0.75rem 0.35rem;
+    color: var(--ink-muted);
+    font-size: 0.72rem;
+    font-weight: 650;
+  }
+
+  .attendance-roster .student-identity,
+  .attendance-roster .compact-actions--attendance {
+    grid-column: auto;
+  }
+
+  .attendance-field-label {
+    display: none;
+  }
 }
 
 @media (min-width: 992px) {

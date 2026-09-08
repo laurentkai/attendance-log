@@ -192,6 +192,8 @@ CSV Import belongs to student management and is accessed contextually from Stude
 - Reopening preserves statuses and permits corrections only within the historical roster. Reclosing must not introduce later class members.
 - Closed sessions reject attendance writes unless explicitly reopened.
 - Manual and QR attendance use the same authoritative eligibility and persistence logic.
+- `attendance_records.checked_in_at` records the actual transition to present: set it on absent/pending to present, preserve it on duplicate present operations, and clear it when presence is removed. A present historical row with no timestamp means the arrival time is unknown.
+- Session punctuality is derived from the arrival instant, the optional session-local start time, and the effective activity/session tolerance in the configured `APP_TIMEZONE`; never persist a redundant late flag or rely on the container timezone.
 - Concurrent updates must remain idempotent and safe; client filtering is never the authority.
 - Student QR identity is stable, non-guessable, independent of membership/database IDs, and contains no personal data.
 

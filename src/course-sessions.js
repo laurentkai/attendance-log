@@ -1,4 +1,5 @@
 const express = require('express');
+const { formatLocalTime, getApplicationTimezone, normalizeClockTime } = require('./application-time');
 const { recordAuditEvent } = require('./audit');
 const { requirePermission } = require('./auth');
 const { pool, withTransaction } = require('./db/client');
@@ -6,6 +7,7 @@ const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const { parseStudentQrPayload } = require('./student-qr');
 const { hasPermission, permissions } = require('./permissions');
 const { isValidPublicId } = require('./public-id');
+const { TOLERANCE_VALUES, calculatePunctuality, isValidTolerance } = require('./punctuality');
 const { getTerm } = require('./terminology');
 const { businessTerm, escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
@@ -35,13 +37,26 @@ function isValidDate(value) {
     && parsedDate.toISOString().slice(0, 10) === value;
 }
 
+function timestampForAudit(value) {
+  if (!value) return null;
+  const instant = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(instant.getTime()) ? null : instant.toISOString();
+}
+
 function getFormValues(body = {}) {
+  const rawStartTime = typeof body.start_time === 'string' ? body.start_time.trim() : '';
   return {
     class_id: typeof body.class_id === 'string' ? body.class_id : '',
     date: typeof body.date === 'string' ? body.date.trim() : '',
     title: typeof body.title === 'string' ? body.title.trim() : '',
     instructor: typeof body.instructor === 'string' ? body.instructor.trim() : '',
     notes: typeof body.notes === 'string' ? body.notes.trim() : '',
+    start_time: normalizeClockTime(rawStartTime),
+    start_time_invalid: Boolean(rawStartTime && !normalizeClockTime(rawStartTime)),
+    punctuality_tolerance_override_minutes: body.punctuality_tolerance_override_minutes === ''
+      || body.punctuality_tolerance_override_minutes === undefined
+      ? null
+      : Number.parseInt(body.punctuality_tolerance_override_minutes, 10),
   };
 }
 
@@ -58,6 +73,13 @@ function validateForm(values) {
   if (!values.instructor) {
     return `Le nom du ${getTerm('instructor').toLocaleLowerCase('fr')} est obligatoire.`;
   }
+  if (values.start_time_invalid) {
+    return 'L’heure de début doit être une heure valide.';
+  }
+  if (values.punctuality_tolerance_override_minutes !== null
+    && !isValidTolerance(values.punctuality_tolerance_override_minutes)) {
+    return 'Sélectionnez une tolérance de ponctualité valide.';
+  }
   return '';
 }
 
@@ -72,11 +94,14 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
        </div>`
     : `<div class="form-field">
          <label for="class_id">${businessTerm('class')} <span aria-hidden="true">*</span></label>
-         <select class="form-select" id="class_id" name="class_id" required>
+         <select class="form-select" id="class_id" name="class_id" required data-session-class>
            <option value="">Sélectionner dans la liste</option>
-           ${classes.map((classRecord) => `<option value="${classRecord.public_id}"${classRecord.public_id === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
+           ${classes.map((classRecord) => `<option value="${classRecord.public_id}" data-punctuality-tolerance="${classRecord.punctuality_tolerance_minutes}"${classRecord.public_id === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
          </select>
        </div>`;
+  const inheritedTolerance = Number(values.class_punctuality_tolerance_minutes)
+    || classes.find((classRecord) => classRecord.public_id === values.class_id)?.punctuality_tolerance_minutes
+    || 5;
 
   return renderPage(title, `
     <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
@@ -91,6 +116,20 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
       <div class="form-field">
         <label for="date">Date <span aria-hidden="true">*</span></label>
         <input class="form-control" id="date" name="date" type="date" value="${escapeHtml(formatDateForInput(values.date))}" required>
+      </div>
+
+      <div class="form-field">
+        <label for="start-time">Heure de début</label>
+        <input class="form-control" id="start-time" name="start_time" type="time" value="${escapeHtml(normalizeClockTime(values.start_time || ''))}" autocomplete="off">
+        <p class="form-text mb-0">Facultative. Sans heure de début, aucune ponctualité n’est calculée.</p>
+      </div>
+
+      <div class="form-field">
+        <label for="session-punctuality-tolerance">Tolérance de ponctualité</label>
+        <select class="form-select" id="session-punctuality-tolerance" name="punctuality_tolerance_override_minutes" data-session-tolerance>
+          <option value="" data-inherit-option>Hériter de l’activité (+${inheritedTolerance} min)</option>
+          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_override_minutes) === minutes ? ' selected' : ''}>+${minutes} minutes</option>`).join('')}
+        </select>
       </div>
 
       <div class="form-field">
@@ -116,14 +155,18 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
 }
 
 async function getClasses() {
-  const result = await pool.query('SELECT public_id, name FROM classes ORDER BY LOWER(name), id');
+  const result = await pool.query(
+    `SELECT public_id, name, punctuality_tolerance_minutes
+     FROM classes ORDER BY LOWER(name), id`,
+  );
   return result.rows;
 }
 
 async function loadRoster(session) {
   if (session.closed_at) {
     return pool.query(
-      `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code, ar.status
+      `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code,
+              ar.status, ar.checked_in_at
        FROM attendance_records ar
        INNER JOIN students s ON s.id = ar.student_id
        WHERE ar.session_id = $1
@@ -134,7 +177,7 @@ async function loadRoster(session) {
 
   return pool.query(
     `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code,
-            COALESCE(ar.status, 'pending') AS status
+            COALESCE(ar.status, 'pending') AS status, ar.checked_in_at
      FROM student_classes sc
      INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
      LEFT JOIN attendance_records ar
@@ -143,6 +186,20 @@ async function loadRoster(session) {
      ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
     [session.class_id, session.id],
   );
+}
+
+function decorateAttendanceStudent(student, session) {
+  const punctuality = calculatePunctuality({
+    status: student.status,
+    checkedInAt: student.checked_in_at,
+    scheduledStartAt: session.scheduled_start_at,
+    toleranceMinutes: session.effective_tolerance_minutes,
+  });
+  return {
+    ...student,
+    arrival_time: student.status === 'present' ? formatLocalTime(student.checked_in_at) : '',
+    punctuality,
+  };
 }
 
 function lockEligibleStudent(client, sessionId, studentId) {
@@ -176,13 +233,14 @@ async function markStudentPresent(client, sessionId, studentId) {
   }
 
   const currentResult = await client.query(
-    `SELECT status
+    `SELECT status, checked_in_at
      FROM attendance_records
      WHERE session_id = $1 AND student_id = $2
      FOR UPDATE`,
     [sessionId, studentId],
   );
   const previousStatus = currentResult.rows[0]?.status || 'pending';
+  const previousCheckedInAt = currentResult.rows[0]?.checked_in_at || null;
   if (previousStatus === 'present') {
     return {
       allowed: true,
@@ -193,11 +251,13 @@ async function markStudentPresent(client, sessionId, studentId) {
   }
 
   const updateResult = await client.query(
-    `INSERT INTO attendance_records (session_id, student_id, status)
-     VALUES ($1, $2, 'present')
+    `INSERT INTO attendance_records (session_id, student_id, status, checked_in_at)
+     VALUES ($1, $2, 'present', CURRENT_TIMESTAMP)
      ON CONFLICT (session_id, student_id)
-     DO UPDATE SET status = 'present', updated_at = CURRENT_TIMESTAMP
-     RETURNING ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint::text AS version`,
+     DO UPDATE SET status = 'present', checked_in_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+     RETURNING checked_in_at,
+               ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint::text AS version`,
     [sessionId, studentId],
   );
 
@@ -207,6 +267,8 @@ async function markStudentPresent(client, sessionId, studentId) {
     status: 'present',
     studentId: String(studentId),
     previousStatus,
+    previousCheckedInAt,
+    checkedInAt: updateResult.rows[0].checked_in_at,
     version: updateResult.rows[0].version,
   };
 }
@@ -251,7 +313,8 @@ router.get('/', async (request, response) => {
   try {
     const [result, classResult] = await Promise.all([
       pool.query(
-        `SELECT cs.public_id, cs.date, cs.title, cs.instructor, cs.state, c.name AS class_name
+        `SELECT cs.public_id, cs.date, cs.start_time, cs.title, cs.instructor, cs.state,
+                c.name AS class_name
          FROM course_sessions cs
          INNER JOIN classes c ON c.id = cs.class_id
          WHERE ($1::uuid IS NULL OR c.public_id = $1)
@@ -287,7 +350,7 @@ router.get('/', async (request, response) => {
       : `<div class="list-group compact-list">${result.rows.map((session) => `
           <article class="list-group-item compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.public_id}"` : ''}>
             <div class="compact-identity session-identity">
-              <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p>
+              <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}${session.start_time ? ` · ${escapeHtml(normalizeClockTime(session.start_time))}` : ''}</p>
               <p class="compact-title">${escapeHtml(session.title)}</p>
               <p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p>
             </div>
@@ -346,6 +409,8 @@ router.get('/new', requireSessionManagement, async (request, response) => {
         title: '',
         instructor: '',
         notes: '',
+        start_time: '',
+        punctuality_tolerance_override_minutes: null,
       },
       classes,
     }));
@@ -382,15 +447,34 @@ router.post('/', requireSessionManagement, async (request, response) => {
   try {
     const result = await withTransaction(pool, async (client) => {
       const inserted = await client.query(
-        `INSERT INTO course_sessions (class_id, date, title, instructor, notes)
-         SELECT c.id, $2, $3, $4, $5 FROM classes c WHERE c.public_id = $1
+        `INSERT INTO course_sessions
+           (class_id, date, title, instructor, notes, start_time,
+            punctuality_tolerance_override_minutes)
+         SELECT c.id, $2, $3, $4, $5, $6, $7
+         FROM classes c WHERE c.public_id = $1
          RETURNING public_id`,
-        [values.class_id, values.date, values.title, values.instructor, values.notes || null],
+        [
+          values.class_id,
+          values.date,
+          values.title,
+          values.instructor,
+          values.notes || null,
+          values.start_time || null,
+          values.punctuality_tolerance_override_minutes,
+        ],
       );
       if (inserted.rowCount > 0) await recordAuditEvent({
         client, category: 'session', action: 'session.create', targetType: 'session',
         targetPublicId: inserted.rows[0].public_id, targetLabel: values.title,
-        summary: 'Session créée.', afterData: { date: values.date, title: values.title, instructor: values.instructor, notes: values.notes || null, state: 'scheduled' },
+        summary: 'Session créée.', afterData: {
+          date: values.date,
+          title: values.title,
+          instructor: values.instructor,
+          notes: values.notes || null,
+          state: 'scheduled',
+          start_time: values.start_time || null,
+          punctuality_tolerance_override_minutes: values.punctuality_tolerance_override_minutes,
+        },
       });
       return inserted;
     });
@@ -430,8 +514,10 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT cs.id, cs.public_id, c.public_id AS class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
-              c.name AS class_name
+      `SELECT cs.id, cs.public_id, c.public_id AS class_id, cs.date, cs.title, cs.instructor,
+              cs.notes, cs.state, cs.start_time, cs.punctuality_tolerance_override_minutes,
+              c.name AS class_name,
+              c.punctuality_tolerance_minutes AS class_punctuality_tolerance_minutes
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
        WHERE cs.id = $1`,
@@ -492,12 +578,20 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   const values = getFormValues(request.body);
   const validationError = validateForm(values);
   if (validationError) {
-    const classResult = await pool.query('SELECT name FROM classes WHERE public_id = $1', [values.class_id]).catch(() => ({ rows: [] }));
+    const classResult = await pool.query(
+      `SELECT name, punctuality_tolerance_minutes
+       FROM classes WHERE public_id = $1`,
+      [values.class_id],
+    ).catch(() => ({ rows: [] }));
     response.status(400).send(renderSessionForm({
       title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: `/sessions/${request.params.id}`,
       submitLabel: 'Enregistrer',
-      values: { ...values, class_name: classResult.rows[0]?.name || '' },
+      values: {
+        ...values,
+        class_name: classResult.rows[0]?.name || '',
+        class_punctuality_tolerance_minutes: classResult.rows[0]?.punctuality_tolerance_minutes || 5,
+      },
       classes: [],
       error: validationError,
       edit: true,
@@ -507,19 +601,50 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
 
   try {
     const result = await withTransaction(pool, async (client) => {
-      const current = await client.query('SELECT public_id, date, title, instructor, notes, state FROM course_sessions WHERE id = $1 FOR UPDATE', [request.courseSessionId]);
+      const current = await client.query(
+        `SELECT public_id, date, title, instructor, notes, state, start_time,
+                punctuality_tolerance_override_minutes
+         FROM course_sessions WHERE id = $1 FOR UPDATE`,
+        [request.courseSessionId],
+      );
       if (current.rowCount === 0) return current;
       const updated = await client.query(
-        `UPDATE course_sessions SET date = $1, title = $2, instructor = $3, notes = $4
-         WHERE id = $5 AND class_id = (SELECT id FROM classes WHERE public_id = $6) AND state IN ('scheduled', 'open')
+        `UPDATE course_sessions
+         SET date = $1, title = $2, instructor = $3, notes = $4, start_time = $5,
+             punctuality_tolerance_override_minutes = $6
+         WHERE id = $7 AND class_id = (SELECT id FROM classes WHERE public_id = $8)
+           AND state IN ('scheduled', 'open')
          RETURNING id`,
-        [values.date, values.title, values.instructor, values.notes || null, request.courseSessionId, values.class_id],
+        [
+          values.date,
+          values.title,
+          values.instructor,
+          values.notes || null,
+          values.start_time || null,
+          values.punctuality_tolerance_override_minutes,
+          request.courseSessionId,
+          values.class_id,
+        ],
       );
       if (updated.rowCount > 0) await recordAuditEvent({
         client, category: 'session', action: 'session.update', targetType: 'session',
         targetPublicId: current.rows[0].public_id, targetLabel: values.title, summary: 'Session mise à jour.',
-        beforeData: { date: current.rows[0].date, title: current.rows[0].title, instructor: current.rows[0].instructor, notes: current.rows[0].notes },
-        afterData: { date: values.date, title: values.title, instructor: values.instructor, notes: values.notes || null },
+        beforeData: {
+          date: current.rows[0].date,
+          title: current.rows[0].title,
+          instructor: current.rows[0].instructor,
+          notes: current.rows[0].notes,
+          start_time: normalizeClockTime(current.rows[0].start_time || '') || null,
+          punctuality_tolerance_override_minutes: current.rows[0].punctuality_tolerance_override_minutes,
+        },
+        afterData: {
+          date: values.date,
+          title: values.title,
+          instructor: values.instructor,
+          notes: values.notes || null,
+          start_time: values.start_time || null,
+          punctuality_tolerance_override_minutes: values.punctuality_tolerance_override_minutes,
+        },
       });
       return updated;
     });
@@ -547,8 +672,15 @@ router.get('/:id/status', async (request, response) => {
 
   try {
     const sessionResult = await pool.query(
-      'SELECT id, public_id, class_id, state, closed_at FROM course_sessions WHERE id = $1',
-      [request.courseSessionId],
+      `SELECT cs.id, cs.public_id, cs.class_id, cs.state, cs.closed_at, cs.start_time,
+              COALESCE(cs.punctuality_tolerance_override_minutes,
+                       c.punctuality_tolerance_minutes) AS effective_tolerance_minutes,
+              CASE WHEN cs.start_time IS NULL THEN NULL
+                   ELSE (cs.date + cs.start_time) AT TIME ZONE $2 END AS scheduled_start_at
+       FROM course_sessions cs
+       INNER JOIN classes c ON c.id = cs.class_id
+       WHERE cs.id = $1`,
+      [request.courseSessionId, getApplicationTimezone()],
     );
     if (sessionResult.rowCount === 0) {
       response.status(404).json({ error: `${getTerm('session')} introuvable.` });
@@ -556,15 +688,22 @@ router.get('/:id/status', async (request, response) => {
     }
     const session = sessionResult.rows[0];
     const rosterResult = await loadRoster(session);
+    const roster = rosterResult.rows.map((student) => decorateAttendanceStudent(student, session));
     response.set('Cache-Control', 'no-store');
     response.json({
       publicId: session.public_id,
       state: session.state,
-      present: rosterResult.rows.filter((student) => student.status === 'present').length,
+      present: roster.filter((student) => student.status === 'present').length,
       total: rosterResult.rowCount,
-      roster: rosterResult.rows.map((student) => ({
+      roster: roster.map((student) => ({
         studentId: student.public_id,
         status: student.status,
+        arrivalTime: student.arrival_time || null,
+        arrivalLabel: student.status === 'present'
+          ? student.arrival_time || 'Heure inconnue'
+          : '—',
+        punctualityLabel: student.punctuality.label,
+        punctualityStatus: student.punctuality.status,
       })),
     });
   } catch (error) {
@@ -710,12 +849,16 @@ router.get('/:id', async (request, response) => {
   try {
     const sessionResult = await pool.query(
       `SELECT cs.id, cs.public_id, cs.class_id, cs.date, cs.title, cs.instructor, cs.notes, cs.state,
-              cs.closed_at,
-              c.name AS class_name
+              cs.closed_at, cs.start_time, cs.punctuality_tolerance_override_minutes,
+              c.name AS class_name,
+              COALESCE(cs.punctuality_tolerance_override_minutes,
+                       c.punctuality_tolerance_minutes) AS effective_tolerance_minutes,
+              CASE WHEN cs.start_time IS NULL THEN NULL
+                   ELSE (cs.date + cs.start_time) AT TIME ZONE $2 END AS scheduled_start_at
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
        WHERE cs.id = $1`,
-      [request.courseSessionId],
+      [request.courseSessionId, getApplicationTimezone()],
     );
     if (sessionResult.rowCount === 0) {
       const page = renderSessionNotFoundPage();
@@ -725,12 +868,15 @@ router.get('/:id', async (request, response) => {
 
     const session = sessionResult.rows[0];
     const studentsResult = await loadRoster(session);
+    studentsResult.rows = studentsResult.rows.map((student) => decorateAttendanceStudent(student, session));
+    const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
 
     const presentCount = studentsResult.rows.filter((student) => student.status === 'present').length;
     const notices = {
       created: `La ${getTerm('session').toLocaleLowerCase('fr')} a été créée.`,
       updated: `La ${getTerm('session').toLocaleLowerCase('fr')} a été mise à jour.`,
       attendance_updated: `La ${getTerm('attendance').toLocaleLowerCase('fr')} a été mise à jour.`,
+      arrival_updated: 'L’heure d’arrivée a été mise à jour.',
       closed: `La ${getTerm('session').toLocaleLowerCase('fr')} a été clôturée.`,
       opened: `La ${getTerm('session').toLocaleLowerCase('fr')} est ouverte.`,
     };
@@ -743,7 +889,10 @@ router.get('/:id', async (request, response) => {
         : session.state === 'open'
         ? `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}.`
         : `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}. La ${businessTerm('session').toLocaleLowerCase('fr')} n’a pas encore commencé.`}</p>`
-      : `<div class="list-group compact-list" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
+      : `<div class="attendance-roster-header" aria-hidden="true">
+          <span>${businessTerm('student')}</span><span>${businessTerm('attendance')}</span><span>Arrivée</span><span>Ponctualité</span><span></span>
+        </div>
+        <div class="list-group compact-list attendance-roster" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
           <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
@@ -756,21 +905,62 @@ router.get('/:id', async (request, response) => {
                 absent: 'Absent',
               }[student.status]}</span>
             </div>
+            <div class="attendance-arrival">
+              <span class="attendance-field-label">Arrivée</span>
+              <span class="attendance-arrival-value" data-attendance-arrival>${student.status === 'present'
+                ? escapeHtml(student.arrival_time || 'Heure inconnue')
+                : '—'}</span>
+              ${canManageSessions ? `<button class="btn btn-link btn-sm attendance-time-edit" type="button"
+                data-attendance-time-edit
+                data-student-name="${escapeHtml(`${student.first_name} ${student.last_name}`)}"
+                data-current-time="${escapeHtml(student.arrival_time)}"
+                data-action="/sessions/${session.public_id}/attendance/${student.public_id}/check-in-time"
+                data-bs-toggle="modal" data-bs-target="#arrival-time-modal"
+                ${session.state === 'open' && student.status === 'present' ? '' : 'hidden'}>Modifier l’heure</button>` : ''}
+            </div>
+            <div class="attendance-punctuality">
+              <span class="attendance-field-label">Ponctualité</span>
+              <span class="attendance-punctuality-value${student.punctuality.status ? ` punctuality-${student.punctuality.status}` : ''}" data-attendance-punctuality>${escapeHtml(student.punctuality.label)}</span>
+            </div>
             <div class="compact-actions compact-actions--attendance" data-attendance-actions${session.state === 'open' ? '' : ' hidden'}>
               ${session.state === 'open' ? `<form class="compact-actions compact-actions--split" method="post" action="/sessions/${session.public_id}/attendance/${student.public_id}" data-attendance-form>
                 <button class="btn btn-primary" name="status" type="submit" value="present">Présent</button>
                 <button class="btn btn-outline-danger" name="status" type="submit" value="absent">Absent</button>
               </form>` : ''}
             </div>
-          </article>`).join('')}</div>`;
+          </article>`).join('')}</div>
+        <div class="modal fade" id="arrival-time-modal" tabindex="-1" aria-labelledby="arrival-time-modal-title" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+              <form method="post" data-arrival-time-form>
+                <div class="modal-header">
+                  <h2 class="modal-title fs-5" id="arrival-time-modal-title">Modifier l’heure d’arrivée</h2>
+                  <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </div>
+                <div class="modal-body">
+                  <p class="compact-meta mb-3" data-arrival-time-student></p>
+                  <div class="form-field">
+                    <label for="arrival-time">Heure d’arrivée</label>
+                    <input class="form-control" id="arrival-time" name="checked_in_time" type="time" required data-arrival-time-input>
+                    <p class="form-text mb-0">La date reste celle de la session.</p>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button class="btn btn-light" type="button" data-bs-dismiss="modal">Annuler</button>
+                  <button class="btn btn-primary" type="submit">Enregistrer</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>`;
 
-    const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
     response.send(renderPage(session.title, `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
           <p class="eyebrow">${escapeHtml(session.class_name)}</p>
           <h1>${escapeHtml(session.title)}</h1>
-          <p class="page-description">${escapeHtml(formatDateForDisplay(session.date))} · ${escapeHtml(session.instructor)}</p>
+          <p class="page-description">${escapeHtml(formatDateForDisplay(session.date))}${session.start_time ? ` · ${escapeHtml(normalizeClockTime(session.start_time))}` : ''} · ${escapeHtml(session.instructor)}</p>
+          ${session.start_time ? `<p class="compact-meta">Tolérance : +${session.effective_tolerance_minutes} min${session.punctuality_tolerance_override_minutes === null ? ' (activité)' : ''}</p>` : ''}
           ${session.notes ? `<p class="page-description session-notes">${escapeHtml(session.notes)}</p>` : ''}
         </div>
         <div class="context-actions d-flex flex-wrap gap-2">
@@ -862,11 +1052,19 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
       if (result.changed) await recordAuditEvent({
         client, category: 'attendance', action: 'attendance.qr.present', targetType: 'student',
         targetPublicId: student.public_id, targetLabel: `${student.first_name} ${student.last_name}`,
-        summary: 'Présence enregistrée par QR.', beforeData: { status: result.previousStatus }, afterData: { status: 'present' },
+        summary: 'Présence enregistrée par QR.',
+        beforeData: { status: result.previousStatus, checked_in_at: timestampForAudit(result.previousCheckedInAt) },
+        afterData: { status: 'present', checked_in_at: timestampForAudit(result.checkedInAt) },
         metadata: { source: 'quick_attendance' },
       });
 
-      const { allowed: _allowed, studentId: _studentId, ...attendanceResult } = result;
+      const {
+        allowed: _allowed,
+        studentId: _studentId,
+        previousCheckedInAt: _previousCheckedInAt,
+        checkedInAt: _checkedInAt,
+        ...attendanceResult
+      } = result;
       return {
         status: 200,
         body: {
@@ -904,7 +1102,9 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
         await recordAuditEvent({
           client, category: 'attendance', action: 'attendance.quick.present', targetType: 'student',
           targetPublicId: request.params.studentId, targetLabel: student.rowCount ? `${student.rows[0].first_name} ${student.rows[0].last_name}` : null,
-          summary: 'Présence enregistrée en mode rapide.', beforeData: { status: attendance.previousStatus }, afterData: { status: 'present' },
+          summary: 'Présence enregistrée en mode rapide.',
+          beforeData: { status: attendance.previousStatus, checked_in_at: timestampForAudit(attendance.previousCheckedInAt) },
+          afterData: { status: 'present', checked_in_at: timestampForAudit(attendance.checkedInAt) },
           metadata: { source: 'quick_attendance' },
         });
       }
@@ -917,7 +1117,13 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
       return;
     }
 
-    const { allowed: _allowed, studentId: _studentId, ...attendanceResult } = result;
+    const {
+      allowed: _allowed,
+      studentId: _studentId,
+      previousCheckedInAt: _previousCheckedInAt,
+      checkedInAt: _checkedInAt,
+      ...attendanceResult
+    } = result;
     response.set('Cache-Control', 'no-store');
     response.json({ ...attendanceResult, studentId: request.params.studentId });
   } catch (error) {
@@ -951,9 +1157,16 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
       );
       if (allowedResult.rowCount === 0) return { status: 'not_allowed' };
 
+      const currentResult = await client.query(
+        `SELECT checked_in_at
+         FROM attendance_records
+         WHERE session_id = $1 AND student_id = $2 AND status = 'present'
+         FOR UPDATE`,
+        [request.courseSessionId, request.studentId],
+      );
       const updateResult = await client.query(
         `UPDATE attendance_records
-         SET status = $1, updated_at = CURRENT_TIMESTAMP
+         SET status = $1, checked_in_at = NULL, updated_at = CURRENT_TIMESTAMP
          WHERE session_id = $2
            AND student_id = $3
            AND status = 'present'
@@ -966,7 +1179,9 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
         await recordAuditEvent({
           client, category: 'attendance', action: 'attendance.undo', targetType: 'student',
           targetPublicId: request.params.studentId, targetLabel: student.rowCount ? `${student.rows[0].first_name} ${student.rows[0].last_name}` : null,
-          summary: 'Dernière présence rapide annulée.', beforeData: { status: 'present' }, afterData: { status: previousStatus },
+          summary: 'Dernière présence rapide annulée.',
+          beforeData: { status: 'present', checked_in_at: timestampForAudit(currentResult.rows[0]?.checked_in_at) },
+          afterData: { status: previousStatus, checked_in_at: null },
           metadata: { source: 'quick_attendance' },
         });
       }
@@ -1015,20 +1230,36 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
         request.studentId,
       );
       if (allowedResult.rowCount === 0) return false;
-      const previousResult = await client.query('SELECT status FROM attendance_records WHERE session_id = $1 AND student_id = $2 FOR UPDATE', [request.courseSessionId, request.studentId]);
+      const previousResult = await client.query(
+        `SELECT status, checked_in_at FROM attendance_records
+         WHERE session_id = $1 AND student_id = $2 FOR UPDATE`,
+        [request.courseSessionId, request.studentId],
+      );
       const previousStatus = previousResult.rows[0]?.status || 'pending';
-      await client.query(
-        `INSERT INTO attendance_records (session_id, student_id, status)
-         VALUES ($1, $2, $3)
+      const previousCheckedInAt = previousResult.rows[0]?.checked_in_at || null;
+      const attendanceResult = await client.query(
+        `INSERT INTO attendance_records (session_id, student_id, status, checked_in_at)
+         VALUES ($1, $2, $3,
+                 CASE WHEN $3 = 'present' THEN CURRENT_TIMESTAMP ELSE NULL END)
          ON CONFLICT (session_id, student_id)
-         DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP`,
+         DO UPDATE SET status = EXCLUDED.status,
+                       checked_in_at = CASE
+                         WHEN EXCLUDED.status = 'absent' THEN NULL
+                         WHEN attendance_records.status = 'present'
+                           THEN attendance_records.checked_in_at
+                         ELSE CURRENT_TIMESTAMP
+                       END,
+                       updated_at = CURRENT_TIMESTAMP
+         RETURNING checked_in_at`,
         [request.courseSessionId, request.studentId, request.body.status],
       );
       const student = await client.query('SELECT first_name, last_name FROM students WHERE id = $1', [request.studentId]);
       await recordAuditEvent({
         client, category: 'attendance', action: 'attendance.manual.update', targetType: 'student',
         targetPublicId: request.params.studentId, targetLabel: student.rowCount ? `${student.rows[0].first_name} ${student.rows[0].last_name}` : null,
-        summary: 'Présence modifiée manuellement.', beforeData: { status: previousStatus }, afterData: { status: request.body.status },
+        summary: 'Présence modifiée manuellement.',
+        beforeData: { status: previousStatus, checked_in_at: timestampForAudit(previousCheckedInAt) },
+        afterData: { status: request.body.status, checked_in_at: timestampForAudit(attendanceResult.rows[0].checked_in_at) },
         metadata: { source: 'attendance_page' },
       });
       return true;
@@ -1047,6 +1278,84 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
   } catch (error) {
     console.error('Unable to update attendance:', error);
     const page = renderMessagePage('Modification impossible', `Impossible de mettre à jour la ${getTerm('attendance').toLocaleLowerCase('fr')} pour le moment.`);
+    response.status(page.status).send(page.html);
+  }
+});
+
+router.post('/:id/attendance/:studentId/check-in-time', requireSessionManagement, async (request, response) => {
+  if (!request.courseSessionId || !request.studentId) {
+    const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
+    response.status(page.status).send(page.html);
+    return;
+  }
+  const checkedInTime = normalizeClockTime(
+    typeof request.body.checked_in_time === 'string' ? request.body.checked_in_time.trim() : '',
+  );
+  if (!checkedInTime) {
+    const page = renderMessagePage('Heure invalide', 'Saisissez une heure locale valide.', 400);
+    response.status(page.status).send(page.html);
+    return;
+  }
+
+  try {
+    const outcome = await withTransaction(pool, async (client) => {
+      const allowed = await lockEligibleStudent(client, request.courseSessionId, request.studentId);
+      if (allowed.rowCount === 0) return 'not_allowed';
+      const current = await client.query(
+        `SELECT ar.checked_in_at, cs.public_id AS session_public_id,
+                cs.title, s.public_id AS student_public_id, s.first_name, s.last_name
+         FROM attendance_records ar
+         INNER JOIN course_sessions cs ON cs.id = ar.session_id
+         INNER JOIN students s ON s.id = ar.student_id
+         WHERE ar.session_id = $1 AND ar.student_id = $2 AND ar.status = 'present'
+         FOR UPDATE OF ar`,
+        [request.courseSessionId, request.studentId],
+      );
+      if (current.rowCount === 0) return 'not_present';
+      const updated = await client.query(
+        `UPDATE attendance_records
+         SET checked_in_at = (
+               (SELECT date FROM course_sessions WHERE id = $1) + $3::time
+             ) AT TIME ZONE $4,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE session_id = $1 AND student_id = $2
+         RETURNING checked_in_at`,
+        [
+          request.courseSessionId,
+          request.studentId,
+          checkedInTime,
+          getApplicationTimezone(),
+        ],
+      );
+      await recordAuditEvent({
+        client,
+        category: 'attendance',
+        action: 'attendance.check_in_time.update',
+        targetType: 'student',
+        targetPublicId: current.rows[0].student_public_id,
+        targetLabel: `${current.rows[0].first_name} ${current.rows[0].last_name}`,
+        summary: 'Heure d’arrivée corrigée manuellement.',
+        beforeData: { checked_in_at: timestampForAudit(current.rows[0].checked_in_at) },
+        afterData: { checked_in_at: timestampForAudit(updated.rows[0].checked_in_at) },
+        metadata: { source: 'attendance_page', session_public_id: current.rows[0].session_public_id },
+      });
+      return 'updated';
+    });
+    if (outcome !== 'updated') {
+      const page = renderMessagePage(
+        'Modification impossible',
+        outcome === 'not_present'
+          ? 'Une heure d’arrivée ne peut être définie que pour une personne présente.'
+          : `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte.`,
+        409,
+      );
+      response.status(page.status).send(page.html);
+      return;
+    }
+    response.redirect(303, `/sessions/${request.params.id}?notice=arrival_updated`);
+  } catch (error) {
+    console.error('Unable to correct attendance check-in time:', error);
+    const page = renderMessagePage('Modification impossible', 'Impossible de corriger l’heure d’arrivée pour le moment.');
     response.status(page.status).send(page.html);
   }
 });

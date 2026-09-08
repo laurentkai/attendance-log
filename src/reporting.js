@@ -1,4 +1,5 @@
 const express = require('express');
+const { formatLocalTime, normalizeClockTime } = require('./application-time');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const {
   getClassesForFilters,
@@ -67,6 +68,9 @@ function renderSummary(summary) {
     <div><dt>Présents</dt><dd>${summary.present}</dd></div>
     <div><dt>Absents</dt><dd>${summary.absent}</dd></div>
     <div><dt>Taux de ${businessTerm('attendance').toLocaleLowerCase('fr')}</dt><dd>${formatRate(summary.attendanceRate)}</dd></div>
+    ${summary.punctualityApplicable ? `<div><dt>À l’heure</dt><dd>${summary.onTime}</dd></div>
+    <div><dt>En retard</dt><dd>${summary.late}</dd></div>
+    <div><dt>Taux de ponctualité</dt><dd>${formatRate(summary.punctualityRate)}</dd></div>` : ''}
   </dl>`;
 }
 
@@ -242,7 +246,11 @@ router.get('/courses/:id', async (request, response) => {
       <td>${escapeHtml(formatDateForDisplay(session.date))}</td>
       <td><a href="/sessions/${session.public_id}">${escapeHtml(session.title)}</a></td>
       <td>${escapeHtml(session.instructor)}</td>
+      <td>${session.start_time ? escapeHtml(normalizeClockTime(session.start_time)) : '—'}</td>
       <td class="numeric">${session.opportunities}</td><td class="numeric">${session.present}</td><td class="numeric">${session.absent}</td><td class="numeric">${formatRate(session.attendanceRate)}</td>
+      <td class="numeric">${session.punctualityApplicable ? session.onTime : '—'}</td>
+      <td class="numeric">${session.punctualityApplicable ? session.late : '—'}</td>
+      <td class="numeric">${session.punctualityApplicable ? formatRate(session.punctualityRate) : '—'}</td>
     </tr>`);
     const studentRows = report.students.map((student) => `<tr>
       <td><a href="/reporting/students/${student.public_id}">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</a></td>
@@ -260,7 +268,7 @@ router.get('/courses/:id', async (request, response) => {
       ${renderReportingNavigation('courses')}
       ${renderSummary(report.summary)}
       <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-session-breakdown">Par ${businessTerm('session').toLocaleLowerCase('fr')}</h2></div></div>
-        ${renderDataTable({ label: `Détail par ${getTerm('session').toLocaleLowerCase('fr')}`, headers: ['Date', getTerm('session'), getTerm('instructor'), 'Attendus', 'Présents', 'Absents', 'Taux'], rows: sessionRows })}
+        ${renderDataTable({ label: `Détail par ${getTerm('session').toLocaleLowerCase('fr')}`, headers: ['Date', getTerm('session'), getTerm('instructor'), 'Début', 'Attendus', 'Présents', 'Absents', 'Taux', 'À l’heure', 'Retards', 'Ponctualité'], rows: sessionRows })}
       </section>
       <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-student-breakdown">Par ${businessTerm('student').toLocaleLowerCase('fr')}</h2></div></div>
         ${renderDataTable({ label: `Détail par ${getTerm('student').toLocaleLowerCase('fr')}`, headers: [getTerm('student'), 'Code', getTerm('session', 'plural'), getTerm('attendance', 'plural'), 'Absences', 'Taux'], rows: studentRows })}
@@ -283,7 +291,7 @@ router.get('/sessions', async (_request, response) => {
           <div class="list-group compact-list" id="report-session-list" data-list-results>${sessions.map((session) => `
             <article class="list-group-item compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase('fr'))}">
               <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p><p class="compact-title">${escapeHtml(session.title)}</p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
-              <div class="compact-status"><span class="badge status-badge status-closed">État : clôturé</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents</span></div>
+              <div class="compact-status"><span class="badge status-badge status-closed">État : clôturé</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents${session.punctualityApplicable ? ` · ${session.onTime} à l’heure · ${session.late} en retard` : ''}</span></div>
               <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.public_id}">Voir la session</a><a class="btn btn-primary" href="/reporting/sessions/${session.public_id}/export">Exporter en Excel</a></div>
             </article>`).join('')}</div>
         </section>`;
@@ -395,7 +403,7 @@ router.get('/students/:id', async (request, response) => {
     }
     const studentName = `${report.student.first_name} ${report.student.last_name}`;
     const rows = report.details.map((row) => `<tr>
-      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_public_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td>
+      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_public_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td>${row.start_time ? escapeHtml(normalizeClockTime(row.start_time)) : '—'}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td><td>${row.status === 'present' ? escapeHtml(formatLocalTime(row.checked_in_at) || 'Inconnue') : '—'}</td><td class="numeric">${row.punctuality.available ? row.punctuality.delayMinutes : '—'}</td><td>${escapeHtml(row.punctuality.label)}</td>
     </tr>`);
     response.send(renderPage(`Rapport de ${studentName}`, `
       ${renderReportHeader({
@@ -407,7 +415,7 @@ router.get('/students/:id', async (request, response) => {
       ${renderReportingNavigation('students')}
       ${renderSummary(report.summary)}
       <section class="page-section" aria-labelledby="student-history-title"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="student-history-title">Historique des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h2></div></div>
-        ${renderDataTable({ label: `Historique de ${studentName}`, headers: ['Date', getTerm('class'), getTerm('session'), getTerm('instructor'), 'Statut'], rows })}
+        ${renderDataTable({ label: `Historique de ${studentName}`, headers: ['Date', getTerm('class'), getTerm('session'), getTerm('instructor'), 'Début', 'Statut', 'Arrivée', 'Écart (min)', 'Ponctualité'], rows })}
       </section>`));
   } catch (error) {
     console.error('Unable to load student report:', error);

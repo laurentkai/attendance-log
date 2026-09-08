@@ -5,6 +5,7 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
       APP_BASE_URL: ${APP_BASE_URL:-}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Brussels}
       DATABASE_URL: postgresql://${POSTGRES_USER:-attendance}:${POSTGRES_PASSWORD:-attendance_dev_password}@postgres:5432/${POSTGRES_DB:-attendance}
       DATABASE_SSL: "false"
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
