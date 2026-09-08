@@ -12,6 +12,15 @@ const { pool, withTransaction } = require('./db/client');
 const { getTerm } = require('./terminology');
 const { isValidPublicId } = require('./public-id');
 const { TOLERANCE_VALUES, isValidTolerance } = require('./punctuality');
+const {
+  loadClassSummaryConfiguration,
+  loadSummaryAdminOptions,
+  parseSummaryRecipientInput,
+  renderSummaryConfigurationFields,
+  saveClassSummaryConfiguration,
+  summaryConfigurationChanged,
+  summaryConfigurationSnapshot,
+} = require('./session-summary-config');
 const { businessTerm, escapeHtml, renderPage } = require('./ui');
 
 const router = express.Router();
@@ -34,12 +43,29 @@ function renderClassNotFoundPage() {
 }
 
 function getFormValues(body = {}) {
+  let summaryConfiguration;
+  let summaryConfigurationError = false;
+  try {
+    summaryConfiguration = parseSummaryRecipientInput(body, { attachmentScope: 'class' });
+  } catch (_error) {
+    summaryConfigurationError = true;
+    const rawAdminIds = Array.isArray(body.summary_admin_user_ids)
+      ? body.summary_admin_user_ids : body.summary_admin_user_ids ? [body.summary_admin_user_ids] : [];
+    summaryConfiguration = {
+      adminRecipientIds: rawAdminIds.filter(isValidPublicId),
+      externalRecipients: [typeof body.summary_external_recipients === 'string'
+        ? body.summary_external_recipients.slice(0, 12750) : ''].filter(Boolean),
+      attachXlsx: body.summary_attach_xlsx === 'on',
+    };
+  }
   return {
     name: typeof body.name === 'string' ? body.name.trim() : '',
     description: typeof body.description === 'string'
       ? body.description.trim()
       : '',
     punctuality_tolerance_minutes: Number.parseInt(body.punctuality_tolerance_minutes || '5', 10),
+    ...summaryConfiguration,
+    summaryConfigurationError,
   };
 }
 
@@ -52,6 +78,7 @@ function renderClassForm({
   hasLogo = false,
   logoNotice = '',
   error = '',
+  adminUsers = [],
 }) {
   const errorMessage = error
     ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
@@ -114,6 +141,8 @@ function renderClassForm({
         </select>
         <p class="form-text mb-0">Cette valeur s’applique aux sessions qui héritent du réglage de l’activité.</p>
       </div>
+
+      ${renderSummaryConfigurationFields({ adminUsers, values, scope: 'class' })}
 
       <div class="form-actions d-flex flex-wrap gap-2">
         <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
@@ -188,25 +217,40 @@ router.get('/', async (request, response) => {
   }
 });
 
-router.get('/new', (_request, response) => {
-  response.send(renderClassForm({
-    title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
-    action: '/classes',
-    submitLabel: 'Créer',
-    values: { name: '', description: '', punctuality_tolerance_minutes: 5 },
-  }));
+router.get('/new', async (_request, response) => {
+  try {
+    response.send(renderClassForm({
+      title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
+      action: '/classes',
+      submitLabel: 'Créer',
+      values: {
+        name: '', description: '', punctuality_tolerance_minutes: 5,
+        adminRecipientIds: [], externalRecipients: [], attachXlsx: false,
+      },
+      adminUsers: await loadSummaryAdminOptions(),
+    }));
+  } catch (error) {
+    console.error('Unable to load class form:', error.code || error.message);
+    const page = renderMessagePage('Formulaire indisponible', 'Impossible de charger le formulaire pour le moment.');
+    response.status(page.status).send(page.html);
+  }
 });
 
 router.post('/', async (request, response) => {
   const values = getFormValues(request.body);
 
-  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes)) {
+  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes) || values.summaryConfigurationError) {
     response.status(400).send(renderClassForm({
       title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
       action: '/classes',
       submitLabel: 'Créer',
       values,
-      error: !values.name ? 'Le nom est obligatoire.' : 'Sélectionnez une tolérance de ponctualité valide.',
+      error: !values.name
+        ? 'Le nom est obligatoire.'
+        : values.summaryConfigurationError
+          ? 'Vérifiez les destinataires du résumé automatique.'
+          : 'Sélectionnez une tolérance de ponctualité valide.',
+      adminUsers: await loadSummaryAdminOptions().catch(() => []),
     }));
     return;
   }
@@ -215,9 +259,10 @@ router.post('/', async (request, response) => {
     await withTransaction(pool, async (client) => {
       const result = await client.query(
         `INSERT INTO classes (name, description, punctuality_tolerance_minutes)
-         VALUES ($1, $2, $3) RETURNING public_id`,
+         VALUES ($1, $2, $3) RETURNING id, public_id`,
         [values.name, values.description || null, values.punctuality_tolerance_minutes],
       );
+      await saveClassSummaryConfiguration(client, result.rows[0].id, values);
       await recordAuditEvent({
         client, category: 'class', action: 'class.create', targetType: 'class',
         targetPublicId: result.rows[0].public_id, targetLabel: values.name,
@@ -225,17 +270,28 @@ router.post('/', async (request, response) => {
           name: values.name,
           description: values.description || null,
           punctuality_tolerance_minutes: values.punctuality_tolerance_minutes,
+          ...summaryConfigurationSnapshot(values, 'class'),
         },
       });
     });
     response.redirect(303, '/classes?notice=created');
   } catch (error) {
+    if (error.code === 'SUMMARY_RECIPIENTS_INVALID') {
+      response.status(400).send(renderClassForm({
+        title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
+        action: '/classes', submitLabel: 'Créer', values,
+        adminUsers: await loadSummaryAdminOptions().catch(() => []),
+        error: 'Vérifiez les destinataires du résumé automatique.',
+      }));
+      return;
+    }
     console.error('Unable to create class:', error);
     response.status(500).send(renderClassForm({
       title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
       action: '/classes',
       submitLabel: 'Créer',
       values,
+      adminUsers: await loadSummaryAdminOptions().catch(() => []),
       error: 'Impossible de créer la fiche pour le moment.',
     }));
   }
@@ -587,14 +643,19 @@ router.get('/:id/edit', async (request, response) => {
       return;
     }
 
+    const [summaryConfiguration, adminUsers] = await Promise.all([
+      loadClassSummaryConfiguration(result.rows[0].id),
+      loadSummaryAdminOptions(),
+    ]);
     response.send(renderClassForm({
       title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
       action: `/classes/${result.rows[0].public_id}`,
       submitLabel: 'Enregistrer',
-      values: result.rows[0],
+      values: { ...result.rows[0], ...summaryConfiguration },
       classId: result.rows[0].public_id,
       hasLogo: result.rows[0].has_logo,
       logoNotice: typeof request.query.logo_notice === 'string' ? request.query.logo_notice : '',
+      adminUsers,
     }));
   } catch (error) {
     console.error('Unable to load class:', error);
@@ -720,7 +781,7 @@ router.post('/:id', async (request, response) => {
     return;
   }
 
-  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes)) {
+  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes) || values.summaryConfigurationError) {
     response.status(400).send(renderClassForm({
       title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
       action: `/classes/${request.params.id}`,
@@ -728,7 +789,12 @@ router.post('/:id', async (request, response) => {
       values,
       classId: request.params.id,
       hasLogo: Boolean(currentLogo),
-      error: !values.name ? 'Le nom est obligatoire.' : 'Sélectionnez une tolérance de ponctualité valide.',
+      error: !values.name
+        ? 'Le nom est obligatoire.'
+        : values.summaryConfigurationError
+          ? 'Vérifiez les destinataires du résumé automatique.'
+          : 'Sélectionnez une tolérance de ponctualité valide.',
+      adminUsers: await loadSummaryAdminOptions().catch(() => []),
     }));
     return;
   }
@@ -736,17 +802,19 @@ router.post('/:id', async (request, response) => {
   try {
     const result = await withTransaction(pool, async (client) => {
       const current = await client.query(
-        `SELECT public_id, name, description, punctuality_tolerance_minutes
+        `SELECT id, public_id, name, description, punctuality_tolerance_minutes
          FROM classes WHERE public_id = $1 FOR UPDATE`,
         [request.params.id],
       );
       if (current.rowCount === 0) return current;
+      const previousSummary = await loadClassSummaryConfiguration(current.rows[0].id, client);
       const updated = await client.query(
         `UPDATE classes
          SET name = $1, description = $2, punctuality_tolerance_minutes = $3
          WHERE public_id = $4 RETURNING id`,
         [values.name, values.description || null, values.punctuality_tolerance_minutes, request.params.id],
       );
+      await saveClassSummaryConfiguration(client, current.rows[0].id, values);
       await recordAuditEvent({
         client, category: 'class', action: 'class.update', targetType: 'class',
         targetPublicId: request.params.id, targetLabel: values.name, summary: 'Activité mise à jour.',
@@ -761,6 +829,16 @@ router.post('/:id', async (request, response) => {
           punctuality_tolerance_minutes: values.punctuality_tolerance_minutes,
         },
       });
+      const beforeSummary = summaryConfigurationSnapshot(previousSummary, 'class');
+      const afterSummary = summaryConfigurationSnapshot(values, 'class');
+      if (summaryConfigurationChanged(previousSummary, values, 'class')) {
+        await recordAuditEvent({
+          client, category: 'class', action: 'class.summary.configuration.update', targetType: 'class',
+          targetPublicId: request.params.id, targetLabel: values.name,
+          summary: 'Configuration du résumé automatique mise à jour.',
+          beforeData: beforeSummary, afterData: afterSummary,
+        });
+      }
       return updated;
     });
 
@@ -772,6 +850,16 @@ router.post('/:id', async (request, response) => {
 
     response.redirect(303, '/classes?notice=updated');
   } catch (error) {
+    if (error.code === 'SUMMARY_RECIPIENTS_INVALID') {
+      response.status(400).send(renderClassForm({
+        title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
+        action: `/classes/${request.params.id}`, submitLabel: 'Enregistrer', values,
+        classId: request.params.id, hasLogo: Boolean(currentLogo),
+        adminUsers: await loadSummaryAdminOptions().catch(() => []),
+        error: 'Vérifiez les destinataires du résumé automatique.',
+      }));
+      return;
+    }
     console.error('Unable to update class:', error);
     response.status(500).send(renderClassForm({
       title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
@@ -780,6 +868,7 @@ router.post('/:id', async (request, response) => {
       values,
       classId: request.params.id,
       hasLogo: Boolean(currentLogo),
+      adminUsers: await loadSummaryAdminOptions().catch(() => []),
       error: 'Impossible d’enregistrer les modifications pour le moment.',
     }));
   }

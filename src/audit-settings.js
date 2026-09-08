@@ -42,6 +42,8 @@ const ACTION_LABELS = Object.freeze({
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé de récupération exportée', 'security.recovery_key.import': 'Clé de récupération importée', 'security.recovery_key.view': 'Clé de récupération affichée',
   'session.close': 'Session clôturée', 'session.create': 'Session créée', 'session.open': 'Session ouverte', 'session.reopen': 'Session rouverte', 'session.update': 'Session modifiée',
+  'session.summary.configuration.update': 'Destinataires du résumé modifiés', 'session.summary.send': 'Résumé des présences envoyé', 'session.summary.resend': 'Résumé des présences renvoyé',
+  'class.summary.configuration.update': 'Résumé automatique de l’activité modifié',
   'student.create': 'Participant créé', 'student.deactivate': 'Participant désactivé', 'student.import': 'Participants importés', 'student.reactivate': 'Participant réactivé', 'student.update': 'Participant modifié',
   'terminology.reset': 'Terminologie réinitialisée', 'terminology.update': 'Terminologie modifiée',
   'user.activate': 'Utilisateur réactivé', 'user.break_glass.create': 'Compte d’urgence créé', 'user.break_glass.password_change': 'Mot de passe d’urgence modifié',
@@ -74,6 +76,8 @@ const COMPACT_ACTION_LABELS = Object.freeze({
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé exportée', 'security.recovery_key.import': 'Clé importée', 'security.recovery_key.view': 'Clé affichée',
   'session.close': 'Session clôturée', 'session.create': 'Session créée', 'session.open': 'Session ouverte', 'session.reopen': 'Session rouverte', 'session.update': 'Session modifiée',
+  'session.summary.configuration.update': 'Config. résumé', 'session.summary.send': 'Résumé envoyé', 'session.summary.resend': 'Résumé renvoyé',
+  'class.summary.configuration.update': 'Config. résumé activité',
   'student.create': 'Participant créé', 'student.deactivate': 'Participant désactivé', 'student.import': 'Participants importés', 'student.reactivate': 'Participant réactivé', 'student.update': 'Participant modifié',
   'terminology.reset': 'Termes réinitialisés', 'terminology.update': 'Termes modifiés',
   'user.activate': 'Utilisateur réactivé', 'user.break_glass.create': 'Compte local créé', 'user.break_glass.password_change': 'Mot de passe modifié',
@@ -95,6 +99,9 @@ const FIELD_LABELS = Object.freeze({
   checked_in_at: 'Heure d’arrivée', start_time: 'Heure de début',
   punctuality_tolerance_minutes: 'Tolérance de l’activité',
   punctuality_tolerance_override_minutes: 'Tolérance de la session',
+  summary_attach_xlsx: 'Excel par défaut', summary_attach_xlsx_override: 'Excel pour la session',
+  summary_admin_recipient_count: 'Utilisateurs destinataires',
+  summary_external_recipient_count: 'Adresses externes',
 });
 
 function dateValue(value) {

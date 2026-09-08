@@ -14,6 +14,8 @@ const attendanceLabels = {
 const sessionClassSelect = document.querySelector('[data-session-class]');
 const sessionToleranceSelect = document.querySelector('[data-session-tolerance]');
 const inheritedToleranceOption = sessionToleranceSelect?.querySelector('[data-inherit-option]');
+const summaryAttachmentSelect = document.querySelector('[data-session-summary-attachment]');
+const inheritedSummaryAttachmentOption = summaryAttachmentSelect?.querySelector('[data-summary-inherit-option]');
 
 function updateInheritedToleranceLabel() {
   if (!sessionClassSelect || !inheritedToleranceOption) return;
@@ -23,8 +25,20 @@ function updateInheritedToleranceLabel() {
     : 'Hériter de l’activité';
 }
 
-sessionClassSelect?.addEventListener('change', updateInheritedToleranceLabel);
+function updateInheritedSummaryAttachmentLabel() {
+  if (!sessionClassSelect || !inheritedSummaryAttachmentOption) return;
+  const inherited = sessionClassSelect.selectedOptions[0]?.dataset.summaryAttachXlsx;
+  inheritedSummaryAttachmentOption.textContent = inherited
+    ? `Hériter de l’activité (${inherited === 'true' ? 'Oui' : 'Non'})`
+    : 'Hériter de l’activité';
+}
+
+sessionClassSelect?.addEventListener('change', () => {
+  updateInheritedToleranceLabel();
+  updateInheritedSummaryAttachmentLabel();
+});
 updateInheritedToleranceLabel();
+updateInheritedSummaryAttachmentLabel();
 
 function redirectOnUnauthorized(response) {
   if (response.status !== 401) return false;

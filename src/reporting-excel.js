@@ -183,7 +183,7 @@ function buildCourseWorkbook(report) {
   return workbook;
 }
 
-function buildSessionWorkbook(report) {
+function buildSessionWorkbook(report, { includeParticipantEmail = true } = {}) {
   const workbook = createWorkbook();
   addSummarySheet(workbook, `Rapport pour ${report.session.title}`, {
     closedSessionCount: 1,
@@ -202,7 +202,7 @@ function buildSessionWorkbook(report) {
   configureSheet(sheet, [
     { header: getTerm('student'), key: 'student', width: 28 },
     { header: 'Code d’identification', key: 'code', width: 20 },
-    { header: 'E-mail', key: 'email', width: 34 },
+    ...(includeParticipantEmail ? [{ header: 'E-mail', key: 'email', width: 34 }] : []),
     { header: 'Statut', key: 'status', width: 14 },
     { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
     { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
@@ -211,7 +211,7 @@ function buildSessionWorkbook(report) {
   report.details.forEach((row) => sheet.addRow({
     student: `${row.first_name} ${row.last_name}`,
     code: row.student_code,
-    email: row.email,
+    ...(includeParticipantEmail ? { email: row.email } : {}),
     status: STATUS_LABELS[row.status] || row.status,
     arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || 'Inconnue' : null,
     delayMinutes: row.punctuality?.delayMinutes ?? null,

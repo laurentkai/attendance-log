@@ -8,6 +8,16 @@ const { parseStudentQrPayload } = require('./student-qr');
 const { hasPermission, permissions } = require('./permissions');
 const { isValidPublicId } = require('./public-id');
 const { TOLERANCE_VALUES, calculatePunctuality, isValidTolerance } = require('./punctuality');
+const {
+  loadSessionSummaryConfiguration,
+  loadSummaryAdminOptions,
+  parseSummaryRecipientInput,
+  renderSummaryConfigurationFields,
+  saveSessionSummaryConfiguration,
+  summaryConfigurationChanged,
+  summaryConfigurationSnapshot,
+} = require('./session-summary-config');
+const { sendSessionSummary } = require('./session-summary');
 const { getTerm } = require('./terminology');
 const { businessTerm, escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
@@ -45,6 +55,21 @@ function timestampForAudit(value) {
 
 function getFormValues(body = {}) {
   const rawStartTime = typeof body.start_time === 'string' ? body.start_time.trim() : '';
+  let summaryConfiguration;
+  let summaryConfigurationError = false;
+  try {
+    summaryConfiguration = parseSummaryRecipientInput(body, { attachmentScope: 'session' });
+  } catch (_error) {
+    summaryConfigurationError = true;
+    const rawAdminIds = Array.isArray(body.summary_admin_user_ids)
+      ? body.summary_admin_user_ids : body.summary_admin_user_ids ? [body.summary_admin_user_ids] : [];
+    summaryConfiguration = {
+      adminRecipientIds: rawAdminIds.filter(isValidPublicId),
+      externalRecipients: [typeof body.summary_external_recipients === 'string'
+        ? body.summary_external_recipients.slice(0, 12750) : ''].filter(Boolean),
+      attachXlsxOverride: null,
+    };
+  }
   return {
     class_id: typeof body.class_id === 'string' ? body.class_id : '',
     date: typeof body.date === 'string' ? body.date.trim() : '',
@@ -57,6 +82,8 @@ function getFormValues(body = {}) {
       || body.punctuality_tolerance_override_minutes === undefined
       ? null
       : Number.parseInt(body.punctuality_tolerance_override_minutes, 10),
+    ...summaryConfiguration,
+    summaryConfigurationError,
   };
 }
 
@@ -80,10 +107,13 @@ function validateForm(values) {
     && !isValidTolerance(values.punctuality_tolerance_override_minutes)) {
     return 'Sélectionnez une tolérance de ponctualité valide.';
   }
+  if (values.summaryConfigurationError) {
+    return 'Vérifiez les destinataires et le réglage Excel du résumé automatique.';
+  }
   return '';
 }
 
-function renderSessionForm({ title, action, submitLabel, values, classes, error = '', edit = false }) {
+function renderSessionForm({ title, action, submitLabel, values, classes, adminUsers = [], error = '', edit = false }) {
   const errorMessage = error
     ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
@@ -96,12 +126,15 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
          <label for="class_id">${businessTerm('class')} <span aria-hidden="true">*</span></label>
          <select class="form-select" id="class_id" name="class_id" required data-session-class>
            <option value="">Sélectionner dans la liste</option>
-           ${classes.map((classRecord) => `<option value="${classRecord.public_id}" data-punctuality-tolerance="${classRecord.punctuality_tolerance_minutes}"${classRecord.public_id === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
+           ${classes.map((classRecord) => `<option value="${classRecord.public_id}" data-punctuality-tolerance="${classRecord.punctuality_tolerance_minutes}" data-summary-attach-xlsx="${classRecord.summary_attach_xlsx ? 'true' : 'false'}"${classRecord.public_id === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
          </select>
        </div>`;
   const inheritedTolerance = Number(values.class_punctuality_tolerance_minutes)
     || classes.find((classRecord) => classRecord.public_id === values.class_id)?.punctuality_tolerance_minutes
     || 5;
+  const inheritedAttachXlsx = typeof values.class_summary_attach_xlsx === 'boolean'
+    ? values.class_summary_attach_xlsx
+    : Boolean(classes.find((classRecord) => classRecord.public_id === values.class_id)?.summary_attach_xlsx);
 
   return renderPage(title, `
     <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
@@ -147,6 +180,10 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
         <textarea class="form-control" id="notes" name="notes" rows="5" autocomplete="off">${escapeHtml(values.notes ?? '')}</textarea>
       </div>
 
+      ${renderSummaryConfigurationFields({
+        adminUsers, values, scope: 'session', inheritedAttachXlsx,
+      })}
+
       <div class="form-actions d-flex flex-wrap gap-2">
         <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
         <a class="btn btn-outline-secondary" href="/sessions">Annuler</a>
@@ -156,7 +193,7 @@ function renderSessionForm({ title, action, submitLabel, values, classes, error 
 
 async function getClasses() {
   const result = await pool.query(
-    `SELECT public_id, name, punctuality_tolerance_minutes
+    `SELECT public_id, name, punctuality_tolerance_minutes, summary_attach_xlsx
      FROM classes ORDER BY LOWER(name), id`,
   );
   return result.rows;
@@ -398,7 +435,7 @@ router.get('/', async (request, response) => {
 
 router.get('/new', requireSessionManagement, async (request, response) => {
   try {
-    const classes = await getClasses();
+    const [classes, adminUsers] = await Promise.all([getClasses(), loadSummaryAdminOptions()]);
     response.send(renderSessionForm({
       title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: '/sessions',
@@ -411,8 +448,12 @@ router.get('/new', requireSessionManagement, async (request, response) => {
         notes: '',
         start_time: '',
         punctuality_tolerance_override_minutes: null,
+        adminRecipientIds: [],
+        externalRecipients: [],
+        attachXlsxOverride: null,
       },
       classes,
+      adminUsers,
     }));
   } catch (error) {
     console.error('Unable to load the course session form:', error);
@@ -427,13 +468,14 @@ router.post('/', requireSessionManagement, async (request, response) => {
 
   if (validationError) {
     try {
-      const classes = await getClasses();
+      const [classes, adminUsers] = await Promise.all([getClasses(), loadSummaryAdminOptions()]);
       response.status(400).send(renderSessionForm({
         title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
         action: '/sessions',
         submitLabel: 'Créer',
         values,
         classes,
+        adminUsers,
         error: validationError,
       }));
     } catch (error) {
@@ -452,7 +494,7 @@ router.post('/', requireSessionManagement, async (request, response) => {
             punctuality_tolerance_override_minutes)
          SELECT c.id, $2, $3, $4, $5, $6, $7
          FROM classes c WHERE c.public_id = $1
-         RETURNING public_id`,
+         RETURNING id, public_id`,
         [
           values.class_id,
           values.date,
@@ -463,6 +505,9 @@ router.post('/', requireSessionManagement, async (request, response) => {
           values.punctuality_tolerance_override_minutes,
         ],
       );
+      if (inserted.rowCount > 0) {
+        await saveSessionSummaryConfiguration(client, inserted.rows[0].id, values);
+      }
       if (inserted.rowCount > 0) await recordAuditEvent({
         client, category: 'session', action: 'session.create', targetType: 'session',
         targetPublicId: inserted.rows[0].public_id, targetLabel: values.title,
@@ -474,32 +519,49 @@ router.post('/', requireSessionManagement, async (request, response) => {
           state: 'scheduled',
           start_time: values.start_time || null,
           punctuality_tolerance_override_minutes: values.punctuality_tolerance_override_minutes,
+          ...summaryConfigurationSnapshot(values, 'session'),
         },
       });
       return inserted;
     });
     if (result.rowCount === 0) {
-      const classes = await getClasses();
+      const [classes, adminUsers] = await Promise.all([getClasses(), loadSummaryAdminOptions()]);
       response.status(400).send(renderSessionForm({
         title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
         action: '/sessions',
         submitLabel: 'Créer',
         values,
         classes,
+        adminUsers,
         error: 'La sélection ne correspond à aucune activité.',
       }));
       return;
     }
     response.redirect(303, `/sessions/${result.rows[0].public_id}?notice=created`);
   } catch (error) {
+    if (error.code === 'SUMMARY_RECIPIENTS_INVALID') {
+      const [classes, adminUsers] = await Promise.all([
+        getClasses().catch(() => []), loadSummaryAdminOptions().catch(() => []),
+      ]);
+      response.status(400).send(renderSessionForm({
+        title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
+        action: '/sessions', submitLabel: 'Créer', values, classes, adminUsers,
+        error: 'Vérifiez les destinataires du résumé automatique.',
+      }));
+      return;
+    }
     console.error('Unable to create course session:', error);
-    const classes = await getClasses().catch(() => []);
+    const [classes, adminUsers] = await Promise.all([
+      getClasses().catch(() => []),
+      loadSummaryAdminOptions().catch(() => []),
+    ]);
     response.status(500).send(renderSessionForm({
       title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: '/sessions',
       submitLabel: 'Créer',
       values,
       classes,
+      adminUsers,
       error: `Impossible de créer la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`,
     }));
   }
@@ -517,7 +579,8 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
       `SELECT cs.id, cs.public_id, c.public_id AS class_id, cs.date, cs.title, cs.instructor,
               cs.notes, cs.state, cs.start_time, cs.punctuality_tolerance_override_minutes,
               c.name AS class_name,
-              c.punctuality_tolerance_minutes AS class_punctuality_tolerance_minutes
+              c.punctuality_tolerance_minutes AS class_punctuality_tolerance_minutes,
+              c.summary_attach_xlsx AS class_summary_attach_xlsx
        FROM course_sessions cs
        INNER JOIN classes c ON c.id = cs.class_id
        WHERE cs.id = $1`,
@@ -534,12 +597,17 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
       return;
     }
 
+    const [summaryConfiguration, adminUsers] = await Promise.all([
+      loadSessionSummaryConfiguration(result.rows[0].id),
+      loadSummaryAdminOptions(),
+    ]);
     response.send(renderSessionForm({
       title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
       action: `/sessions/${result.rows[0].public_id}`,
       submitLabel: 'Enregistrer',
-      values: result.rows[0],
+      values: { ...result.rows[0], ...summaryConfiguration },
       classes: [],
+      adminUsers,
       edit: true,
     }));
   } catch (error) {
@@ -579,7 +647,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   const validationError = validateForm(values);
   if (validationError) {
     const classResult = await pool.query(
-      `SELECT name, punctuality_tolerance_minutes
+      `SELECT name, punctuality_tolerance_minutes, summary_attach_xlsx
        FROM classes WHERE public_id = $1`,
       [values.class_id],
     ).catch(() => ({ rows: [] }));
@@ -591,8 +659,10 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
         ...values,
         class_name: classResult.rows[0]?.name || '',
         class_punctuality_tolerance_minutes: classResult.rows[0]?.punctuality_tolerance_minutes || 5,
+        class_summary_attach_xlsx: classResult.rows[0]?.summary_attach_xlsx || false,
       },
       classes: [],
+      adminUsers: await loadSummaryAdminOptions().catch(() => []),
       error: validationError,
       edit: true,
     }));
@@ -602,12 +672,13 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   try {
     const result = await withTransaction(pool, async (client) => {
       const current = await client.query(
-        `SELECT public_id, date, title, instructor, notes, state, start_time,
+        `SELECT id, public_id, date, title, instructor, notes, state, start_time,
                 punctuality_tolerance_override_minutes
          FROM course_sessions WHERE id = $1 FOR UPDATE`,
         [request.courseSessionId],
       );
       if (current.rowCount === 0) return current;
+      const previousSummary = await loadSessionSummaryConfiguration(current.rows[0].id, client);
       const updated = await client.query(
         `UPDATE course_sessions
          SET date = $1, title = $2, instructor = $3, notes = $4, start_time = $5,
@@ -626,26 +697,39 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
           values.class_id,
         ],
       );
-      if (updated.rowCount > 0) await recordAuditEvent({
-        client, category: 'session', action: 'session.update', targetType: 'session',
-        targetPublicId: current.rows[0].public_id, targetLabel: values.title, summary: 'Session mise à jour.',
-        beforeData: {
-          date: current.rows[0].date,
-          title: current.rows[0].title,
-          instructor: current.rows[0].instructor,
-          notes: current.rows[0].notes,
-          start_time: normalizeClockTime(current.rows[0].start_time || '') || null,
-          punctuality_tolerance_override_minutes: current.rows[0].punctuality_tolerance_override_minutes,
-        },
-        afterData: {
-          date: values.date,
-          title: values.title,
-          instructor: values.instructor,
-          notes: values.notes || null,
-          start_time: values.start_time || null,
-          punctuality_tolerance_override_minutes: values.punctuality_tolerance_override_minutes,
-        },
-      });
+      if (updated.rowCount > 0) {
+        await saveSessionSummaryConfiguration(client, current.rows[0].id, values);
+        await recordAuditEvent({
+          client, category: 'session', action: 'session.update', targetType: 'session',
+          targetPublicId: current.rows[0].public_id, targetLabel: values.title, summary: 'Session mise à jour.',
+          beforeData: {
+            date: current.rows[0].date,
+            title: current.rows[0].title,
+            instructor: current.rows[0].instructor,
+            notes: current.rows[0].notes,
+            start_time: normalizeClockTime(current.rows[0].start_time || '') || null,
+            punctuality_tolerance_override_minutes: current.rows[0].punctuality_tolerance_override_minutes,
+          },
+          afterData: {
+            date: values.date,
+            title: values.title,
+            instructor: values.instructor,
+            notes: values.notes || null,
+            start_time: values.start_time || null,
+            punctuality_tolerance_override_minutes: values.punctuality_tolerance_override_minutes,
+          },
+        });
+        const beforeSummary = summaryConfigurationSnapshot(previousSummary, 'session');
+        const afterSummary = summaryConfigurationSnapshot(values, 'session');
+        if (summaryConfigurationChanged(previousSummary, values, 'session')) {
+          await recordAuditEvent({
+            client, category: 'session', action: 'session.summary.configuration.update', targetType: 'session',
+            targetPublicId: current.rows[0].public_id, targetLabel: values.title,
+            summary: 'Configuration du résumé automatique mise à jour.',
+            beforeData: beforeSummary, afterData: afterSummary,
+          });
+        }
+      }
       return updated;
     });
     if (result.rowCount === 0) {
@@ -658,6 +742,26 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
     }
     response.redirect(303, `/sessions/${request.params.id}?notice=updated`);
   } catch (error) {
+    if (error.code === 'SUMMARY_RECIPIENTS_INVALID') {
+      const classResult = await pool.query(
+        `SELECT name, punctuality_tolerance_minutes, summary_attach_xlsx
+         FROM classes WHERE public_id = $1`,
+        [values.class_id],
+      ).catch(() => ({ rows: [] }));
+      response.status(400).send(renderSessionForm({
+        title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
+        action: `/sessions/${request.params.id}`, submitLabel: 'Enregistrer',
+        values: {
+          ...values,
+          class_name: classResult.rows[0]?.name || '',
+          class_punctuality_tolerance_minutes: classResult.rows[0]?.punctuality_tolerance_minutes || 5,
+          class_summary_attach_xlsx: classResult.rows[0]?.summary_attach_xlsx || false,
+        },
+        classes: [], adminUsers: await loadSummaryAdminOptions().catch(() => []),
+        error: 'Vérifiez les destinataires du résumé automatique.', edit: true,
+      }));
+      return;
+    }
     console.error('Unable to update course session:', error);
     const page = renderMessagePage('Modification impossible', `Impossible de modifier la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
@@ -873,15 +977,20 @@ router.get('/:id', async (request, response) => {
 
     const presentCount = studentsResult.rows.filter((student) => student.status === 'present').length;
     const notices = {
-      created: `La ${getTerm('session').toLocaleLowerCase('fr')} a été créée.`,
-      updated: `La ${getTerm('session').toLocaleLowerCase('fr')} a été mise à jour.`,
-      attendance_updated: `La ${getTerm('attendance').toLocaleLowerCase('fr')} a été mise à jour.`,
-      arrival_updated: 'L’heure d’arrivée a été mise à jour.',
-      closed: `La ${getTerm('session').toLocaleLowerCase('fr')} a été clôturée.`,
-      opened: `La ${getTerm('session').toLocaleLowerCase('fr')} est ouverte.`,
+      created: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été créée.`],
+      updated: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été mise à jour.`],
+      attendance_updated: ['success', `La ${getTerm('attendance').toLocaleLowerCase('fr')} a été mise à jour.`],
+      arrival_updated: ['success', 'L’heure d’arrivée a été mise à jour.'],
+      closed: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été clôturée.`],
+      closed_summary_sent: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été clôturée et le résumé a été envoyé.`],
+      closed_summary_failed: ['warning', `La ${getTerm('session').toLocaleLowerCase('fr')} est clôturée, mais le résumé n’a pas pu être envoyé.`],
+      summary_resent: ['success', 'Le résumé des présences a été renvoyé.'],
+      summary_failed: ['warning', 'Le résumé des présences n’a pas pu être envoyé. Vérifiez la configuration e-mail.'],
+      summary_no_recipients: ['warning', 'Aucun destinataire actif n’est configuré pour ce résumé.'],
+      opened: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} est ouverte.`],
     };
     const notice = notices[request.query.notice]
-      ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
+      ? `<p class="alert alert-${notices[request.query.notice][0]}" role="${notices[request.query.notice][0] === 'success' ? 'status' : 'alert'}">${escapeHtml(notices[request.query.notice][1])}</p>`
       : '';
     const studentList = studentsResult.rows.length === 0
       ? `<p class="empty-state">${session.state === 'closed'
@@ -967,6 +1076,7 @@ router.get('/:id', async (request, response) => {
           <a class="btn btn-primary" href="/sessions/${session.public_id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Mode rapide</a>
           ${canManageSessions ? `<form method="post" action="/sessions/${session.public_id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir' : 'Réouvrir'}</button></form>
           <a class="btn btn-outline-secondary" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
+          <form method="post" action="/sessions/${session.public_id}/resend-summary"${session.state === 'closed' ? '' : ' hidden'}><button class="btn btn-outline-secondary" type="submit">Renvoyer le résumé</button></form>
           <form method="post" action="/sessions/${session.public_id}/close" data-session-close data-confirm="Clôturer la ${businessTerm('session').toLocaleLowerCase('fr')} ? Les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} en attente seront marqués absents."${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer</button></form>` : ''}
         </div>
       </header>
@@ -1423,12 +1533,39 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
       response.status(page.status).send(page.html);
       return;
     }
-    response.redirect(303, `/sessions/${request.params.id}?notice=closed`);
+    const delivery = await sendSessionSummary(request.params.id, { source: 'automatic' });
+    const notice = delivery.status === 'sent'
+      ? 'closed_summary_sent'
+      : delivery.status === 'failed' ? 'closed_summary_failed' : 'closed';
+    response.redirect(303, `/sessions/${request.params.id}?notice=${notice}`);
   } catch (error) {
     console.error('Unable to close course session:', error);
     const page = renderMessagePage('Clôture impossible', `Impossible de clôturer la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
     response.status(page.status).send(page.html);
   }
+});
+
+router.post('/:id/resend-summary', requireSessionManagement, async (request, response) => {
+  if (!request.courseSessionId) {
+    const page = renderSessionNotFoundPage();
+    response.status(page.status).send(page.html);
+    return;
+  }
+  const delivery = await sendSessionSummary(request.params.id, { source: 'manual_resend' });
+  if (delivery.status === 'not_found') {
+    const page = renderSessionNotFoundPage();
+    response.status(page.status).send(page.html);
+    return;
+  }
+  if (delivery.status === 'not_closed') {
+    const page = renderMessagePage('Envoi impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} doit être clôturée.`, 409);
+    response.status(page.status).send(page.html);
+    return;
+  }
+  const notice = delivery.status === 'sent'
+    ? 'summary_resent'
+    : delivery.status === 'no_recipients' ? 'summary_no_recipients' : 'summary_failed';
+  response.redirect(303, `/sessions/${request.params.id}?notice=${notice}`);
 });
 
 router.post('/:id/open', requireSessionManagement, async (request, response) => {

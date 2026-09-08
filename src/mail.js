@@ -155,7 +155,7 @@ function normalizeMailError(error) {
   return new MailError('DELIVERY_FAILED');
 }
 
-async function sendMail({ to, subject, text, html, attachments }) {
+async function sendMail({ to, bcc, subject, text, html, attachments }) {
   let configuration;
   try {
     configuration = await loadMailConfiguration();
@@ -174,6 +174,7 @@ async function sendMail({ to, subject, text, html, attachments }) {
         name: configuration.senderName,
       },
       to,
+      bcc,
       replyTo: configuration.replyTo || undefined,
       subject,
       text,
@@ -182,7 +183,8 @@ async function sendMail({ to, subject, text, html, attachments }) {
         ? attachments
         : undefined,
     });
-    if (!Array.isArray(result.accepted) || result.accepted.length === 0) {
+    if (!Array.isArray(result.accepted) || result.accepted.length === 0
+        || (Array.isArray(result.rejected) && result.rejected.length > 0)) {
       throw new MailError('RECIPIENT_REJECTED');
     }
     return result;

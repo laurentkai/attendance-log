@@ -15,6 +15,8 @@ const DATA_FIELDS = new Set([
   'instructor_singular', 'instructor_plural', 'membership_singular', 'membership_plural', 'username',
   'checked_in_at', 'start_time', 'punctuality_tolerance_minutes',
   'punctuality_tolerance_override_minutes',
+  'summary_attach_xlsx', 'summary_attach_xlsx_override',
+  'summary_admin_recipient_count', 'summary_external_recipient_count',
 ]);
 const CHANGED_FIELD_NAMES = new Set([...DATA_FIELDS, 'password']);
 const METADATA_FIELDS = new Set([
@@ -23,6 +25,7 @@ const METADATA_FIELDS = new Set([
   'counts', 'membership_active', 'logo_change', 'reason', 'error_code',
   'changed_fields', 'destination', 'schedule_enabled', 'format', 'credential_change',
   'session_public_id',
+  'recipient_count', 'attachment_included',
 ]);
 
 function boundedText(value, maximum, { required = false, strict = false } = {}) {
