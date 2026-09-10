@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'attendance-log-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v4`;
+const CACHE_NAME = `${CACHE_PREFIX}v5`;
 const OFFLINE_URL = '/offline.html';
 const STATIC_ASSETS = [
   OFFLINE_URL,

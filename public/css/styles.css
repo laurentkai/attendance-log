@@ -591,6 +591,7 @@ select {
   width: fit-content;
   margin: 0;
   display: inline-block;
+  align-self: start;
   padding: 0.25rem 0.5rem;
   border-radius: 999px;
   font-size: 0.75rem;
