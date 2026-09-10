@@ -26,6 +26,7 @@ const METADATA_FIELDS = new Set([
   'changed_fields', 'destination', 'schedule_enabled', 'format', 'credential_change',
   'session_public_id',
   'recipient_count', 'attachment_included',
+  'profile_reference',
 ]);
 
 function boundedText(value, maximum, { required = false, strict = false } = {}) {

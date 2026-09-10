@@ -2,6 +2,7 @@ const express = require('express');
 const { AVERY_PROFILES, getAveryProfile, getLabelsPerSheet } = require('./avery-profiles');
 const { getEffectiveLogoForClass, getGlobalLogo } = require('./branding');
 const { pool } = require('./db/client');
+const { getSavedPrintDesign } = require('./print-design');
 const { isValidPublicId } = require('./public-id');
 const {
   createCalibrationSheetPdf,
@@ -320,6 +321,7 @@ router.post('/pdf', async (request, response) => {
       await renderCurrentPage(response, 'L’avertissement ne peut pas rester lisible sur ce format Avery.', 400);
       return;
     }
+    const design = await getSavedPrintDesign(options.profile.reference);
     const pdf = await createParticipantQrSheetPdf({
       profile: options.profile,
       participants,
@@ -328,6 +330,7 @@ router.post('/pdf', async (request, response) => {
       includeWarning: selection.includeWarning,
       title: selection.title,
       logo,
+      design,
     });
     sendPdf(response, pdf, `attendance-log-qr-${options.profile.reference.toLowerCase()}.pdf`);
   } catch (error) {

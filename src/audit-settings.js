@@ -12,7 +12,7 @@ const CATEGORY_LABELS = Object.freeze({
   attendance: 'Présences', backup: 'Sauvegardes', branding: 'Identité visuelle',
   class: 'Activités', import: 'Import', maintenance: 'Maintenance', mail: 'E-mail',
   restore: 'Restauration', security: 'Sécurité', session: 'Sessions', student: 'Participants',
-  terminology: 'Terminologie', user: 'Utilisateurs',
+  terminology: 'Terminologie', user: 'Utilisateurs', print_design: 'Design d’impression',
 });
 const RESULT_LABELS = Object.freeze({ success: 'Réussi', denied: 'Refusé', failed: 'Échec' });
 const COMPACT_RESULT_LABELS = Object.freeze({ success: 'OK', denied: 'Refusé', failed: 'Échec' });
@@ -39,6 +39,7 @@ const ACTION_LABELS = Object.freeze({
   'mail.configuration.update': 'Configuration e-mail modifiée', 'mail.test': 'Configuration e-mail testée',
   'membership.add': 'Inscription ajoutée', 'membership.deactivate': 'Inscription désactivée', 'membership.reactivate': 'Inscription réactivée', 'membership.remove': 'Inscription supprimée',
   'operational_data.reset': 'Données métier réinitialisées',
+  'print_design.save': 'Modèle d’impression enregistré', 'print_design.reset': 'Modèle d’impression réinitialisé',
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé de récupération exportée', 'security.recovery_key.import': 'Clé de récupération importée', 'security.recovery_key.view': 'Clé de récupération affichée',
   'session.close': 'Session clôturée', 'session.create': 'Session créée', 'session.open': 'Session ouverte', 'session.reopen': 'Session rouverte', 'session.update': 'Session modifiée',
@@ -73,6 +74,7 @@ const COMPACT_ACTION_LABELS = Object.freeze({
   'mail.configuration.update': 'Config. e-mail', 'mail.test': 'Test e-mail',
   'membership.add': 'Inscription ajoutée', 'membership.deactivate': 'Inscription désactivée', 'membership.reactivate': 'Inscription réactivée', 'membership.remove': 'Inscription supprimée',
   'operational_data.reset': 'Données réinitialisées',
+  'print_design.save': 'Modèle enregistré', 'print_design.reset': 'Modèle réinitialisé',
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé exportée', 'security.recovery_key.import': 'Clé importée', 'security.recovery_key.view': 'Clé affichée',
   'session.close': 'Session clôturée', 'session.create': 'Session créée', 'session.open': 'Session ouverte', 'session.reopen': 'Session rouverte', 'session.update': 'Session modifiée',

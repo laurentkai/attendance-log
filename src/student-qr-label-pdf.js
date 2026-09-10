@@ -2,9 +2,14 @@ const PDFDocument = require('pdfkit');
 const { createStudentQrPng } = require('./student-qr');
 const { PERSONAL_QR_WARNING } = require('./student-qr-content');
 const { getLabelBoxMm, getLabelsPerSheet } = require('./avery-profiles');
+const {
+  MINIMUM_QR_MM,
+  MINIMUM_TEXT_ELEMENT_HEIGHT_MM,
+  profileSupportsDisclaimer,
+  validatePrintDesign,
+} = require('./print-design');
 
 const POINTS_PER_MM = 72 / 25.4;
-const MINIMUM_QR_MM = 24;
 
 function mmToPoints(value) {
   return value * POINTS_PER_MM;
@@ -97,25 +102,6 @@ function fitBadgeTitle(document, title, width, height, maximumFontSize) {
   };
 }
 
-function renderBadgeTitle(document, title, x, y, width, height, maximumFontSize) {
-  if (!title || width < mmToPoints(8) || height < mmToPoints(3.5)) return null;
-  const layout = fitBadgeTitle(document, title, width, height, maximumFontSize);
-  document.font('Helvetica-Bold').fontSize(layout.fontSize).fillColor('#172033');
-  document.text(
-    layout.singleLine ? truncateSingleLine(document, title, width) : title,
-    x,
-    y,
-    {
-      ellipsis: !layout.singleLine,
-      height,
-      lineBreak: !layout.singleLine,
-      lineGap: 0.5,
-      width,
-    },
-  );
-  return layout;
-}
-
 function toPointBox(boxMm) {
   return {
     ...boxMm,
@@ -131,8 +117,7 @@ function getLayoutFamily(boxMm) {
 }
 
 function canIncludeQrWarning(profile) {
-  return (profile.labelHeightMm >= 52 && profile.labelWidthMm >= 80)
-    || (profile.labelHeightMm >= 68 && profile.labelWidthMm >= 60);
+  return profileSupportsDisclaimer(profile);
 }
 
 function getContentMetrics(boxMm, {
@@ -188,18 +173,18 @@ function getContentMetrics(boxMm, {
   const contentLeftMm = boxMm.x + horizontalPaddingMm + codeStripWidthMm + codeQrGapMm;
   const contentRightMm = boxMm.x + boxMm.width - horizontalPaddingMm;
   const contentWidthMm = contentRightMm - contentLeftMm;
-  const titleGapMm = 0.8;
-  const spareVerticalMm = boxMm.height - (2 * verticalPaddingMm) - qrSizeMm - reservedBottomMm;
-  const fullTitleHeightMm = hasTitle && spareVerticalMm >= 5.8
-    ? Math.min(9.5, spareVerticalMm - titleGapMm)
-    : 0;
-  const titlePlacement = !hasTitle ? 'none' : fullTitleHeightMm > 0 ? 'full' : 'side';
-  const qrXmm = titlePlacement === 'side'
-    ? contentLeftMm
-    : contentLeftMm + ((contentWidthMm - qrSizeMm) / 2);
-  const qrYmm = boxMm.y + verticalPaddingMm
-    + (titlePlacement === 'full' ? fullTitleHeightMm + titleGapMm : 0);
-  const sideTitleXmm = qrXmm + qrSizeMm + titleGapMm;
+  const headerGapMm = 1.2;
+  const identityActivityGapMm = hasActivity ? 0.6 : 0;
+  const contentBlockHeightMm = qrSizeMm + headerGapMm + nameHeightMm
+    + identityActivityGapMm + activityHeightMm;
+  const contentBlockOffsetMm = includeWarning
+    ? 0
+    : Math.max(
+      0,
+      (boxMm.height - (2 * verticalPaddingMm) - contentBlockHeightMm) / 2,
+    );
+  const qrXmm = contentLeftMm;
+  const qrYmm = boxMm.y + verticalPaddingMm + contentBlockOffsetMm;
   return {
     box,
     family,
@@ -213,95 +198,19 @@ function getContentMetrics(boxMm, {
     qrSize: mmToPoints(qrSizeMm),
     qrX: mmToPoints(qrXmm),
     qrY: mmToPoints(qrYmm),
-    titlePlacement,
-    titleX: mmToPoints(titlePlacement === 'full' ? contentLeftMm : sideTitleXmm),
-    titleY: mmToPoints(boxMm.y + verticalPaddingMm),
-    titleWidth: mmToPoints(titlePlacement === 'full'
-      ? contentWidthMm
-      : Math.max(0, contentRightMm - sideTitleXmm)),
-    titleHeight: mmToPoints(titlePlacement === 'full'
-      ? fullTitleHeightMm
-      : Math.min(10, qrSizeMm)),
+    headerX: mmToPoints(contentLeftMm),
+    headerY: mmToPoints(boxMm.y + verticalPaddingMm + contentBlockOffsetMm),
+    headerWidth: mmToPoints(contentWidthMm),
+    headerHeight: mmToPoints(qrSizeMm),
+    headerGap: mmToPoints(headerGapMm),
+    headerColumnGap: mmToPoints(0.9),
+    identityActivityGap: mmToPoints(identityActivityGapMm),
+    footerGap: mmToPoints(0.9),
     nameHeight: mmToPoints(nameHeightMm),
     activityHeight: mmToPoints(activityHeightMm),
     warningHeight: mmToPoints(warningHeightMm),
     contentGap: mmToPoints(0.8),
   };
-}
-
-function renderRotatedCode(document, code, box, metrics) {
-  const centerX = box.x + metrics.horizontalPadding + (metrics.codeStripWidth / 2);
-  const centerY = box.y + (box.height / 2);
-  const availableLength = box.height - (2 * metrics.verticalPadding);
-  const fontSize = clamp(metrics.codeStripWidth * 0.63, 7, 10);
-
-  document.save();
-  document.translate(centerX, centerY);
-  document.rotate(-90);
-  document
-    .font('Helvetica-Bold')
-    .fontSize(fontSize)
-    .fillColor('#334155')
-    .text(String(code), -availableLength / 2, -fontSize * 0.58, {
-      align: 'center', lineBreak: false, width: availableLength,
-    });
-  document.restore();
-}
-
-function renderWideText(document, participant, activityName, title, metrics) {
-  const { box } = metrics;
-  const textX = metrics.qrX + metrics.qrSize + metrics.qrTextGap;
-  const textWidth = Math.max(1, box.x + box.width - metrics.horizontalPadding - textX);
-  const titleGap = title ? mmToPoints(0.8) : 0;
-  const textTop = box.y + metrics.verticalPadding;
-  const availableHeight = box.height - (2 * metrics.verticalPadding);
-  const maximumPrimaryFontSize = clamp(box.height * 0.16, 10, 14);
-  const maximumTitleHeight = title ? Math.min(mmToPoints(9.5), availableHeight * 0.42) : 0;
-  const titleLayout = title
-    ? renderBadgeTitle(
-      document,
-      title,
-      textX,
-      textTop,
-      textWidth,
-      maximumTitleHeight,
-      maximumPrimaryFontSize,
-    )
-    : null;
-  const renderedTitleHeight = titleLayout?.height || 0;
-  const identityTop = textTop + renderedTitleHeight + (titleLayout ? titleGap : 0);
-  const textHeight = availableHeight - renderedTitleHeight - (titleLayout ? titleGap : 0);
-  const name = `${participant.first_name} ${participant.last_name}`.trim();
-  const activityHeight = activityName ? 9 : 0;
-  const blockGap = activityName ? mmToPoints(1.1) : 0;
-  const nameHeight = textHeight - activityHeight - blockGap;
-
-  document.font('Helvetica-Bold');
-  const nameLayout = fitParticipantName(
-    document, name, textWidth, nameHeight, maximumPrimaryFontSize,
-  );
-  const totalHeight = nameLayout.height + blockGap + activityHeight;
-  const textY = identityTop + Math.max(0, (textHeight - totalHeight) / 2);
-  document
-    .fontSize(nameLayout.fontSize)
-    .fillColor('#172033')
-    .text(name, textX, textY, {
-      ellipsis: true,
-      height: nameHeight,
-      lineGap: 0.5,
-      lineBreak: !nameLayout.singleLine,
-      width: textWidth,
-    });
-
-  if (activityName) {
-    document.font('Helvetica').fontSize(clamp(box.height * 0.065, 6, 8));
-    document
-      .fillColor('#526276')
-      .text(truncateSingleLine(document, activityName, textWidth), textX,
-        textY + nameLayout.height + blockGap, {
-          height: activityHeight, lineBreak: false, width: textWidth,
-        });
-  }
 }
 
 function renderContainedLogo(document, logo, x, y, width, height) {
@@ -314,93 +223,252 @@ function renderContainedLogo(document, logo, x, y, width, height) {
   }
 }
 
-function renderBalancedContent(document, participant, activityName, logo, includeWarning, title, metrics) {
+function relativeMillimetres(value, origin = 0) {
+  return (value - origin) / POINTS_PER_MM;
+}
+
+function elementBox(x, y, width, height, extra = {}) {
+  return {
+    x: relativeMillimetres(x),
+    y: relativeMillimetres(y),
+    width: relativeMillimetres(width),
+    height: relativeMillimetres(height),
+    enabled: true,
+    ...extra,
+  };
+}
+
+function createDefaultPrintDesign(profile, {
+  participant = { first_name: 'Paul', last_name: 'BALDEWYNS' },
+  activityName = 'Cours de navigation 2026-2027',
+  includeWarning = canIncludeQrWarning(profile),
+  title = 'Carte étudiant 2027',
+} = {}) {
+  const document = new PDFDocument({ autoFirstPage: false });
+  const boxMm = { x: 0, y: 0, width: profile.labelWidthMm, height: profile.labelHeightMm };
+  const metrics = getContentMetrics(boxMm, {
+    includeWarning,
+    hasActivity: Boolean(activityName),
+    hasTitle: Boolean(title),
+  });
   const { box } = metrics;
-  const name = `${participant.first_name} ${participant.last_name}`.trim();
-  const maximumPrimaryFontSize = clamp(box.width * 0.055, 11, 15);
-  renderBadgeTitle(
-    document,
-    title,
-    metrics.titleX,
-    metrics.titleY,
-    metrics.titleWidth,
-    metrics.titleHeight,
-    maximumPrimaryFontSize,
+  const codeFontSize = clamp(metrics.codeStripWidth * 0.63, 7, 10);
+  const code = elementBox(
+    box.x + metrics.horizontalPadding,
+    box.y + metrics.verticalPadding,
+    metrics.codeStripWidth,
+    box.height - (2 * metrics.verticalPadding),
+    { fontSize: codeFontSize, rotation: -90 },
   );
-  const topRightX = metrics.qrX + metrics.qrSize + metrics.contentGap;
-  const topRightWidth = box.x + box.width - metrics.horizontalPadding - topRightX;
-  if (metrics.titlePlacement === 'side') {
-    const logoY = metrics.titleY + metrics.titleHeight + metrics.contentGap;
-    renderContainedLogo(
+  const qr = elementBox(metrics.qrX, metrics.qrY, metrics.qrSize, metrics.qrSize);
+  const empty = elementBox(metrics.contentX || metrics.qrX, metrics.qrY, mmToPoints(10), mmToPoints(5));
+  let titleElement = { ...empty, fontSize: 12, align: 'left' };
+  let nameElement = { ...empty, fontSize: 12, align: 'center' };
+  let activityElement = { ...empty, fontSize: 7, align: 'center' };
+  let logoElement = { ...empty, enabled: false };
+  let disclaimerElement = { ...empty, enabled: false, fontSize: 6, align: 'center' };
+
+  if (metrics.family === 'wide') {
+    const textX = metrics.qrX + metrics.qrSize + metrics.qrTextGap;
+    const textWidth = Math.max(1, box.x + box.width - metrics.horizontalPadding - textX);
+    const textTop = box.y + metrics.verticalPadding;
+    const availableHeight = box.height - (2 * metrics.verticalPadding);
+    const maximumPrimaryFontSize = clamp(box.height * 0.16, 10, 14);
+    const maximumTitleHeight = title ? Math.min(mmToPoints(9.5), availableHeight * 0.42) : 0;
+    const titleLayout = title
+      ? fitBadgeTitle(document, title, textWidth, maximumTitleHeight, maximumPrimaryFontSize)
+      : null;
+    const titleGap = titleLayout ? mmToPoints(0.8) : 0;
+    const activityHeight = activityName ? 9 : 0;
+    const blockGap = activityName ? mmToPoints(1.1) : 0;
+    const disabledActivityHeight = mmToPoints(MINIMUM_TEXT_ELEMENT_HEIGHT_MM);
+    const nameHeight = availableHeight - (titleLayout?.height || 0) - titleGap
+      - activityHeight - blockGap;
+    document.font('Helvetica-Bold');
+    const nameLayout = fitParticipantName(
       document,
-      logo,
-      metrics.titleX,
-      logoY,
-      metrics.titleWidth,
-      Math.max(0, metrics.qrY + metrics.qrSize - logoY),
+      `${participant.first_name} ${participant.last_name}`.trim(),
+      textWidth,
+      nameHeight,
+      maximumPrimaryFontSize,
     );
-  } else {
-    renderContainedLogo(
-      document,
-      logo,
-      topRightX,
-      metrics.qrY,
-      topRightWidth,
-      Math.min(metrics.qrSize, mmToPoints(12)),
-    );
-  }
-
-  let bottomY = box.y + box.height - metrics.verticalPadding;
-  if (includeWarning) {
-    const warningY = bottomY - metrics.warningHeight;
-    document
-      .font('Helvetica')
-      .fontSize(6)
-      .fillColor('#7c2d12')
-      .text(PERSONAL_QR_WARNING, metrics.contentX, warningY, {
-        align: 'left',
-        ellipsis: false,
-        height: metrics.warningHeight,
-        lineGap: 0.2,
-        width: metrics.contentWidth,
-      });
-    bottomY = warningY - metrics.contentGap;
-  }
-
-  if (activityName) {
-    const activityY = bottomY - metrics.activityHeight;
-    document.font('Helvetica').fontSize(7).fillColor('#526276');
-    document.text(
-      truncateSingleLine(document, activityName, metrics.contentWidth),
-      metrics.contentX,
-      activityY,
-      { height: metrics.activityHeight, lineBreak: false, width: metrics.contentWidth },
-    );
-    bottomY = activityY - metrics.contentGap;
-  }
-
-  const nameY = Math.max(metrics.qrY + metrics.qrSize + metrics.contentGap, bottomY - metrics.nameHeight);
-  const nameHeight = Math.max(1, bottomY - nameY);
-  document.font('Helvetica-Bold');
-  const nameLayout = fitParticipantName(
-    document,
-    name,
-    metrics.contentWidth,
-    nameHeight,
-    maximumPrimaryFontSize,
-    8,
-  );
-  document
-    .fontSize(nameLayout.fontSize)
-    .fillColor('#172033')
-    .text(name, metrics.contentX, nameY, {
-      align: 'center',
-      ellipsis: true,
-      height: nameHeight,
-      lineGap: 0.5,
-      lineBreak: !nameLayout.singleLine,
-      width: metrics.contentWidth,
+    const contentY = textTop;
+    titleElement = elementBox(textX, contentY, textWidth, Math.max(titleLayout?.height || mmToPoints(4), 1), {
+      enabled: Boolean(title), fontSize: titleLayout?.fontSize || maximumPrimaryFontSize, align: 'left',
     });
+    const nameY = contentY + (titleLayout?.height || 0) + titleGap;
+    nameElement = elementBox(textX, nameY, textWidth, Math.max(nameHeight, mmToPoints(2)), {
+      fontSize: nameLayout.fontSize, align: 'left',
+    });
+    const activityBoxHeight = activityName ? activityHeight : disabledActivityHeight;
+    const activityY = activityName
+      ? nameY + nameHeight + blockGap
+      : box.y + box.height - metrics.verticalPadding - activityBoxHeight;
+    activityElement = elementBox(textX, activityY, textWidth, activityBoxHeight, {
+      enabled: Boolean(activityName), fontSize: clamp(box.height * 0.065, 6, 8), align: 'left',
+    });
+    logoElement = elementBox(textX, textTop, Math.min(textWidth, mmToPoints(20)), mmToPoints(8), { enabled: false });
+  } else {
+    const contentRight = metrics.contentX + metrics.contentWidth;
+    const headerColumn = {
+      x: metrics.qrX + metrics.qrSize + metrics.headerColumnGap,
+      y: metrics.qrY,
+      right: contentRight,
+      bottom: metrics.qrY + metrics.qrSize,
+    };
+    headerColumn.width = headerColumn.right - headerColumn.x;
+    const maximumPrimaryFontSize = clamp(box.width * 0.055, 11, 15);
+    const maximumTitleHeight = Math.min(metrics.headerHeight * 0.42, mmToPoints(10));
+    const titleLayout = title
+      ? fitBadgeTitle(document, title, headerColumn.width, maximumTitleHeight, maximumPrimaryFontSize)
+      : null;
+    titleElement = elementBox(headerColumn.x, headerColumn.y, headerColumn.width, Math.max(titleLayout?.height || mmToPoints(5), 1), {
+      enabled: Boolean(title), fontSize: titleLayout?.fontSize || maximumPrimaryFontSize, align: 'left',
+    });
+    const logoTop = titleLayout
+      ? headerColumn.y + titleLayout.height + metrics.headerColumnGap
+      : headerColumn.y;
+    const logoWidth = Math.min(
+      headerColumn.width,
+      clamp(headerColumn.width * 0.86, mmToPoints(16), mmToPoints(26)),
+    );
+    const logoHeight = Math.min(
+      headerColumn.bottom - logoTop,
+      clamp(metrics.headerHeight * 0.62, mmToPoints(12), mmToPoints(18)),
+    );
+    logoElement = elementBox(headerColumn.x, logoTop, logoWidth, logoHeight);
+    const identityGap = clamp(box.height * 0.045, mmToPoints(2.2), mmToPoints(3.2));
+    const identityY = Math.max(metrics.qrY + metrics.qrSize, logoTop + logoHeight) + identityGap;
+    const contentBottom = box.y + box.height - metrics.verticalPadding;
+    document.font('Helvetica').fontSize(6);
+    const warningHeight = includeWarning
+      ? Math.min(metrics.warningHeight, document.heightOfString(PERSONAL_QR_WARNING, {
+        lineGap: 0.2, width: metrics.contentWidth,
+      }))
+      : 0;
+    const footerY = contentBottom - warningHeight;
+    document.font('Helvetica').fontSize(7);
+    const activityHeight = activityName
+      ? Math.min(metrics.activityHeight, document.currentLineHeight(true))
+      : 0;
+    const availableNameHeight = Math.max(1, Math.min(
+      metrics.nameHeight,
+      (includeWarning ? footerY - metrics.footerGap : contentBottom) - identityY
+        - (activityHeight ? metrics.identityActivityGap + activityHeight : 0),
+    ));
+    document.font('Helvetica-Bold');
+    const nameLayout = fitParticipantName(
+      document,
+      `${participant.first_name} ${participant.last_name}`.trim(),
+      metrics.contentWidth,
+      availableNameHeight,
+      maximumPrimaryFontSize,
+      8,
+    );
+    nameElement = elementBox(metrics.contentX, identityY, metrics.contentWidth, availableNameHeight, {
+      fontSize: nameLayout.fontSize, align: 'center',
+    });
+    activityElement = elementBox(
+      metrics.contentX,
+      identityY + availableNameHeight + metrics.identityActivityGap,
+      metrics.contentWidth,
+      Math.max(activityHeight, mmToPoints(2)),
+      { enabled: Boolean(activityName), fontSize: 7, align: 'center' },
+    );
+    disclaimerElement = elementBox(
+      metrics.contentX,
+      includeWarning ? footerY : contentBottom - mmToPoints(5),
+      metrics.contentWidth,
+      Math.max(warningHeight, mmToPoints(5)),
+      {
+      enabled: includeWarning, fontSize: 6, align: 'center',
+      },
+    );
+  }
+  document.end();
+  return validatePrintDesign(profile, {
+    version: 1,
+    elements: {
+      qr, code, title: titleElement, name: nameElement, activity: activityElement,
+      logo: logoElement, disclaimer: disclaimerElement,
+    },
+  });
+}
+
+function absoluteElementBox(box, element) {
+  return {
+    x: box.x + mmToPoints(element.x),
+    y: box.y + mmToPoints(element.y),
+    width: mmToPoints(element.width),
+    height: mmToPoints(element.height),
+  };
+}
+
+function renderDesignedCode(document, value, box, element) {
+  if (!element.enabled) return;
+  const area = absoluteElementBox(box, element);
+  const centerX = area.x + (area.width / 2);
+  const centerY = area.y + (area.height / 2);
+  const textWidth = Math.abs(element.rotation) === 90 ? area.height : area.width;
+  document.save().translate(centerX, centerY).rotate(element.rotation);
+  document.font('Helvetica-Bold').fontSize(element.fontSize).fillColor('#334155').text(
+    String(value), -textWidth / 2, -element.fontSize * 0.58,
+    { align: 'center', lineBreak: false, width: textWidth },
+  );
+  document.restore();
+}
+
+function renderDesignedText(document, text, box, element, { bold = false, lineGap = 0.5, title = false } = {}) {
+  if (!element.enabled || !text) return;
+  const area = absoluteElementBox(box, element);
+  document.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(element.fontSize);
+  const fitted = title
+    ? fitBadgeTitle(document, text, area.width, area.height, element.fontSize)
+    : bold ? fitParticipantName(document, text, area.width, area.height, element.fontSize, Math.min(8, element.fontSize))
+    : null;
+  const singleLine = fitted ? fitted.singleLine : document.heightOfString(text, { width: area.width }) <= document.currentLineHeight(true);
+  document.fontSize(fitted?.fontSize || element.fontSize).text(
+    singleLine ? truncateSingleLine(document, text, area.width) : text,
+    area.x,
+    area.y,
+    {
+      align: element.align,
+      ellipsis: !singleLine,
+      height: area.height,
+      lineBreak: !singleLine,
+      lineGap,
+      width: area.width,
+    },
+  );
+}
+
+async function renderDesignedParticipantLabel(document, box, participant, options, design) {
+  const { elements } = design;
+  const qrPng = await createStudentQrPng(participant.qr_token);
+  renderDesignedCode(document, participant.student_code, box, elements.code);
+  if (elements.qr.enabled) {
+    const qr = absoluteElementBox(box, elements.qr);
+    document.image(qrPng, qr.x, qr.y, { width: qr.width, height: qr.height });
+  }
+  document.fillColor('#172033');
+  renderDesignedText(document, options.title, box, elements.title, { bold: true, title: true });
+  renderDesignedText(
+    document,
+    `${participant.first_name} ${participant.last_name}`.trim(),
+    box,
+    elements.name,
+    { bold: true },
+  );
+  document.fillColor('#526276');
+  renderDesignedText(document, options.activityName, box, elements.activity);
+  if (elements.logo.enabled && options.logo?.data) {
+    const logo = absoluteElementBox(box, elements.logo);
+    renderContainedLogo(document, options.logo, logo.x, logo.y, logo.width, logo.height);
+  }
+  if (options.includeWarning && elements.disclaimer.enabled) {
+    document.fillColor('#7c2d12');
+    renderDesignedText(document, PERSONAL_QR_WARNING, box, elements.disclaimer, { lineGap: 0.2 });
+  }
 }
 
 async function renderParticipantLabel(
@@ -408,29 +476,23 @@ async function renderParticipantLabel(
   profile,
   position,
   participant,
-  { activityName = '', logo = null, includeWarning = false, title = '' } = {},
+  { activityName = '', logo = null, includeWarning = false, title = '', design = null } = {},
 ) {
   const boxMm = getLabelBoxMm(profile, position);
-  const metrics = getContentMetrics(boxMm, {
-    includeWarning,
-    hasActivity: Boolean(activityName),
-    hasTitle: Boolean(title),
+  const box = toPointBox(boxMm);
+  const effectiveDesign = design || createDefaultPrintDesign(profile, {
+    activityName, includeWarning, title,
   });
-  const { box } = metrics;
-  const qrPng = await createStudentQrPng(participant.qr_token);
 
   document.save();
   document.rect(box.x, box.y, box.width, box.height).clip();
-  renderRotatedCode(document, participant.student_code, box, metrics);
-  document.image(qrPng, metrics.qrX, metrics.qrY, {
-    height: metrics.qrSize,
-    width: metrics.qrSize,
-  });
-  if (metrics.family === 'balanced') {
-    renderBalancedContent(document, participant, activityName, logo, includeWarning, title, metrics);
-  } else {
-    renderWideText(document, participant, activityName, title, metrics);
-  }
+  await renderDesignedParticipantLabel(
+    document,
+    box,
+    participant,
+    { activityName, logo, includeWarning, title },
+    effectiveDesign,
+  );
   document.restore();
 }
 
@@ -442,6 +504,7 @@ async function createParticipantQrSheetPdf({
   logo = null,
   includeWarning = false,
   title = '',
+  design = null,
 }) {
   const capacity = getLabelsPerSheet(profile);
   if (!Number.isInteger(firstPosition) || firstPosition < 1 || firstPosition > capacity) {
@@ -453,6 +516,9 @@ async function createParticipantQrSheetPdf({
   if (includeWarning && !canIncludeQrWarning(profile)) {
     throw new RangeError('The personal QR warning does not fit this Avery profile');
   }
+  const validatedDesign = design
+    ? validatePrintDesign(profile, design)
+    : createDefaultPrintDesign(profile, { activityName, includeWarning, title });
 
   const document = createPdfDocument(profile, `QR participants — Avery ${profile.reference}`);
   const complete = collectPdf(document);
@@ -464,7 +530,7 @@ async function createParticipantQrSheetPdf({
     const startPosition = pageIndex === 0 ? firstPosition - 1 : 0;
     for (let position = startPosition; position < capacity && participantIndex < participants.length; position += 1) {
       await renderParticipantLabel(document, profile, position, participants[participantIndex], {
-        activityName, includeWarning, title, logo,
+        activityName, includeWarning, title, logo, design: validatedDesign,
       });
       participantIndex += 1;
     }
@@ -543,6 +609,7 @@ module.exports = {
   PERSONAL_QR_WARNING,
   canIncludeQrWarning,
   createCalibrationSheetPdf,
+  createDefaultPrintDesign,
   createParticipantQrSheetPdf,
   getContentMetrics,
   getLayoutFamily,

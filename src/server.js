@@ -36,6 +36,7 @@ const { hasPermission, permissions } = require('./permissions');
 const { requestContextMiddleware } = require('./request-context');
 const studentImportRouter = require('./student-import');
 const studentQrPrintRouter = require('./student-qr-print');
+const printDesignSettingsRouter = require('./print-design-settings');
 const studentsRouter = require('./students');
 const terminologySettingsRouter = require('./terminology-settings');
 const { loadTerminology } = require('./terminology');
@@ -153,6 +154,7 @@ app.use('/settings/email', requirePermission(permissions.manageSettings), mailSe
 app.use('/settings/security', requirePermission(permissions.manageSettings), securitySettingsRouter);
 app.use('/settings/backups', requirePermission(permissions.manageSettings), backupSettingsRouter);
 app.use('/settings/branding', requirePermission(permissions.manageSettings), brandingSettingsRouter);
+app.use('/settings/print-design', requirePermission(permissions.manageSettings), printDesignSettingsRouter);
 app.use('/settings/maintenance', requirePermission(permissions.manageSettings), maintenanceSettingsRouter);
 app.use('/settings/terminology', requirePermission(permissions.manageSettings), terminologySettingsRouter);
 app.use('/settings/users', requirePermission(permissions.manageUsers), adminUserSettingsRouter);
