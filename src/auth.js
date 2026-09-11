@@ -94,7 +94,7 @@ async function loadAuthenticatedUser(request, response, next) {
   if (!userId) return next();
   try {
     const result = await pool.query(
-      `SELECT id, public_id, name, email, username, account_type, role, session_version FROM admin_users WHERE id = $1 AND active = TRUE`,
+      `SELECT id, public_id, name, email, username, account_type, role, view_pii, session_version FROM admin_users WHERE id = $1 AND active = TRUE`,
       [userId],
     );
     const user = result.rows[0];

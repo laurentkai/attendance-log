@@ -177,6 +177,30 @@ CSV Import belongs to student management and is accessed contextually from Stude
 - Only the break-glass password uses the central adaptive password-hashing implementation; it is never encrypted, rendered, or logged. Do not add invitations, password recovery, or federated login until explicitly scoped.
 - The break-glass administrator is created explicitly after migrations with `npm run create-admin`; never recreate one automatically at startup. Normal accounts are created from Configuration > Utilisateurs.
 
+### Privacy and PII authorization
+
+Business permissions decide whether a user may perform a workflow. The per-admin-user `view_pii` capability independently decides whether optional, non-essential personal identity may be disclosed; it must never block an authorized workflow that inherently requires identity. Do not create additional roles merely to express PII visibility. Valid combinations include administrator or manager accounts with or without `view_pii`, and attendance operators without it.
+
+Apply these exposure levels deliberately:
+
+- **PII required by the business action** — creating or editing a participant, sending that participant a QR, or printing a named badge may disclose the identity required to complete the authorized action. The underlying business permission is authoritative.
+- **Operational minimum identity** — attendance rosters and Quick Attendance may expose only what operators need to distinguish people safely, currently name plus participant code. Do not expose e-mail or other identity that the workflow does not need.
+- **Optional analytical PII** — Reporting names, e-mails, participant codes, identified drill-downs, and identity-bearing exports are controlled by `view_pii` because the statistics remain useful without them.
+
+The current `view_pii` implementation is scoped to Reporting only:
+
+- `view_pii = TRUE` preserves the current identified Reporting behavior.
+- `view_pii = FALSE` preserves the same Reporting functionality with participant identity pseudonymized or minimized.
+- Do not treat `view_pii` as a global identity-hiding switch. Operational and identity-dependent workflows remain governed by their business permissions and the minimum-necessary rule above.
+
+Reporting privacy enforcement belongs in the data layer, before templates or exporters receive results. Without `view_pii`, do not load real participant first name, last name, e-mail, participant code, or student `public_id` into the reporting result object unless a strictly necessary non-display use is explicitly justified. HTML and every export or delivery channel must consume the same privacy-aware reporting data shape; XLSX, CSV, PDF, JSON/API, and future e-mail reports must never bypass the restriction applied to HTML.
+
+Reporting pseudonyms use a server-side, HMAC-based display label such as `Participant 7F3A-91C2`. Use a dedicated, purpose-bound privacy/pseudonym secret, never `SESSION_SECRET`, and never expose or directly derive the displayed pseudonym from the student's `public_id`. Scope correlation per activity/class so the same participant remains correlatable across that activity's sessions but not trivially across unrelated activities. A pseudonym provides display correlation only and never authorization.
+
+Changing an admin user's `view_pii` value is security- and privacy-significant. Record the actor, target user, and before/after boolean in the Audit Log without adding unrelated PII.
+
+Privacy lifecycle roadmap: participants will progress from active to inactive/soft-deleted and, after a configurable inactivity-retention period, to irreversible anonymization. Eligibility must not depend only on generic `updated_at` values, active membership must block anonymization, and anonymization must redact participant PII retained in the Audit Log while preserving its event and accountability trail. Do not implement this roadmap implicitly without explicit scope.
+
 ### Students, memberships, sessions, and attendance
 
 - Students have a global activity state; class memberships have a separate activity state.

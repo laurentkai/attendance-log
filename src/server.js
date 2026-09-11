@@ -24,6 +24,7 @@ const mailSettingsRouter = require('./mail-settings');
 const maintenanceSettingsRouter = require('./maintenance-settings');
 const { isMaintenanceActive, maintenanceMiddleware } = require('./maintenance');
 const reportingRouter = require('./reporting');
+const { getReportingPseudonymSecretStatus } = require('./reporting-privacy');
 const { cleanupStaleRestoreWorkspaces } = require('./restore');
 const securitySettingsRouter = require('./security-settings');
 const {
@@ -265,9 +266,10 @@ async function start() {
       const secretStatuses = await Promise.all([
         getStoredMailSecretStatus(),
         getStoredBackupSecretStatus(),
+        getReportingPseudonymSecretStatus(),
       ]);
       if (secretStatuses.includes('mismatch')) {
-        console.warn('WARNING: The active application encryption key does not match stored encrypted data. Provider secrets are unavailable until the matching recovery key is restored.');
+        console.warn('WARNING: The active application encryption key does not match stored encrypted data. Encrypted integrations or Reporting pseudonyms may be unavailable until the matching recovery key is restored.');
       }
     } catch (error) {
       console.warn('Unable to verify stored encrypted data at startup:', error.code || 'PREFLIGHT_FAILED');

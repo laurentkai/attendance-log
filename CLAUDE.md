@@ -131,6 +131,17 @@ Consult it when assessing behavior preservation, blast radius, and the smallest 
 - Bootstrap 5 is the approved frontend framework; flag competing systems or unjustified dependencies.
 - Check migration compatibility for clean install, upgrade, rerun, backup, and restore when schema changes.
 
+### Privacy review
+
+For privacy-sensitive changes:
+
+- distinguish permission to perform the business workflow from the independent `view_pii` decision for optional identity;
+- confirm the workflow receives only the minimum identity it genuinely needs;
+- verify Reporting removes or pseudonymizes PII in the data layer before rendering and that HTML, XLSX, CSV, PDF, JSON/API, and delivery paths have identical privacy behavior;
+- reject public UUIDs as pseudonyms and verify HMAC pseudonyms use a dedicated purpose-bound secret with the intended activity/class scope;
+- verify `view_pii` changes are audited with actor, target, and before/after state; and
+- check that PII is not introduced into logs, URLs, caches, audit metadata, or other incidental storage.
+
 The deployment target is an AWS Lightsail VPS with Docker Compose, not Lightsail Container Service. `postgres_data` and `app_secrets` are persistent named volumes. Never use `docker compose down -v` during routine review, and do not use `docker compose down` merely as cleanup. Leave the normal development stack running; remove only isolated temporary validation resources.
 
 ## Validation and reporting

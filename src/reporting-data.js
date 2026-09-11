@@ -108,7 +108,40 @@ async function getSessionSummaries({ classId = null, dateFrom = null, dateTo = n
   });
 }
 
-async function getStudentSummaries() {
+function identifiedPrivacyContext() {
+  return { canViewPii: true };
+}
+
+async function getStudentSummaries(privacyContext = identifiedPrivacyContext()) {
+  if (!privacyContext.canViewPii) {
+    const result = await pool.query(
+      `SELECT c.public_id AS class_public_id, c.name AS class_name,
+              s.public_id AS pseudonym_source_public_id,
+              COUNT(DISTINCT cs.id)::integer AS closed_session_count,
+              COUNT(*)::integer AS opportunities,
+              COUNT(*) FILTER (WHERE ar.status = 'present')::integer AS present,
+              COUNT(*) FILTER (WHERE ar.status = 'absent')::integer AS absent
+       FROM attendance_records ar
+       INNER JOIN course_sessions cs ON cs.id = ar.session_id AND cs.state = 'closed'
+       INNER JOIN classes c ON c.id = cs.class_id
+       INNER JOIN students s ON s.id = ar.student_id
+       GROUP BY c.id, c.public_id, c.name, s.id, s.public_id
+       ORDER BY LOWER(c.name), c.id, s.id`,
+    );
+
+    return result.rows.map((row) => normalizeSummary({
+      participant_label: privacyContext.pseudonymize(
+        row.class_public_id,
+        row.pseudonym_source_public_id,
+      ),
+      class_name: row.class_name,
+      closed_session_count: row.closed_session_count,
+      opportunities: row.opportunities,
+      present: row.present,
+      absent: row.absent,
+    }));
+  }
+
   const result = await pool.query(
     `SELECT s.id, s.public_id, s.first_name, s.last_name, s.student_code, s.active,
             COUNT(DISTINCT cs.id)::integer AS closed_session_count,
@@ -126,11 +159,17 @@ async function getStudentSummaries() {
 }
 
 async function getAttendanceDetails({ classId = null, studentId = null, sessionId = null,
-  dateFrom = null, dateTo = null } = {}) {
+  dateFrom = null, dateTo = null } = {}, privacyContext = identifiedPrivacyContext()) {
+  const identityColumns = privacyContext.canViewPii
+    ? 's.id AS student_id, s.public_id AS student_public_id, s.first_name, s.last_name, s.email, s.student_code,'
+    : 's.public_id AS pseudonym_source_public_id,';
+  const identityOrder = privacyContext.canViewPii
+    ? 'LOWER(s.last_name), LOWER(s.first_name), s.id'
+    : 's.id';
   const result = await pool.query(
     `SELECT cs.id AS session_id, cs.public_id AS session_public_id, cs.date, cs.title, cs.instructor,
             c.id AS class_id, c.public_id AS class_public_id, c.name AS class_name,
-            s.id AS student_id, s.public_id AS student_public_id, s.first_name, s.last_name, s.email, s.student_code,
+            ${identityColumns}
             ar.status, ar.checked_in_at, cs.start_time,
             COALESCE(cs.punctuality_tolerance_override_minutes,
                      c.punctuality_tolerance_minutes) AS effective_tolerance_minutes,
@@ -146,34 +185,58 @@ async function getAttendanceDetails({ classId = null, studentId = null, sessionI
        AND ($3::uuid IS NULL OR cs.public_id = $3)
        AND ($4::date IS NULL OR cs.date >= $4)
        AND ($5::date IS NULL OR cs.date <= $5)
-     ORDER BY cs.date, LOWER(c.name), LOWER(cs.title),
-              LOWER(s.last_name), LOWER(s.first_name), s.id`,
+     ORDER BY cs.date, LOWER(c.name), LOWER(cs.title), ${identityOrder}`,
     [classId, studentId, sessionId, dateFrom, dateTo, getApplicationTimezone()],
   );
 
-  return result.rows.map((row) => ({
-    ...row,
-    punctuality: calculatePunctuality({
+  return result.rows.map((row) => {
+    const punctuality = calculatePunctuality({
       status: row.status,
       checkedInAt: row.checked_in_at,
       scheduledStartAt: row.scheduled_start_at,
       toleranceMinutes: row.effective_tolerance_minutes,
-    }),
-  }));
+    });
+    if (privacyContext.canViewPii) return { ...row, punctuality };
+    return {
+      session_id: row.session_id,
+      session_public_id: row.session_public_id,
+      date: row.date,
+      title: row.title,
+      instructor: row.instructor,
+      class_id: row.class_id,
+      class_public_id: row.class_public_id,
+      class_name: row.class_name,
+      participant_label: privacyContext.pseudonymize(
+        row.class_public_id,
+        row.pseudonym_source_public_id,
+      ),
+      status: row.status,
+      checked_in_at: row.checked_in_at,
+      start_time: row.start_time,
+      effective_tolerance_minutes: row.effective_tolerance_minutes,
+      scheduled_start_at: row.scheduled_start_at,
+      punctuality,
+    };
+  });
 }
 
-function aggregateStudents(rows) {
+function aggregateStudents(rows, privacyContext = identifiedPrivacyContext()) {
   const students = new Map();
 
   rows.forEach((row) => {
-    const key = String(row.student_id);
+    const key = privacyContext.canViewPii ? String(row.student_id) : row.participant_label;
     if (!students.has(key)) {
-      students.set(key, {
+      const identity = privacyContext.canViewPii ? {
         id: row.student_id,
         public_id: row.student_public_id,
         first_name: row.first_name,
         last_name: row.last_name,
         student_code: row.student_code,
+      } : {
+        participant_label: row.participant_label,
+      };
+      students.set(key, {
+        ...identity,
         sessionIds: new Set(),
         present: 0,
         absent: 0,
@@ -190,17 +253,20 @@ function aggregateStudents(rows) {
     closedSessionCount: student.sessionIds.size,
     opportunities: student.present + student.absent,
     attendanceRate: calculateRate(student.present, student.present + student.absent),
-  })).sort((first, second) => (
-    first.last_name.localeCompare(second.last_name, 'fr', { sensitivity: 'base' })
-      || first.first_name.localeCompare(second.first_name, 'fr', { sensitivity: 'base' })
-  ));
+  })).sort((first, second) => {
+    if (!privacyContext.canViewPii) {
+      return first.participant_label.localeCompare(second.participant_label, 'fr');
+    }
+    return first.last_name.localeCompare(second.last_name, 'fr', { sensitivity: 'base' })
+      || first.first_name.localeCompare(second.first_name, 'fr', { sensitivity: 'base' });
+  });
 }
 
-async function getCourseReport(classId) {
+async function getCourseReport(classId, privacyContext = identifiedPrivacyContext()) {
   const [classResult, sessions, details] = await Promise.all([
     pool.query('SELECT id, public_id, name, description FROM classes WHERE public_id = $1', [classId]),
     getSessionSummaries({ classId }),
-    getAttendanceDetails({ classId }),
+    getAttendanceDetails({ classId }, privacyContext),
   ]);
 
   if (classResult.rowCount === 0) return null;
@@ -212,12 +278,13 @@ async function getCourseReport(classId) {
       ...summarizeRows(details),
     },
     sessions,
-    students: aggregateStudents(details),
+    canViewPii: privacyContext.canViewPii,
+    students: aggregateStudents(details, privacyContext),
     details,
   };
 }
 
-async function getSessionReport(sessionId) {
+async function getSessionReport(sessionId, privacyContext = identifiedPrivacyContext()) {
   const sessionResult = await pool.query(
     `SELECT cs.id, cs.public_id, cs.class_id, c.public_id AS class_public_id, cs.date, cs.title,
             cs.instructor, cs.state, cs.start_time,
@@ -235,11 +302,12 @@ async function getSessionReport(sessionId) {
 
   const session = sessionResult.rows[0];
   const details = session.state === 'closed'
-    ? await getAttendanceDetails({ sessionId })
+    ? await getAttendanceDetails({ sessionId }, privacyContext)
     : [];
 
   return {
     session,
+    canViewPii: privacyContext.canViewPii,
     summary: {
       ...summarizeRows(details),
       punctualityApplicable: Boolean(session.start_time),
@@ -268,13 +336,14 @@ async function getStudentReport(studentId) {
   };
 }
 
-async function getGlobalReport(filters = {}) {
+async function getGlobalReport(filters = {}, privacyContext = identifiedPrivacyContext()) {
   const [details, sessions] = await Promise.all([
-    getAttendanceDetails(filters),
+    getAttendanceDetails(filters, privacyContext),
     getSessionSummaries(filters),
   ]);
   return {
     filters,
+    canViewPii: privacyContext.canViewPii,
     summary: {
       closedSessionCount: sessions.length,
       ...summarizeRows(details),

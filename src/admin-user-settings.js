@@ -36,8 +36,17 @@ function normalValues(body = {}) {
     email: normalizeEmail(body.email),
     role: typeof body.role === 'string' ? body.role : '',
     active: body.active === 'true',
+    viewPii: body.view_pii === 'true',
     account_type: 'otp',
   };
+}
+
+function renderViewPiiField(viewPii) {
+  return `<label class="form-check form-switch" for="view-pii">
+    <input class="form-check-input" id="view-pii" name="view_pii" type="checkbox" value="true"${viewPii ? ' checked' : ''}>
+    <span class="form-check-label">Voir les données personnelles (PII)</span>
+    <span class="form-text d-block">Autorise l’affichage des données nominatives dans les rapports, sans modifier le rôle fonctionnel.</span>
+  </label>`;
 }
 
 function renderUserActions(user, currentUser) {
@@ -86,6 +95,7 @@ function renderCreatePage(values = {}, error = '') {
       <div class="form-field"><label for="name">Nom</label><input class="form-control" id="name" name="name" type="text" value="${escapeHtml(values.name || '')}" autocomplete="name" required></div>
       <div class="form-field"><label for="email">Adresse e-mail</label><input class="form-control" id="email" name="email" type="email" value="${escapeHtml(values.email || '')}" autocomplete="email" spellcheck="false" required></div>
       <div class="form-field"><label for="role">Rôle</label><select class="form-select" id="role" name="role" required>${roleOptions(values.role || roles.manager)}</select></div>
+      ${renderViewPiiField(values.viewPii !== false)}
       <p class="form-text">La connexion se fera sans mot de passe, avec un code envoyé à cette adresse.</p>
       <div class="form-actions d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">Créer l’utilisateur</button><a class="btn btn-outline-secondary" href="/settings/users">Annuler</a></div>
     </form>`,
@@ -109,6 +119,7 @@ function renderEditPage(user, error = '') {
     description: emergency ? 'Gérez l’identité locale et le mot de passe de secours.' : 'Modifiez son identité, son rôle ou son accès.',
     notifications: notification(error), status: '<a class="btn btn-light" href="/settings/users">Retour aux utilisateurs</a>',
     content: `<form class="card card-body app-form" method="post" action="/settings/users/${user.public_id}">${fields}
+      ${renderViewPiiField(user.view_pii !== false)}
       <div class="form-actions d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">Enregistrer</button><a class="btn btn-outline-secondary" href="/settings/users">Annuler</a></div>
     </form>${emergency ? '' : `<section class="mt-4 border-top pt-3" aria-labelledby="delete-user-title">
       <h2 class="h6" id="delete-user-title">Supprimer le compte</h2>
@@ -140,14 +151,14 @@ function renderDeletePage(user, error = '') {
 }
 
 async function findUser(publicId) {
-  const result = await pool.query('SELECT id, public_id, name, email, username, account_type, role, active FROM admin_users WHERE public_id = $1', [publicId]);
+  const result = await pool.query('SELECT id, public_id, name, email, username, account_type, role, active, view_pii FROM admin_users WHERE public_id = $1', [publicId]);
   return result.rows[0] || null;
 }
 
 router.get('/', async (request, response) => {
   try {
     const result = await pool.query(
-      `SELECT id, public_id, name, email, username, account_type, role, active, last_login_at FROM admin_users
+      `SELECT id, public_id, name, email, username, account_type, role, active, view_pii, last_login_at FROM admin_users
        ORDER BY account_type = 'break_glass' DESC, active DESC, LOWER(name), id`,
     );
     const notices = {
@@ -164,7 +175,7 @@ router.get('/', async (request, response) => {
     const feedback = notices[request.query.notice];
     const rows = result.rows.map((user) => `<tr>
       <td><strong>${escapeHtml(user.name)}</strong>${user.account_type === 'break_glass' ? ' <span class="badge text-bg-warning">Urgence locale</span>' : ''}<br><span class="text-body-secondary text-break">${escapeHtml(user.email || user.username)}</span></td>
-      <td>${escapeHtml(roleLabels[user.role])}</td><td><span class="badge ${user.active ? 'text-bg-success' : 'text-bg-secondary'}">${user.active ? 'Actif' : 'Inactif'}</span></td>
+      <td>${escapeHtml(roleLabels[user.role])}<span class="d-block small text-body-secondary">PII : ${user.view_pii ? 'visibles' : 'masquées'}</span></td><td><span class="badge ${user.active ? 'text-bg-success' : 'text-bg-secondary'}">${user.active ? 'Actif' : 'Inactif'}</span></td>
       <td>${escapeHtml(formatDateTime(user.last_login_at))}</td>
       <td class="user-actions-cell">${renderUserActions(user, request.currentUser)}</td>
     </tr>`).join('');
@@ -191,7 +202,7 @@ router.post('/', async (request, response) => {
       await recordAuditEvent({
         client, category: 'user', action: 'user.create', targetType: 'admin_user',
         targetPublicId: created.public_id, targetLabel: created.name, summary: 'Compte utilisateur créé.',
-        afterData: { name: created.name, email: created.email, role: created.role, active: created.active },
+        afterData: { name: created.name, email: created.email, role: created.role, active: created.active, view_pii: created.view_pii },
       });
       return created;
     });
@@ -290,29 +301,30 @@ router.post('/:id', async (request, response) => {
         const username = normalizeUsername(request.body.username);
         const password = typeof request.body.password === 'string' ? request.body.password : '';
         const validationError = !validateName(name) ? 'Le nom doit contenir entre 2 et 120 caractères.' : !validateUsername(username) ? 'Le nom d’utilisateur est invalide.' : validatePassword(password, { required: false });
-        const edited = { ...target, name, username };
+        const viewPii = request.body.view_pii === 'true';
+        const edited = { ...target, name, username, view_pii: viewPii };
         if (validationError) return { status: 400, edited, validationError };
 
         const passwordHash = password ? await hashPassword(password) : null;
         await client.query(
           `UPDATE admin_users SET name = $1, username = $2,
-             password_hash = COALESCE($3, password_hash),
+             password_hash = COALESCE($3, password_hash), view_pii = $4,
              session_version = session_version + CASE WHEN $3::text IS NULL THEN 0 ELSE 1 END,
-             updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
-          [name, username, passwordHash, target.id],
+             updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
+          [name, username, passwordHash, viewPii, target.id],
         );
         await recordAuditEvent({
           client, category: 'user', action: password ? 'user.break_glass.password_change' : 'user.edit', targetType: 'admin_user',
           targetPublicId: target.public_id, targetLabel: name, summary: password ? 'Mot de passe du compte d’urgence modifié.' : 'Compte d’urgence modifié.',
-          beforeData: { name: target.name, username: target.username },
-          afterData: { name, username },
+          beforeData: { name: target.name, username: target.username, view_pii: target.view_pii },
+          afterData: { name, username, view_pii: viewPii },
           metadata: password ? { changed_fields: ['password'] } : null,
         });
         return { status: 303 };
       }
 
       const values = normalValues(request.body);
-      const edited = { ...target, ...values };
+      const edited = { ...target, ...values, view_pii: values.viewPii };
       const validationError = validateAdminUserInput(values);
       if (validationError) return { status: 400, edited, validationError };
       const removesLastAdmin = target.role === roles.administrator && target.active
@@ -326,16 +338,16 @@ router.post('/:id', async (request, response) => {
         return { status: 409, edited, validationError: 'Le dernier administrateur actif ne peut pas être désactivé ni changer de rôle.' };
       }
       await client.query(
-        `UPDATE admin_users SET name = $1, email = $2, role = $3, active = $4,
+        `UPDATE admin_users SET name = $1, email = $2, role = $3, active = $4, view_pii = $5,
            session_version = session_version + CASE WHEN active AND NOT $4 THEN 1 ELSE 0 END,
-           updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
-        [values.name, values.email, values.role, values.active, target.id],
+           updated_at = CURRENT_TIMESTAMP WHERE id = $6`,
+        [values.name, values.email, values.role, values.active, values.viewPii, target.id],
       );
       await recordAuditEvent({
         client, category: 'user', action: target.active !== values.active ? (values.active ? 'user.activate' : 'user.deactivate') : target.role !== values.role ? 'user.role_change' : 'user.edit',
         targetType: 'admin_user', targetPublicId: target.public_id, targetLabel: values.name, summary: 'Compte utilisateur modifié.',
-        beforeData: { name: target.name, email: target.email, role: target.role, active: target.active },
-        afterData: { name: values.name, email: values.email, role: values.role, active: values.active },
+        beforeData: { name: target.name, email: target.email, role: target.role, active: target.active, view_pii: target.view_pii },
+        afterData: { name: values.name, email: values.email, role: values.role, active: values.active, view_pii: values.viewPii },
       });
       return { status: 303 };
     });
@@ -387,7 +399,7 @@ router.post('/:id/delete', async (request, response) => {
   try {
     const outcome = await withTransaction(pool, async (client) => {
       const activeAdmins = await client.query("SELECT id FROM admin_users WHERE role = 'administrator' AND active = TRUE ORDER BY id FOR UPDATE");
-      const targetResult = await client.query('SELECT id, public_id, name, email, account_type, role, active FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
+      const targetResult = await client.query('SELECT id, public_id, name, email, account_type, role, active, view_pii FROM admin_users WHERE public_id = $1 FOR UPDATE', [request.params.id]);
       if (targetResult.rowCount === 0) return { status: 404 };
       const target = targetResult.rows[0];
       if (target.account_type === 'break_glass') {
@@ -406,7 +418,7 @@ router.post('/:id/delete', async (request, response) => {
       await recordAuditEvent({
         client, category: 'user', action: 'user.delete', targetType: 'admin_user',
         targetPublicId: target.public_id, targetLabel: target.name, summary: 'Compte utilisateur supprimé.',
-        beforeData: { name: target.name, email: target.email, role: target.role, active: target.active },
+        beforeData: { name: target.name, email: target.email, role: target.role, active: target.active, view_pii: target.view_pii },
       });
       return { status: 303 };
     });

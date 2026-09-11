@@ -21,9 +21,33 @@ const {
 } = require('./reporting-excel');
 const { getTerm } = require('./terminology');
 const { isValidPublicId } = require('./public-id');
+const { createReportingPrivacyContext } = require('./reporting-privacy');
 const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
+
+router.use((_request, response, next) => {
+  response.set('Cache-Control', 'private, no-store, max-age=0');
+  next();
+});
+
+function canViewPii(request) {
+  return request.currentUser?.view_pii === true;
+}
+
+function renderPrivacyNotice(request) {
+  return canViewPii(request)
+    ? ''
+    : '<p class="alert alert-info py-2" role="status">Les données personnelles sont masquées dans ce rapport.</p>';
+}
+
+function renderPiiRequiredPage() {
+  return renderMessagePage(
+    'Rapport individuel indisponible',
+    'Les rapports individuels nominatifs nécessitent l’autorisation de voir les données personnelles.',
+    403,
+  );
+}
 
 function isValidDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
@@ -119,7 +143,7 @@ function getGlobalFilters(query) {
   };
 }
 
-router.get('/', async (_request, response) => {
+router.get('/', async (request, response) => {
   try {
     const classes = await getClassesForFilters();
     response.send(renderPage('Reporting', `
@@ -128,6 +152,7 @@ router.get('/', async (_request, response) => {
         description: `Consultez et exportez uniquement les ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')} des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.`,
       })}
       ${renderReportingNavigation('overview')}
+      ${renderPrivacyNotice(request)}
       <section class="page-section" aria-labelledby="reporting-access-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="reporting-access-title">Consulter les rapports</h2></div></div>
         <div class="list-group compact-list">
@@ -138,7 +163,7 @@ router.get('/', async (_request, response) => {
             <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('session').toLocaleLowerCase('fr')}</p><p class="compact-meta">Toutes les ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées et leurs taux</p></div>
           </a>
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/students">
-            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('student').toLocaleLowerCase('fr')}</p><p class="compact-meta">Historique individuel des ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées</p></div>
+            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('student').toLocaleLowerCase('fr')}</p><p class="compact-meta">${canViewPii(request) ? `Historique individuel des ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées` : `Synthèse pseudonymisée par ${businessTerm('class').toLocaleLowerCase('fr')}`}</p></div>
           </a>
         </div>
       </section>
@@ -175,7 +200,7 @@ router.get('/', async (_request, response) => {
   }
 });
 
-router.get('/courses', async (_request, response) => {
+router.get('/courses', async (request, response) => {
   try {
     const courses = await getCourseSummaries();
     const content = courses.length === 0
@@ -196,6 +221,7 @@ router.get('/courses', async (_request, response) => {
     response.send(renderPage(`Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`, `
       ${renderReportHeader({ title: `Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`, description: `Synthèse des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées pour chaque ${getTerm('class').toLocaleLowerCase('fr')}.` })}
       ${renderReportingNavigation('courses')}
+      ${renderPrivacyNotice(request)}
       ${content}`));
   } catch (error) {
     console.error('Unable to load course reporting:', error);
@@ -211,7 +237,8 @@ router.get('/courses/:id/export', async (request, response) => {
     return;
   }
   try {
-    const report = await getCourseReport(request.params.id);
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const report = await getCourseReport(request.params.id, privacyContext);
     if (!report) {
       const page = renderBusinessNotFoundPage('class');
       response.status(page.status).send(page.html);
@@ -236,7 +263,8 @@ router.get('/courses/:id', async (request, response) => {
     return;
   }
   try {
-    const report = await getCourseReport(request.params.id);
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const report = await getCourseReport(request.params.id, privacyContext);
     if (!report) {
       const page = renderBusinessNotFoundPage('class');
       response.status(page.status).send(page.html);
@@ -253,8 +281,8 @@ router.get('/courses/:id', async (request, response) => {
       <td class="numeric">${session.punctualityApplicable ? formatRate(session.punctualityRate) : '—'}</td>
     </tr>`);
     const studentRows = report.students.map((student) => `<tr>
-      <td><a href="/reporting/students/${student.public_id}">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</a></td>
-      <td><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></td>
+      <td>${report.canViewPii ? `<a href="/reporting/students/${student.public_id}">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</a>` : escapeHtml(student.participant_label)}</td>
+      ${report.canViewPii ? `<td><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></td>` : ''}
       <td class="numeric">${student.closedSessionCount}</td><td class="numeric">${student.present}</td><td class="numeric">${student.absent}</td><td class="numeric">${formatRate(student.attendanceRate)}</td>
     </tr>`);
 
@@ -266,12 +294,13 @@ router.get('/courses/:id', async (request, response) => {
         action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.public_id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/courses">Retour à la liste</a></div>`,
       })}
       ${renderReportingNavigation('courses')}
+      ${renderPrivacyNotice(request)}
       ${renderSummary(report.summary)}
       <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-session-breakdown">Par ${businessTerm('session').toLocaleLowerCase('fr')}</h2></div></div>
         ${renderDataTable({ label: `Détail par ${getTerm('session').toLocaleLowerCase('fr')}`, headers: ['Date', getTerm('session'), getTerm('instructor'), 'Début', 'Attendus', 'Présents', 'Absents', 'Taux', 'À l’heure', 'Retards', 'Ponctualité'], rows: sessionRows })}
       </section>
       <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-student-breakdown">Par ${businessTerm('student').toLocaleLowerCase('fr')}</h2></div></div>
-        ${renderDataTable({ label: `Détail par ${getTerm('student').toLocaleLowerCase('fr')}`, headers: [getTerm('student'), 'Code', getTerm('session', 'plural'), getTerm('attendance', 'plural'), 'Absences', 'Taux'], rows: studentRows })}
+        ${renderDataTable({ label: `Détail par ${getTerm('student').toLocaleLowerCase('fr')}`, headers: [getTerm('student'), ...(report.canViewPii ? ['Code'] : []), getTerm('session', 'plural'), getTerm('attendance', 'plural'), 'Absences', 'Taux'], rows: studentRows })}
       </section>`));
   } catch (error) {
     console.error('Unable to load course report:', error);
@@ -280,7 +309,7 @@ router.get('/courses/:id', async (request, response) => {
   }
 });
 
-router.get('/sessions', async (_request, response) => {
+router.get('/sessions', async (request, response) => {
   try {
     const sessions = await getSessionSummaries();
     const content = sessions.length === 0
@@ -298,6 +327,7 @@ router.get('/sessions', async (_request, response) => {
     response.send(renderPage(`Reporting par ${getTerm('session').toLocaleLowerCase('fr')}`, `
       ${renderReportHeader({ title: `Reporting par ${getTerm('session').toLocaleLowerCase('fr')}`, description: `Résultats officiels des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.` })}
       ${renderReportingNavigation('sessions')}
+      ${renderPrivacyNotice(request)}
       ${content}`));
   } catch (error) {
     console.error('Unable to load session reporting:', error);
@@ -313,7 +343,8 @@ router.get('/sessions/:id/export', async (request, response) => {
     return;
   }
   try {
-    const report = await getSessionReport(request.params.id);
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const report = await getSessionReport(request.params.id, privacyContext);
     if (!report) {
       const page = renderBusinessNotFoundPage('session');
       response.status(page.status).send(page.html);
@@ -337,24 +368,27 @@ router.get('/sessions/:id/export', async (request, response) => {
   }
 });
 
-router.get('/students', async (_request, response) => {
+router.get('/students', async (request, response) => {
   try {
-    const students = await getStudentSummaries();
+    const identified = canViewPii(request);
+    const privacyContext = await createReportingPrivacyContext(identified);
+    const students = await getStudentSummaries(privacyContext);
     const content = students.length === 0
       ? `<p class="empty-state">Aucune donnée historique clôturée pour les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}.</p>`
       : `<section data-filterable-list>
-          <div class="search"><label for="report-student-search">Rechercher un ${businessTerm('student').toLocaleLowerCase('fr')}</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom ou code…" data-list-search aria-controls="report-student-list"></div></div>
+          <div class="search"><label for="report-student-search">Rechercher un ${businessTerm('student').toLocaleLowerCase('fr')}</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${identified ? 'Nom ou code…' : 'Pseudonyme ou activité…'}" data-list-search aria-controls="report-student-list"></div></div>
           <p class="empty-state" data-list-no-results hidden>Aucun résultat.</p>
           <div class="list-group compact-list" id="report-student-list" data-list-results>${students.map((student) => `
-            <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
-              <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p><p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ${student.closedSessionCount} ${businessTerm('session', student.closedSessionCount === 1 ? 'singular' : 'plural').toLocaleLowerCase('fr')} clôturée${student.closedSessionCount > 1 ? 's' : ''}</p></div>
+            <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml((identified ? `${student.first_name} ${student.last_name} ${student.student_code}` : `${student.participant_label} ${student.class_name}`).toLocaleLowerCase('fr'))}">
+              <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(identified ? `${student.first_name} ${student.last_name}` : student.participant_label)}</p><p class="compact-meta">${identified ? `<span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ` : `${escapeHtml(student.class_name)} · `}${student.closedSessionCount} ${businessTerm('session', student.closedSessionCount === 1 ? 'singular' : 'plural').toLocaleLowerCase('fr')} clôturée${student.closedSessionCount > 1 ? 's' : ''}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(student.attendanceRate)}</strong><span class="compact-meta">${student.present} présents · ${student.absent} absents</span></div>
-              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.public_id}">Voir le rapport</a></div>
+              ${identified ? `<div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.public_id}">Voir le rapport</a></div>` : ''}
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage(`Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, `
-      ${renderReportHeader({ title: `Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, description: `Historique individuel des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.` })}
+      ${renderReportHeader({ title: `Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, description: identified ? `Historique individuel des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.` : `Synthèse pseudonymisée par ${getTerm('class').toLocaleLowerCase('fr')}.` })}
       ${renderReportingNavigation('students')}
+      ${renderPrivacyNotice(request)}
       ${content}`));
   } catch (error) {
     console.error('Unable to load student reporting:', error);
@@ -364,6 +398,11 @@ router.get('/students', async (_request, response) => {
 });
 
 router.get('/students/:id/export', async (request, response) => {
+  if (!canViewPii(request)) {
+    const page = renderPiiRequiredPage();
+    response.status(page.status).send(page.html);
+    return;
+  }
   if (!isValidPublicId(request.params.id)) {
     const page = renderBusinessNotFoundPage('student');
     response.status(page.status).send(page.html);
@@ -389,6 +428,11 @@ router.get('/students/:id/export', async (request, response) => {
 });
 
 router.get('/students/:id', async (request, response) => {
+  if (!canViewPii(request)) {
+    const page = renderPiiRequiredPage();
+    response.status(page.status).send(page.html);
+    return;
+  }
   if (!isValidPublicId(request.params.id)) {
     const page = renderBusinessNotFoundPage('student');
     response.status(page.status).send(page.html);
@@ -440,7 +484,8 @@ router.get('/export', async (request, response) => {
         return;
       }
     }
-    const report = await getGlobalReport(filters);
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const report = await getGlobalReport(filters, privacyContext);
     const parts = ['presences'];
     if (filters.dateFrom) parts.push(`depuis-${filters.dateFrom}`);
     if (filters.dateTo) parts.push(`jusqu-au-${filters.dateTo}`);

@@ -61,11 +61,12 @@ async function verifyPassword(password, passwordHash) {
   return bcrypt.compare(password, passwordHash);
 }
 
-async function createAdminUser({ name, email, role = roles.manager }, client = pool) {
+async function createAdminUser({ name, email, role = roles.manager, viewPii = true }, client = pool) {
   const normalized = {
     name: typeof name === 'string' ? name.trim() : '',
     email: normalizeEmail(email),
     role,
+    viewPii: viewPii !== false,
   };
   const validationError = validateAdminUserInput(normalized);
   if (validationError) {
@@ -76,11 +77,11 @@ async function createAdminUser({ name, email, role = roles.manager }, client = p
 
   try {
     const result = await client.query(
-      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type)
-       VALUES ($1, $2, NULL, $3, TRUE, 'otp')
-      RETURNING id, public_id, name, email, role, active, account_type, session_version,
+      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type, view_pii)
+       VALUES ($1, $2, NULL, $3, TRUE, 'otp', $4)
+      RETURNING id, public_id, name, email, role, active, account_type, view_pii, session_version,
                  created_at, updated_at, last_login_at`,
-      [normalized.name, normalized.email, normalized.role],
+      [normalized.name, normalized.email, normalized.role, normalized.viewPii],
     );
     return result.rows[0];
   } catch (error) {
@@ -121,7 +122,7 @@ async function createBreakGlassUser({ name, username, password }) {
         `INSERT INTO admin_users
            (name, email, username, password_hash, role, active, account_type)
          VALUES ($1, NULL, $2, $3, 'administrator', TRUE, 'break_glass')
-         RETURNING id, public_id, name, username, role, active, account_type, session_version,
+         RETURNING id, public_id, name, username, role, active, account_type, view_pii, session_version,
                    created_at, updated_at, last_login_at`,
         [normalizedName, normalizedUsername, passwordHash],
       );

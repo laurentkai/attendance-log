@@ -184,11 +184,13 @@ Service-worker updates activate without forcibly reloading an operator's current
 
 ## Encryption key, recovery key, and instance identity
 
-Recoverable provider credentials are encrypted before storage in PostgreSQL. Attendance Log loads its master key in this order:
+Recoverable provider credentials and the dedicated Reporting pseudonym key are encrypted before storage in PostgreSQL. Attendance Log loads its master key in this order:
 
 1. `APP_ENCRYPTION_KEY`, when set;
 2. the persistent file at `APP_ENCRYPTION_KEY_FILE`;
 3. a securely generated key written to that file on first initialization.
+
+The Reporting pseudonym key is generated automatically when pseudonymized reporting is first needed. It has no separate `.env` variable and must not be replaced manually; preserve it through normal database backups together with the matching recovery key.
 
 The standard Compose deployment mounts `app_secrets` at `/app-secrets`, so the generated key survives rebuilds and container replacement. The raw key is not stored in PostgreSQL and is never included in a backup archive.
 
@@ -410,7 +412,7 @@ Restore compatibility was validated with a backup predating migration 018: stagi
 
 ### Matching or different encryption keys
 
-With the matching recovery key, restored SMTP and cloud credentials remain usable. With a different key, restore still preserves all business data and encrypted credential ciphertext. Core features remain available, while affected integrations fail safely until the matching key is imported from **Configuration > Sécurité** or credentials are re-entered.
+With the matching recovery key, restored SMTP/cloud credentials and stable Reporting pseudonyms remain usable. With a different key, restore still preserves all business data and encrypted credential ciphertext. Core features remain available, while affected integrations fail safely until the matching key is imported from **Configuration > Sécurité** or credentials are re-entered. Reporting users whose personal-data access is disabled cannot open pseudonymized reports while the pseudonym key is unavailable; the application never falls back to an identifier-derived or unkeyed pseudonym.
 
 The source instance ID in the manifest is informational and does not block restore. The target installation retains its own instance ID for future cloud backups.
 

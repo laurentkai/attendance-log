@@ -17,6 +17,7 @@ const DATA_FIELDS = new Set([
   'punctuality_tolerance_override_minutes',
   'summary_attach_xlsx', 'summary_attach_xlsx_override',
   'summary_admin_recipient_count', 'summary_external_recipient_count',
+  'view_pii',
 ]);
 const CHANGED_FIELD_NAMES = new Set([...DATA_FIELDS, 'password']);
 const METADATA_FIELDS = new Set([
@@ -42,7 +43,8 @@ function boundedText(value, maximum, { required = false, strict = false } = {}) 
 }
 
 function safeScalar(value) {
-  if (typeof value === 'boolean' || typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'string') return value.slice(0, 500);
   if (value === null) return null;
   return undefined;

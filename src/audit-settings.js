@@ -104,6 +104,7 @@ const FIELD_LABELS = Object.freeze({
   summary_attach_xlsx: 'Excel par défaut', summary_attach_xlsx_override: 'Excel pour la session',
   summary_admin_recipient_count: 'Utilisateurs destinataires',
   summary_external_recipient_count: 'Adresses externes',
+  view_pii: 'Voir les données personnelles (PII)',
 });
 
 function dateValue(value) {

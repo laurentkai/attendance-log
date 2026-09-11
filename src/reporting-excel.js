@@ -91,10 +91,14 @@ function addSessionRows(sheet, sessions) {
   sheet.getColumn('punctualityRate').numFmt = '0.0%';
 }
 
-function addStudentRows(sheet, students) {
+function participantLabel(row) {
+  return row.participant_label || `${row.first_name} ${row.last_name}`;
+}
+
+function addStudentRows(sheet, students, { includeIdentity = true } = {}) {
   students.forEach((student) => sheet.addRow({
-    student: `${student.first_name} ${student.last_name}`,
-    code: student.student_code,
+    student: participantLabel(student),
+    ...(includeIdentity ? { code: student.student_code } : {}),
     sessions: student.closedSessionCount,
     present: student.present,
     absent: student.absent,
@@ -103,16 +107,19 @@ function addStudentRows(sheet, students) {
   sheet.getColumn('rate').numFmt = '0.0%';
 }
 
-function addDetailRows(sheet, details, { includeStudent = true, includeCourse = true } = {}) {
+function addDetailRows(sheet, details, {
+  includeStudent = true,
+  includeCourse = true,
+  includeIdentity = true,
+} = {}) {
   details.forEach((row) => {
     const values = {
       date: toExcelDate(row.date),
       course: row.class_name,
       session: row.title,
       instructor: row.instructor,
-      student: `${row.first_name} ${row.last_name}`,
-      code: row.student_code,
-      email: row.email,
+      student: participantLabel(row),
+      ...(includeIdentity ? { code: row.student_code, email: row.email } : {}),
       status: STATUS_LABELS[row.status] || row.status,
       startTime: normalizeClockTime(row.start_time || '') || null,
       arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || 'Inconnue' : null,
@@ -133,6 +140,7 @@ function addDetailRows(sheet, details, { includeStudent = true, includeCourse = 
 }
 
 function buildCourseWorkbook(report) {
+  const includeIdentity = report.canViewPii === true;
   const workbook = createWorkbook();
   addSummarySheet(workbook, `Rapport pour ${report.course.name}`, report.summary, [
     [getTerm('class'), report.course.name],
@@ -157,13 +165,13 @@ function buildCourseWorkbook(report) {
   const studentSheet = workbook.addWorksheet('Par élève');
   configureSheet(studentSheet, [
     { header: getTerm('student'), key: 'student', width: 28 },
-    { header: 'Code d’identification', key: 'code', width: 20 },
+    ...(includeIdentity ? [{ header: 'Code d’identification', key: 'code', width: 20 }] : []),
     { header: `${getTerm('session', 'plural')} concernées`, key: 'sessions', width: 21 },
     { header: getTerm('attendance', 'plural'), key: 'present', width: 13 },
     { header: 'Absences', key: 'absent', width: 13 },
     { header: `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`, key: 'rate', width: 19 },
   ]);
-  addStudentRows(studentSheet, report.students);
+  addStudentRows(studentSheet, report.students, { includeIdentity });
 
   const detailSheet = workbook.addWorksheet('Détail');
   configureSheet(detailSheet, [
@@ -171,19 +179,22 @@ function buildCourseWorkbook(report) {
     { header: getTerm('class'), key: 'course', width: 24 },
     { header: getTerm('session'), key: 'session', width: 30 },
     { header: getTerm('student'), key: 'student', width: 28 },
-    { header: 'Code d’identification', key: 'code', width: 20 },
-    { header: 'E-mail', key: 'email', width: 34 },
+    ...(includeIdentity ? [
+      { header: 'Code d’identification', key: 'code', width: 20 },
+      { header: 'E-mail', key: 'email', width: 34 },
+    ] : []),
     { header: 'Statut', key: 'status', width: 14 },
     { header: 'Heure de début', key: 'startTime', width: 16 },
     { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
     { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
     { header: 'Ponctualité', key: 'punctuality', width: 15 },
   ]);
-  addDetailRows(detailSheet, report.details);
+  addDetailRows(detailSheet, report.details, { includeIdentity });
   return workbook;
 }
 
 function buildSessionWorkbook(report, { includeParticipantEmail = true } = {}) {
+  const includeIdentity = report.canViewPii === true;
   const workbook = createWorkbook();
   addSummarySheet(workbook, `Rapport pour ${report.session.title}`, {
     closedSessionCount: 1,
@@ -201,17 +212,17 @@ function buildSessionWorkbook(report, { includeParticipantEmail = true } = {}) {
   const sheet = workbook.addWorksheet('Présences');
   configureSheet(sheet, [
     { header: getTerm('student'), key: 'student', width: 28 },
-    { header: 'Code d’identification', key: 'code', width: 20 },
-    ...(includeParticipantEmail ? [{ header: 'E-mail', key: 'email', width: 34 }] : []),
+    ...(includeIdentity ? [{ header: 'Code d’identification', key: 'code', width: 20 }] : []),
+    ...(includeIdentity && includeParticipantEmail ? [{ header: 'E-mail', key: 'email', width: 34 }] : []),
     { header: 'Statut', key: 'status', width: 14 },
     { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
     { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
     { header: 'Ponctualité', key: 'punctuality', width: 15 },
   ]);
   report.details.forEach((row) => sheet.addRow({
-    student: `${row.first_name} ${row.last_name}`,
-    code: row.student_code,
-    ...(includeParticipantEmail ? { email: row.email } : {}),
+    student: participantLabel(row),
+    ...(includeIdentity ? { code: row.student_code } : {}),
+    ...(includeIdentity && includeParticipantEmail ? { email: row.email } : {}),
     status: STATUS_LABELS[row.status] || row.status,
     arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || 'Inconnue' : null,
     delayMinutes: row.punctuality?.delayMinutes ?? null,
@@ -248,6 +259,7 @@ function buildStudentWorkbook(report) {
 }
 
 function buildGlobalWorkbook(report) {
+  const includeIdentity = report.canViewPii === true;
   const workbook = createWorkbook();
   addSummarySheet(workbook, `Export global des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, report.summary);
 
@@ -257,15 +269,17 @@ function buildGlobalWorkbook(report) {
     { header: getTerm('class'), key: 'course', width: 24 },
     { header: getTerm('session'), key: 'session', width: 30 },
     { header: getTerm('student'), key: 'student', width: 28 },
-    { header: 'Code d’identification', key: 'code', width: 20 },
-    { header: 'E-mail', key: 'email', width: 34 },
+    ...(includeIdentity ? [
+      { header: 'Code d’identification', key: 'code', width: 20 },
+      { header: 'E-mail', key: 'email', width: 34 },
+    ] : []),
     { header: 'Statut', key: 'status', width: 14 },
     { header: 'Heure de début', key: 'startTime', width: 16 },
     { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
     { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
     { header: 'Ponctualité', key: 'punctuality', width: 15 },
   ]);
-  addDetailRows(sheet, report.details);
+  addDetailRows(sheet, report.details, { includeIdentity });
   return workbook;
 }
 

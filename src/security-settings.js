@@ -14,6 +14,10 @@ const {
   importRecoveryKey,
   isEncryptedSecret,
 } = require('./secrets');
+const {
+  getEncryptedReportingPseudonymSecret,
+  getReportingPseudonymSecretStatus,
+} = require('./reporting-privacy');
 const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
@@ -28,10 +32,12 @@ async function getEncryptedSecrets() {
   const result = await pool.query(
     'SELECT s3_secret_access_key, azure_account_key FROM backup_configuration WHERE id = 1',
   );
+  const reportingPseudonymSecret = await getEncryptedReportingPseudonymSecret();
   return [
     configuration?.password,
     result.rows[0]?.s3_secret_access_key,
     result.rows[0]?.azure_account_key,
+    reportingPseudonymSecret,
   ].filter((value) => value && isEncryptedSecret(value));
 }
 
@@ -39,6 +45,7 @@ async function getSecretStatus() {
   const statuses = await Promise.all([
     getStoredMailSecretStatus(),
     getStoredBackupSecretStatus(),
+    getReportingPseudonymSecretStatus(),
   ]);
   return statuses.includes('mismatch') ? 'mismatch' : 'available';
 }
