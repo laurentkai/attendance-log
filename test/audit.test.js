@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 process.env.DATABASE_URL ||= 'postgresql://unit:unit@127.0.0.1:1/unit';
 
-const { DATA_FIELDS, sanitizeObject } = require('../src/audit');
+const { DATA_FIELDS, sanitizeChangedFieldNames, sanitizeObject } = require('../src/audit');
 
 test('audit sanitizer preserves safe scalar types and null', () => {
   assert.deepEqual(sanitizeObject({
@@ -32,4 +32,11 @@ test('audit sanitizer removes non-allowlisted values', () => {
   const result = sanitizeObject({ active: true, password_hash: 'never-store-this' }, DATA_FIELDS);
   assert.deepEqual(result, { active: true });
   assert.equal(Object.hasOwn(result, 'password_hash'), false);
+});
+
+test('changed field names accept only established field-name tokens', () => {
+  assert.deepEqual(
+    sanitizeChangedFieldNames(['password', 'active', 'email', 'free text', 'person@example.invalid', 42]),
+    ['password', 'active', 'email'],
+  );
 });

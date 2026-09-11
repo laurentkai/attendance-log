@@ -204,6 +204,10 @@ Run `npm test` for the fast, deterministic unit suite; it requires neither Docke
 
 Because the integration runner deliberately uses simple synchronous Docker commands, interrupting it with Ctrl+C at the wrong instant can leave only its randomly named `attendance_log_test_*` database behind. List such databases with `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE '\''attendance_log_test_%'\''"'`, then replace the placeholder with one exact listed name in `docker compose exec postgres sh -c 'dropdb -U "$POSTGRES_USER" --if-exists --force attendance_log_test_REPLACE_WITH_EXACT_NAME'`. Never substitute the normal application database name.
 
+## Participant anonymization
+
+Administrators may anonymize one eligible inactive participant at a time from **Configuration > Protection des données**. The operation is irreversible and is allowed only when the configured retention threshold has been reached and no active membership remains. It replaces identity and QR identifiers while retaining memberships, attendance, timestamps, and statistical history anonymously. V1 is manual only: there is no scheduled or bulk anonymization. Existing backup archives are not rewritten and may retain the former identity until they expire under the configured backup-retention policy.
+
 ## Updating Attendance Log
 
 Before a significant update, confirm that a recent backup succeeded in **Configuration > Sauvegardes**. When a cloud destination is configured, **Sauvegarder maintenant** creates an immediate cloud backup.

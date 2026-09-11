@@ -474,11 +474,20 @@ router.post('/:id/students', async (request, response) => {
       if (classResult.rowCount === 0) return { status: 'not_found' };
       if (studentIds.length === 0) return { status: 'empty' };
 
+      await client.query(
+        `SELECT id
+         FROM students
+         WHERE public_id = ANY($1::uuid[]) AND active = TRUE AND anonymized_at IS NULL
+         ORDER BY id
+         FOR UPDATE`,
+        [studentIds],
+      );
+
       const result = await client.query(
         `INSERT INTO student_classes (student_id, class_id)
          SELECT s.id, $1
          FROM students s
-         WHERE s.active = TRUE AND s.public_id = ANY($2::uuid[])
+         WHERE s.active = TRUE AND s.anonymized_at IS NULL AND s.public_id = ANY($2::uuid[])
          ON CONFLICT DO NOTHING`,
         [classResult.rows[0].id, studentIds],
       );
@@ -577,6 +586,14 @@ async function updateMembershipActivity(request, response, active) {
     const outcome = await withTransaction(pool, async (client) => {
       const classResult = await client.query('SELECT id, public_id, name FROM classes WHERE public_id = $1 FOR UPDATE', [request.params.id]);
       if (classResult.rowCount === 0) return { status: 'class_not_found' };
+      const studentResult = await client.query(
+        `SELECT id
+         FROM students
+         WHERE public_id = $1 AND active = TRUE AND anonymized_at IS NULL
+         FOR UPDATE`,
+        [request.params.studentId],
+      );
+      if (studentResult.rowCount === 0) return { status: 'membership_not_found' };
       const result = await client.query(
         `UPDATE student_classes sc
          SET active = $3

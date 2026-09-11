@@ -143,7 +143,9 @@ async function getStudentSummaries(privacyContext = identifiedPrivacyContext()) 
   }
 
   const result = await pool.query(
-    `SELECT s.id, s.public_id, s.first_name, s.last_name, s.student_code, s.active,
+    `SELECT s.id, s.public_id, s.first_name, s.last_name,
+            CASE WHEN s.anonymized_at IS NULL THEN s.student_code ELSE '—' END AS student_code,
+            s.active,
             COUNT(DISTINCT cs.id)::integer AS closed_session_count,
             COUNT(*)::integer AS opportunities,
             COUNT(*) FILTER (WHERE ar.status = 'present')::integer AS present,
@@ -161,7 +163,9 @@ async function getStudentSummaries(privacyContext = identifiedPrivacyContext()) 
 async function getAttendanceDetails({ classId = null, studentId = null, sessionId = null,
   dateFrom = null, dateTo = null } = {}, privacyContext = identifiedPrivacyContext()) {
   const identityColumns = privacyContext.canViewPii
-    ? 's.id AS student_id, s.public_id AS student_public_id, s.first_name, s.last_name, s.email, s.student_code,'
+    ? `s.id AS student_id, s.public_id AS student_public_id, s.first_name, s.last_name,
+       CASE WHEN s.anonymized_at IS NULL THEN s.email ELSE NULL END AS email,
+       CASE WHEN s.anonymized_at IS NULL THEN s.student_code ELSE '—' END AS student_code,`
     : 's.public_id AS pseudonym_source_public_id,';
   const identityOrder = privacyContext.canViewPii
     ? 'LOWER(s.last_name), LOWER(s.first_name), s.id'
@@ -318,7 +322,10 @@ async function getSessionReport(sessionId, privacyContext = identifiedPrivacyCon
 
 async function getStudentReport(studentId) {
   const studentResult = await pool.query(
-    `SELECT id, public_id, first_name, last_name, email, student_code, active
+    `SELECT id, public_id, first_name, last_name,
+            CASE WHEN anonymized_at IS NULL THEN email ELSE NULL END AS email,
+            CASE WHEN anonymized_at IS NULL THEN student_code ELSE '—' END AS student_code,
+            active
      FROM students
      WHERE public_id = $1`,
     [studentId],

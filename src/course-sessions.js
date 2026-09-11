@@ -203,7 +203,8 @@ async function getClasses() {
 async function loadRoster(session) {
   if (session.closed_at) {
     return pool.query(
-      `SELECT s.id, s.public_id, s.first_name, s.last_name, s.student_code,
+      `SELECT s.id, s.public_id, s.first_name, s.last_name,
+              CASE WHEN s.anonymized_at IS NULL THEN s.student_code ELSE '—' END AS student_code,
               ar.status, ar.checked_in_at
        FROM attendance_records ar
        INNER JOIN students s ON s.id = ar.student_id
@@ -214,7 +215,8 @@ async function loadRoster(session) {
   }
 
   return pool.query(
-    `SELECT s.id, s.public_id, s.first_name, s.last_name, s.student_code,
+    `SELECT s.id, s.public_id, s.first_name, s.last_name,
+            CASE WHEN s.anonymized_at IS NULL THEN s.student_code ELSE '—' END AS student_code,
             COALESCE(ar.status, 'pending') AS status, ar.checked_in_at
      FROM student_classes sc
      INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
@@ -240,7 +242,15 @@ function decorateAttendanceStudent(student, session) {
   };
 }
 
-function lockEligibleStudent(client, sessionId, studentId) {
+async function lockEligibleStudent(client, sessionId, studentId) {
+  const student = await client.query(
+    `SELECT id
+     FROM students
+     WHERE id = $1 AND anonymized_at IS NULL
+     FOR UPDATE`,
+    [studentId],
+  );
+  if (student.rowCount === 0) return student;
   return client.query(
     `SELECT cs.id
      FROM course_sessions cs
@@ -1128,7 +1138,7 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
     const studentResult = await pool.query(
       `SELECT id, public_id, first_name, last_name
        FROM students
-       WHERE qr_token = $1::uuid`,
+       WHERE qr_token = $1::uuid AND anonymized_at IS NULL`,
       [qrToken],
     );
     if (studentResult.rowCount === 0) {

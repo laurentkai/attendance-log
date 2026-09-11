@@ -201,6 +201,8 @@ Changing an admin user's `view_pii` value is security- and privacy-significant. 
 
 Privacy lifecycle roadmap: participants will progress from active to inactive/soft-deleted and, after a configurable inactivity-retention period, to irreversible anonymization. Eligibility must not depend only on generic `updated_at` values, active membership must block anonymization, and anonymization must redact participant PII retained in the Audit Log while preserving its event and accountability trail. Do not implement this roadmap implicitly without explicit scope.
 
+Manual participant anonymization is irreversible and always reuses the centralized retention eligibility rule inside the destructive transaction. Preserve the anonymized student row, memberships, attendance, timestamps, and statistical history; replace identity, e-mail, participant code, and QR token, set `anonymized_at`, and redact participant PII from targeted Audit Log rows atomically with the strict anonymization audit event. An anonymized participant cannot be reactivated, assigned, e-mailed, printed, or used for attendance, while historical reporting and administrator data export may show only the remaining anonymized record. Never log or audit former identity or replacement identifiers. Automatic, scheduled, and bulk anonymization require separate explicit approval.
+
 ### Students, memberships, sessions, and attendance
 
 - Students have a global activity state; class memberships have a separate activity state.

@@ -47,6 +47,24 @@ test('participant data workbook has separated readable sheets and no hidden sens
   assert.doesNotMatch(text, /qr_token|password|session cookie|ip_hash|user_agent_hash/i);
 });
 
+test('anonymized participant export describes erasure without exposing technical replacements', async () => {
+  const data = syntheticData();
+  data.identity = {
+    ...data.identity,
+    firstName: 'Supprimé lors de l’anonymisation',
+    lastName: 'Supprimé lors de l’anonymisation',
+    email: 'Supprimé lors de l’anonymisation',
+    participantCode: 'Remplacé lors de l’anonymisation',
+    anonymizedAt: new Date('2026-09-12T12:00:00Z'),
+  };
+  const workbook = buildParticipantDataWorkbook(data);
+  const text = workbook.worksheets[0].getSheetValues().flat(Infinity).filter(Boolean).join(' ');
+  assert.match(text, /Participant anonymisé/);
+  assert.match(text, /Supprimé lors de l’anonymisation/);
+  assert.match(text, /Remplacé lors de l’anonymisation/);
+  assert.doesNotMatch(text, /anonymized-[0-9a-f-]+@attendance-log\.invalid/i);
+});
+
 test('participant worksheet names remain safe and unique under terminology collisions', () => {
   assert.deepEqual(
     createParticipantWorksheetNames({ classPlural: 'Identité', attendancePlural: 'Audit' }),
@@ -86,4 +104,24 @@ test('participant export inventory resolves by public UUID and omits internal ID
   assert.equal(JSON.stringify(data).includes('ip_hash'), false);
   assert.ok(queries.every((query) => !/SELECT\s+\*/i.test(query.sql)));
   assert.deepEqual(queries[0].values, [participantPublicId]);
+});
+
+test('participant export inventory masks anonymization replacement fields at the data boundary', async () => {
+  const replacementEmail = 'anonymized-11111111-1111-4111-8111-111111111111@attendance-log.invalid';
+  const responses = [
+    { rowCount: 1, rows: [{
+      id: 92, public_id: participantPublicId, first_name: 'Participant', last_name: 'anonymisé',
+      email: replacementEmail, student_code: 'BCDEFGH', active: false,
+      created_at: new Date('2024-01-01T10:00:00Z'), last_activity_at: null,
+      anonymized_at: new Date('2026-09-12T12:00:00Z'),
+    }] },
+    { rows: [] }, { rows: [] }, { rows: [] },
+  ];
+  const client = { query: async () => responses.shift() };
+  const data = await loadParticipantDataExport(participantPublicId, client);
+  const serialized = JSON.stringify(data);
+  assert.equal(serialized.includes(replacementEmail), false);
+  assert.equal(serialized.includes('BCDEFGH'), false);
+  assert.equal(data.identity.email, 'Supprimé lors de l’anonymisation');
+  assert.equal(data.identity.participantCode, 'Remplacé lors de l’anonymisation');
 });

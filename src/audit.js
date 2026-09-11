@@ -19,6 +19,7 @@ const DATA_FIELDS = new Set([
   'summary_admin_recipient_count', 'summary_external_recipient_count',
   'view_pii',
   'retention_months',
+  'anonymized_at',
 ]);
 const CHANGED_FIELD_NAMES = new Set([...DATA_FIELDS, 'password']);
 const METADATA_FIELDS = new Set([
@@ -29,6 +30,7 @@ const METADATA_FIELDS = new Set([
   'session_public_id',
   'recipient_count', 'attachment_included',
   'profile_reference',
+  'retention_months',
 ]);
 
 function boundedText(value, maximum, { required = false, strict = false } = {}) {
@@ -51,6 +53,13 @@ function safeScalar(value) {
   return undefined;
 }
 
+function sanitizeChangedFieldNames(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => typeof entry === 'string' && CHANGED_FIELD_NAMES.has(entry))
+    .slice(0, 30);
+}
+
 function sanitizeObject(value, allowlist) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const sanitized = {};
@@ -65,7 +74,7 @@ function sanitizeObject(value, allowlist) {
       continue;
     }
     if (key === 'changed_fields' && Array.isArray(item)) {
-      sanitized[key] = item.filter((entry) => CHANGED_FIELD_NAMES.has(entry)).slice(0, 30);
+      sanitized[key] = sanitizeChangedFieldNames(item);
       continue;
     }
     const scalar = safeScalar(item);
@@ -150,5 +159,6 @@ module.exports = {
   METADATA_FIELDS,
   recordAuditEvent,
   recordAuditEventSafely,
+  sanitizeChangedFieldNames,
   sanitizeObject,
 };

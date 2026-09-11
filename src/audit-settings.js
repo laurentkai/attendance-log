@@ -42,6 +42,7 @@ const ACTION_LABELS = Object.freeze({
   'operational_data.reset': 'Données métier réinitialisées',
   'print_design.save': 'Modèle d’impression enregistré', 'print_design.reset': 'Modèle d’impression réinitialisé',
   'privacy.retention.update': 'Politique de rétention modifiée',
+  'privacy.student.anonymize': 'Participant anonymisé',
   'privacy.student.export': 'Données personnelles exportées',
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé de récupération exportée', 'security.recovery_key.import': 'Clé de récupération importée', 'security.recovery_key.view': 'Clé de récupération affichée',
@@ -79,6 +80,7 @@ const COMPACT_ACTION_LABELS = Object.freeze({
   'operational_data.reset': 'Données réinitialisées',
   'print_design.save': 'Modèle enregistré', 'print_design.reset': 'Modèle réinitialisé',
   'privacy.retention.update': 'Rétention modifiée',
+  'privacy.student.anonymize': 'Participant anonymisé',
   'privacy.student.export': 'Données exportées',
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé exportée', 'security.recovery_key.import': 'Clé importée', 'security.recovery_key.view': 'Clé affichée',
@@ -111,6 +113,7 @@ const FIELD_LABELS = Object.freeze({
   summary_external_recipient_count: 'Adresses externes',
   view_pii: 'Voir les données personnelles (PII)',
   retention_months: 'Rétention des participants (mois)',
+  anonymized_at: 'Anonymisé le',
 });
 
 function dateValue(value) {

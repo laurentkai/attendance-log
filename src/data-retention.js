@@ -53,6 +53,7 @@ function evaluateRetentionEligibility(participant, retentionMonths, now = new Da
     : subtractCalendarMonths(normalizedNow, retentionMonths);
   const reasons = [];
 
+  if (participant.anonymized_at) reasons.push('Participant déjà anonymisé');
   if (retentionMonths === null) reasons.push('Politique de rétention désactivée');
   if (participant.active) reasons.push('Participant actif');
   if (activeMemberships > 0) reasons.push('Inscription active');
@@ -114,7 +115,7 @@ async function saveRetentionConfiguration(client, retentionMonths) {
 async function loadParticipantRetentionRows(client = pool) {
   const result = await client.query(
     `SELECT s.public_id, s.first_name, s.last_name, s.email, s.student_code,
-            s.active, s.created_at, s.last_activity_at,
+            s.active, s.created_at, s.last_activity_at, s.anonymized_at,
             COUNT(sc.class_id) FILTER (WHERE sc.active = TRUE)::integer AS active_memberships
      FROM students s
      LEFT JOIN student_classes sc ON sc.student_id = s.id
@@ -189,23 +190,54 @@ async function getRetentionEligibilityPreview({
   };
 }
 
-async function getParticipantRetentionDetail(publicId, { now = new Date(), client = pool } = {}) {
+async function loadParticipantRetentionSubject(publicId, { client = pool, forUpdate = false } = {}) {
   if (!isValidPublicId(publicId)) return null;
-  const configuration = await loadRetentionConfiguration(client);
+  if (!forUpdate) {
+    const result = await client.query(
+      `SELECT s.public_id, s.first_name, s.last_name, s.email, s.student_code,
+              s.active, s.created_at, s.last_activity_at, s.anonymized_at,
+              COUNT(sc.class_id) FILTER (WHERE sc.active = TRUE)::integer AS active_memberships
+       FROM students s
+       LEFT JOIN student_classes sc ON sc.student_id = s.id
+       WHERE s.public_id = $1
+       GROUP BY s.id`,
+      [publicId],
+    );
+    return result.rows[0] || null;
+  }
+
   const result = await client.query(
-    `SELECT s.public_id, s.first_name, s.last_name, s.email, s.student_code,
-            s.active, s.created_at, s.last_activity_at,
-            COUNT(sc.class_id) FILTER (WHERE sc.active = TRUE)::integer AS active_memberships
-     FROM students s
-     LEFT JOIN student_classes sc ON sc.student_id = s.id
-     WHERE s.public_id = $1
-     GROUP BY s.id`,
+    `SELECT id, public_id, first_name, last_name, email, student_code,
+            active, created_at, last_activity_at, anonymized_at
+     FROM students
+     WHERE public_id = $1
+     FOR UPDATE`,
     [publicId],
   );
   if (result.rowCount === 0) return null;
+  const memberships = await client.query(
+    `SELECT class_id, active
+     FROM student_classes
+     WHERE student_id = $1
+     ORDER BY class_id
+     FOR UPDATE`,
+    [result.rows[0].id],
+  );
+  return {
+    ...result.rows[0],
+    active_memberships: memberships.rows.filter((membership) => membership.active).length,
+  };
+}
+
+async function getParticipantRetentionDetail(publicId, {
+  now = new Date(), client = pool, forUpdate = false,
+} = {}) {
+  const participant = await loadParticipantRetentionSubject(publicId, { client, forUpdate });
+  if (!participant) return null;
+  const configuration = await loadRetentionConfiguration(client, { forUpdate });
   return {
     configuration,
-    participant: evaluateRetentionEligibility(result.rows[0], configuration.retentionMonths, now),
+    participant: evaluateRetentionEligibility(participant, configuration.retentionMonths, now),
   };
 }
 
@@ -215,6 +247,7 @@ module.exports = {
   evaluateRetentionEligibility,
   getParticipantRetentionDetail,
   getRetentionEligibilityPreview,
+  loadParticipantRetentionSubject,
   loadRetentionConfiguration,
   normalizeRetentionMonths,
   saveRetentionConfiguration,

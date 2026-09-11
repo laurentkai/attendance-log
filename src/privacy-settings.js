@@ -15,8 +15,15 @@ const {
   buildParticipantDataWorkbook,
   loadParticipantDataExport,
 } = require('./participant-data-export');
+const {
+  StudentAnonymizationError,
+  anonymizeStudent,
+  getStudentAnonymizationPreview,
+} = require('./student-anonymization');
 const { getTerm } = require('./terminology');
-const { businessTerm, escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
+const {
+  businessTerm, escapeHtml, renderMessagePage, renderPage, renderSettingsLayout,
+} = require('./ui');
 
 const router = express.Router();
 
@@ -108,13 +115,13 @@ function renderPrivacyPage(preview, { error = '', notice = '' } = {}) {
   return renderPage('Protection des données', renderSettingsLayout({
     activeSection: 'privacy',
     title: 'Protection des données',
-    description: 'Prévisualisez les participants inactifs qui pourraient être anonymisés selon la politique de rétention.',
+    description: 'Prévisualisez l’éligibilité et anonymisez individuellement les participants après une vérification irréversible.',
     notifications,
     content: `<section class="page-section" aria-labelledby="retention-policy-title">
       <div class="section-header">
         <div>
           <h2 id="retention-policy-title">Politique de rétention</h2>
-          <p class="section-description">Cette phase identifie uniquement les candidats. Aucune donnée personnelle n’est modifiée ou supprimée.</p>
+          <p class="section-description">La liste reste un aperçu. Chaque anonymisation exige une confirmation et une nouvelle vérification côté serveur.</p>
         </div>
       </div>
       <form class="card card-body app-form" method="post" action="/settings/privacy/retention">
@@ -161,14 +168,39 @@ function renderPrivacyPage(preview, { error = '', notice = '' } = {}) {
       <div class="offcanvas-header"><h2 class="offcanvas-title h5" id="privacy-participant-detail-title">Données du participant</h2><button class="btn-close" type="button" data-bs-dismiss="offcanvas" aria-label="Fermer"></button></div>
       <div class="offcanvas-body">
         <section><h3 class="h6">Identité</h3><dl class="audit-detail-list">
-          <dt>Participant</dt><dd data-privacy-field="name">—</dd><dt>E-mail</dt><dd class="text-break" data-privacy-field="email">—</dd><dt>Code</dt><dd class="font-monospace" data-privacy-field="code">—</dd><dt>Statut</dt><dd data-privacy-field="status">—</dd>
+          <dt>Participant</dt><dd data-privacy-field="name">—</dd><dt>E-mail</dt><dd class="text-break" data-privacy-field="email">—</dd><dt>Code</dt><dd class="font-monospace" data-privacy-field="code">—</dd><dt>Statut</dt><dd data-privacy-field="status">—</dd><dt>Anonymisé le</dt><dd data-privacy-field="anonymizedAt">—</dd>
         </dl></section>
         <section class="border-top pt-3 mt-3"><h3 class="h6">Rétention</h3><dl class="audit-detail-list">
           <dt>Créé le</dt><dd data-privacy-field="createdAt">—</dd><dt>Dernière activité</dt><dd data-privacy-field="lastActivityAt">—</dd><dt>Date de référence</dt><dd data-privacy-field="referenceDate">—</dd><dt>Inactivité</dt><dd data-privacy-field="inactivity">—</dd><dt>Politique</dt><dd data-privacy-field="retentionPolicy">—</dd><dt>Inscriptions actives</dt><dd data-privacy-field="activeMemberships">—</dd><dt>Éligibilité</dt><dd data-privacy-field="eligibility">—</dd><dt>Motif</dt><dd data-privacy-field="reasons">—</dd>
         </dl></section>
         <div class="border-top pt-3 mt-3"><a class="btn btn-primary disabled" aria-disabled="true" tabindex="-1" data-privacy-export>Exporter les données</a></div>
+        <section class="border-top pt-3 mt-3" aria-labelledby="privacy-anonymization-title">
+          <h3 class="h6 text-danger" id="privacy-anonymization-title">Anonymisation irréversible</h3>
+          <p class="small text-body-secondary" data-privacy-anonymization-message>Chargez les détails pour vérifier l’éligibilité actuelle.</p>
+          <button class="btn btn-outline-danger disabled" type="button" disabled aria-disabled="true" data-privacy-anonymize>Anonymiser le participant</button>
+        </section>
       </div>
-    </div><script src="/js/privacy-center.js" defer></script>`,
+    </div>
+    <div class="modal fade" id="privacy-anonymization-modal" tabindex="-1" aria-labelledby="privacy-anonymization-modal-title" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <form method="post" data-privacy-anonymization-form data-submit-once>
+          <div class="modal-header"><h2 class="modal-title fs-5" id="privacy-anonymization-modal-title">Anonymiser le participant</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Fermer"></button></div>
+          <div class="modal-body">
+            <p class="fw-semibold text-danger">Cette opération est irréversible.</p>
+            <ul class="small mb-3">
+              <li>Les champs d’identité seront détruits ou remplacés.</li>
+              <li><strong data-privacy-anonymization-count="memberships">0</strong> inscription(s) historique(s) seront conservées.</li>
+              <li><strong data-privacy-anonymization-count="attendanceRecords">0</strong> présence(s) seront conservées.</li>
+              <li><strong data-privacy-anonymization-count="auditRows">0</strong> événement(s) d’audit seront expurgés.</li>
+              <li>L’ancien QR cessera immédiatement de fonctionner.</li>
+            </ul>
+            <input name="confirmation" type="hidden" value="ANONYMIZE">
+          </div>
+          <div class="modal-footer"><button class="btn btn-light" type="button" data-bs-dismiss="modal">Annuler</button><button class="btn btn-danger" type="submit">Confirmer l’anonymisation</button></div>
+        </form>
+      </div></div>
+    </div>
+    <script src="/js/privacy-center.js" defer></script>`,
   }));
 }
 
@@ -183,7 +215,10 @@ async function sendPrivacyPage(request, response, feedback = {}, status = 200) {
 }
 
 router.get('/', async (request, response) => {
-  const notices = { saved: 'La politique de rétention a été enregistrée.' };
+  const notices = {
+    saved: 'La politique de rétention a été enregistrée.',
+    anonymized: 'Le participant a été anonymisé de façon irréversible.',
+  };
   try {
     await sendPrivacyPage(request, response, { notice: notices[request.query.notice] || '' });
   } catch (error) {
@@ -233,6 +268,61 @@ router.get('/participants/:studentId/export.xlsx', async (request, response) => 
   }
 });
 
+router.get('/participants/:studentId/anonymization-preview', async (request, response) => {
+  response.set({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+  if (!isValidPublicId(request.params.studentId)) return response.status(404).json({ error: 'PARTICIPANT_NOT_FOUND' });
+  try {
+    const preview = await getStudentAnonymizationPreview(request.params.studentId);
+    if (!preview) return response.status(404).json({ error: 'PARTICIPANT_NOT_FOUND' });
+    if (preview.participant.anonymized_at) {
+      return response.status(409).json({ error: 'PARTICIPANT_ALREADY_ANONYMIZED', message: 'Ce participant est déjà anonymisé.' });
+    }
+    if (!preview.participant.eligible) {
+      return response.status(409).json({
+        error: 'PARTICIPANT_NOT_ELIGIBLE',
+        message: `Anonymisation impossible : ${preview.participant.reasons.join(' · ')}.`,
+      });
+    }
+    return response.json({
+      counts: preview.counts,
+      actionUrl: `/settings/privacy/participants/${preview.participant.public_id}/anonymize`,
+    });
+  } catch (error) {
+    console.error('Unable to load participant anonymization preview:', error.code || 'DATABASE_ERROR');
+    return response.status(500).json({ error: 'ANONYMIZATION_PREVIEW_UNAVAILABLE', message: 'La vérification est indisponible pour le moment.' });
+  }
+});
+
+router.post('/participants/:studentId/anonymize', async (request, response) => {
+  if (!isValidPublicId(request.params.studentId)) {
+    const page = renderMessagePage('Participant introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
+    return response.status(page.status).send(page.html);
+  }
+  if (request.body.confirmation !== 'ANONYMIZE') {
+    const page = renderMessagePage('Confirmation requise', 'L’anonymisation irréversible doit être confirmée explicitement.', 400);
+    return response.status(page.status).send(page.html);
+  }
+  try {
+    await anonymizeStudent(request.params.studentId);
+    return response.redirect(303, '/settings/privacy?notice=anonymized');
+  } catch (error) {
+    if (error instanceof StudentAnonymizationError) {
+      if (error.code === 'STUDENT_NOT_FOUND') {
+        const page = renderMessagePage('Participant introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
+        return response.status(page.status).send(page.html);
+      }
+      const message = error.code === 'STUDENT_ALREADY_ANONYMIZED'
+        ? 'Ce participant est déjà anonymisé.'
+        : `Le participant n’est plus éligible. ${error.reasons?.join(' · ') || 'Actualisez la Protection des données.'}`;
+      const page = renderMessagePage('Anonymisation impossible', message, 409);
+      return response.status(page.status).send(page.html);
+    }
+    console.error('Unable to anonymize participant:', error.code || 'ANONYMIZATION_FAILED');
+    const page = renderMessagePage('Anonymisation impossible', 'Aucune donnée n’a été modifiée. Réessayez plus tard.');
+    return response.status(page.status).send(page.html);
+  }
+});
+
 router.get('/participants/:studentId', async (request, response) => {
   response.set({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'X-Content-Type-Options': 'nosniff' });
   if (!isValidPublicId(request.params.studentId)) return response.status(404).json({ error: 'PARTICIPANT_NOT_FOUND' });
@@ -244,9 +334,10 @@ router.get('/participants/:studentId', async (request, response) => {
     return response.json({
       fields: {
         name: `${participant.first_name} ${participant.last_name}`,
-        email: participant.email,
-        code: participant.student_code,
-        status: participant.active ? 'Actif' : 'Inactif',
+        email: participant.anonymized_at ? 'Donnée anonymisée' : participant.email,
+        code: participant.anonymized_at ? 'Donnée anonymisée' : participant.student_code,
+        status: participant.anonymized_at ? 'Anonymisé' : participant.active ? 'Actif' : 'Inactif',
+        anonymizedAt: formatDateTime(participant.anonymized_at),
         createdAt: formatDateTime(participant.created_at),
         lastActivityAt: formatDateTime(participant.last_activity_at),
         referenceDate: formatDateTime(participant.reference_date),
@@ -257,6 +348,18 @@ router.get('/participants/:studentId', async (request, response) => {
         reasons: participant.reasons.join(' · '),
       },
       exportUrl: `/settings/privacy/participants/${participant.public_id}/export.xlsx`,
+      anonymization: {
+        eligible: participant.eligible && !participant.anonymized_at,
+        alreadyAnonymized: Boolean(participant.anonymized_at),
+        previewUrl: participant.eligible && !participant.anonymized_at
+          ? `/settings/privacy/participants/${participant.public_id}/anonymization-preview`
+          : null,
+        message: participant.anonymized_at
+          ? `Anonymisé le ${formatDateTime(participant.anonymized_at)}.`
+          : participant.eligible
+            ? 'Ce participant est actuellement éligible à l’anonymisation.'
+            : `Action indisponible : ${participant.reasons.join(' · ')}.`,
+      },
     });
   } catch (error) {
     console.error('Unable to load participant retention detail:', error.code || 'DATABASE_ERROR');

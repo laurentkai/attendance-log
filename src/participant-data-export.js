@@ -7,7 +7,7 @@ const { calculatePunctuality } = require('./punctuality');
 const { getTerm } = require('./terminology');
 
 const PARTICIPANT_AUDIT_FIELDS = Object.freeze([
-  'active', 'checked_in_at', 'email', 'first_name', 'last_name', 'name',
+  'active', 'anonymized_at', 'checked_in_at', 'email', 'first_name', 'last_name', 'name',
   'status', 'student_code',
 ]);
 const ATTENDANCE_STATUS_LABELS = Object.freeze({ present: 'Présent', absent: 'Absent', pending: 'En attente' });
@@ -88,13 +88,14 @@ async function loadParticipantDataExport(publicId, client = pool) {
   if (!isValidPublicId(publicId)) return null;
   const identityResult = await client.query(
     `SELECT id, public_id, first_name, last_name, email, student_code, active,
-            created_at, last_activity_at
+            created_at, last_activity_at, anonymized_at
      FROM students
      WHERE public_id = $1`,
     [publicId],
   );
   if (identityResult.rowCount === 0) return null;
   const row = identityResult.rows[0];
+  const anonymized = Boolean(row.anonymized_at);
   const membershipsResult = await client.query(
       `SELECT c.name AS activity_name, sc.active, sc.created_at
        FROM student_classes sc
@@ -129,13 +130,14 @@ async function loadParticipantDataExport(publicId, client = pool) {
   return {
     identity: {
       publicId: row.public_id,
-      firstName: row.first_name,
-      lastName: row.last_name,
-      email: row.email,
-      participantCode: row.student_code,
+      firstName: anonymized ? 'Supprimé lors de l’anonymisation' : row.first_name,
+      lastName: anonymized ? 'Supprimé lors de l’anonymisation' : row.last_name,
+      email: anonymized ? 'Supprimé lors de l’anonymisation' : row.email,
+      participantCode: anonymized ? 'Remplacé lors de l’anonymisation' : row.student_code,
       active: row.active,
       createdAt: row.created_at,
       lastActivityAt: row.last_activity_at,
+      anonymizedAt: row.anonymized_at,
     },
     memberships: membershipsResult.rows.map((membership) => ({
       activityName: membership.activity_name,
@@ -193,15 +195,19 @@ function buildParticipantDataWorkbook(data) {
 
   const identity = workbook.addWorksheet(worksheetNames.identity);
   configureSheet(identity, [{ header: 'Champ', key: 'field', width: 28 }, { header: 'Valeur', key: 'value', width: 45 }]);
+  const anonymized = Boolean(data.identity.anonymizedAt);
   addRows(identity, [
     { field: 'Prénom', value: data.identity.firstName },
     { field: 'Nom', value: data.identity.lastName },
     { field: 'E-mail', value: data.identity.email },
     { field: 'Code participant', value: data.identity.participantCode },
-    { field: 'Actif', value: data.identity.active ? 'Oui' : 'Non' },
+    anonymized
+      ? { field: 'Statut', value: 'Participant anonymisé' }
+      : { field: 'Actif', value: data.identity.active ? 'Oui' : 'Non' },
     { field: 'Identifiant public', value: data.identity.publicId },
     { field: 'Créé le', value: exportInstant(data.identity.createdAt) },
     { field: 'Dernière activité', value: exportInstant(data.identity.lastActivityAt) || 'Inconnue' },
+    { field: 'Anonymisé le', value: exportInstant(data.identity.anonymizedAt) },
   ]);
 
   const memberships = workbook.addWorksheet(worksheetNames.memberships);

@@ -132,7 +132,10 @@ async function addMemberships(client, studentId, classIds) {
   for (const classId of classIds) {
     await client.query(
       `INSERT INTO student_classes (student_id, class_id)
-       SELECT $1, c.id FROM classes c WHERE c.public_id = $2
+       SELECT s.id, c.id
+       FROM students s
+       CROSS JOIN classes c
+       WHERE s.id = $1 AND s.anonymized_at IS NULL AND c.public_id = $2
        ON CONFLICT (student_id, class_id) DO NOTHING`,
       [studentId, classId],
     );
@@ -179,7 +182,7 @@ router.get('/', async (request, response) => {
 
   try {
     const result = await pool.query(
-      `SELECT s.public_id, s.first_name, s.last_name, s.email, s.student_code, s.active
+      `SELECT s.public_id, s.first_name, s.last_name, s.email, s.student_code, s.active, s.anonymized_at
        FROM students s
        WHERE s.active = $1
        ORDER BY LOWER(s.last_name), LOWER(s.first_name), s.id`,
@@ -204,16 +207,18 @@ router.get('/', async (request, response) => {
           </div>
           <p class="empty-state" role="status" data-list-no-results hidden>Aucun résultat.</p>
           <div class="list-group compact-list" id="student-list" data-list-results>${result.rows.map((student) => `
-          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml((student.anonymized_at ? `${student.first_name} ${student.last_name}` : `${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`).toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
-              <p class="compact-meta"><a href="mailto:${escapeHtml(student.email)}">${escapeHtml(student.email)}</a> · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+              ${student.anonymized_at
+                ? '<p class="compact-meta">Identité supprimée irréversiblement</p>'
+                : `<p class="compact-meta"><a href="mailto:${escapeHtml(student.email)}">${escapeHtml(student.email)}</a> · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>`}
             </div>
             <div class="compact-status">
-              <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Statut : ${student.active ? 'actif' : 'inactif'}</span>
+              <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">Statut : ${student.anonymized_at ? 'anonymisé' : student.active ? 'actif' : 'inactif'}</span>
             </div>
             <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
-              <a class="btn btn-light" href="/students/${student.public_id}/edit">Modifier</a>
+              ${student.anonymized_at ? '' : `<a class="btn btn-light" href="/students/${student.public_id}/edit">Modifier</a>`}
               ${student.active ? `<form method="post" action="/students/${student.public_id}/deactivate" data-confirm="Désactiver cette fiche ?">
                 <button class="btn btn-outline-danger" type="submit">Désactiver</button>
               </form>` : ''}
@@ -338,7 +343,7 @@ router.get('/:id/qr.png', async (request, response) => {
 
   try {
     const result = await pool.query(
-      'SELECT qr_token, student_code FROM students WHERE public_id = $1',
+      'SELECT qr_token, student_code FROM students WHERE public_id = $1 AND anonymized_at IS NULL',
       [request.params.id],
     );
     if (result.rowCount === 0) {
@@ -373,7 +378,7 @@ router.get('/:id/qr', async (request, response) => {
     const result = await pool.query(
       `SELECT id, public_id, first_name, last_name, email, student_code, qr_token, active
        FROM students
-       WHERE public_id = $1`,
+       WHERE public_id = $1 AND anonymized_at IS NULL`,
       [request.params.id],
     );
     if (result.rowCount === 0) {
@@ -405,7 +410,7 @@ router.post('/:id/qr/email', async (request, response) => {
     const result = await pool.query(
       `SELECT id, public_id, first_name, last_name, email, student_code, qr_token, active
        FROM students
-       WHERE public_id = $1`,
+       WHERE public_id = $1 AND anonymized_at IS NULL`,
       [request.params.id],
     );
     if (result.rowCount === 0) {
@@ -476,7 +481,7 @@ router.get('/:id/edit', async (request, response) => {
 
   try {
     const [studentResult, classes, membershipResult] = await Promise.all([
-      pool.query('SELECT id, public_id, first_name, last_name, email, student_code, active FROM students WHERE public_id = $1', [request.params.id]),
+      pool.query('SELECT id, public_id, first_name, last_name, email, student_code, active, anonymized_at FROM students WHERE public_id = $1', [request.params.id]),
       loadClasses(),
       pool.query('SELECT c.public_id FROM student_classes sc INNER JOIN classes c ON c.id = sc.class_id WHERE sc.student_id = (SELECT id FROM students WHERE public_id = $1)', [request.params.id]),
     ]);
@@ -488,6 +493,11 @@ router.get('/:id/edit', async (request, response) => {
     }
 
     const student = studentResult.rows[0];
+    if (student.anonymized_at) {
+      const page = renderMessagePage('Modification impossible', 'L’identité de ce participant a été anonymisée de façon irréversible.', 409);
+      response.status(page.status).send(page.html);
+      return;
+    }
     response.send(renderStudentForm({
       title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: `/students/${student.public_id}`,
@@ -522,10 +532,15 @@ router.post('/:id', async (request, response) => {
   values.active = request.body.active === 'true';
   const selectedClassIds = getSelectedClassIds(request.body);
   const classes = await loadClasses();
-  const currentResult = await pool.query('SELECT id, public_id, first_name, last_name, email, active, student_code FROM students WHERE public_id = $1', [request.params.id]);
+  const currentResult = await pool.query('SELECT id, public_id, first_name, last_name, email, active, student_code, anonymized_at FROM students WHERE public_id = $1', [request.params.id]);
 
   if (currentResult.rowCount === 0) {
     const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
+    response.status(page.status).send(page.html);
+    return;
+  }
+  if (currentResult.rows[0].anonymized_at) {
+    const page = renderMessagePage('Modification impossible', 'L’identité de ce participant a été anonymisée de façon irréversible.', 409);
     response.status(page.status).send(page.html);
     return;
   }
@@ -583,12 +598,13 @@ router.post('/:id', async (request, response) => {
         );
         if (protectedResult.rowCount > 0) return { protectedClassName: protectedResult.rows[0].name };
       }
-      await client.query(
+      const studentUpdate = await client.query(
         `UPDATE students
          SET first_name = $1, last_name = $2, email = $3, active = $4
-         WHERE id = $5`,
+         WHERE id = $5 AND anonymized_at IS NULL`,
         [values.firstName, values.lastName, values.email, values.active, currentResult.rows[0].id],
       );
+      if (studentUpdate.rowCount === 0) return { anonymized: true };
       if (removedClassIds.length > 0) {
         await client.query(
           `DELETE FROM student_classes
@@ -620,6 +636,11 @@ router.post('/:id', async (request, response) => {
         studentId: request.params.id,
         error: `Le retrait de « ${outcome.protectedClassName} » est impossible après le démarrage. Gérez son état depuis la rubrique ${getTerm('class', 'plural')}.`,
       }));
+      return;
+    }
+    if (outcome.anonymized) {
+      const page = renderMessagePage('Modification impossible', 'L’identité de ce participant a été anonymisée de façon irréversible.', 409);
+      response.status(page.status).send(page.html);
       return;
     }
     response.redirect(

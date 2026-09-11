@@ -190,7 +190,7 @@ router.post('/', receiveCsvFile, async (request, response) => {
       const outcome = await withTransaction(pool, async (client) => {
         await client.query('SELECT id FROM classes WHERE id = $1 FOR UPDATE', [selectedClass.id]);
         const existingResult = await client.query(
-          'SELECT id FROM students WHERE LOWER(email) = LOWER($1) FOR UPDATE',
+          'SELECT id FROM students WHERE LOWER(email) = LOWER($1) AND anonymized_at IS NULL FOR UPDATE',
           [values.email],
         );
         let studentId;
