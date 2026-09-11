@@ -202,7 +202,7 @@ async function getClasses() {
 async function loadRoster(session) {
   if (session.closed_at) {
     return pool.query(
-      `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code,
+      `SELECT s.id, s.public_id, s.first_name, s.last_name, s.student_code,
               ar.status, ar.checked_in_at
        FROM attendance_records ar
        INNER JOIN students s ON s.id = ar.student_id
@@ -213,7 +213,7 @@ async function loadRoster(session) {
   }
 
   return pool.query(
-    `SELECT s.id, s.public_id, s.first_name, s.last_name, s.email, s.student_code,
+    `SELECT s.id, s.public_id, s.first_name, s.last_name, s.student_code,
             COALESCE(ar.status, 'pending') AS status, ar.checked_in_at
      FROM student_classes sc
      INNER JOIN students s ON s.id = sc.student_id AND s.active = TRUE
@@ -858,10 +858,10 @@ router.get('/:id/quick-attendance', async (request, response) => {
 
     const eligibleStudents = rosterResult.rows.filter((student) => student.status !== 'present');
     const studentRows = eligibleStudents.map((student) => `
-      <article class="list-group-item compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+      <article class="list-group-item compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
         <div class="compact-identity student-identity">
           <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
-          <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+          <p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
         </div>
         <div class="compact-actions">
           <form method="post" action="/sessions/${session.public_id}/quick-attendance/${student.public_id}" data-quick-present-form>
@@ -895,7 +895,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
           <div class="search quick-search">
             <label class="visually-hidden" for="quick-attendance-search">Rechercher dans les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</label>
             <div class="search-input-action">
-              <input class="form-control" id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
+              <input class="form-control" id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
               <button class="search-clear" type="button" aria-label="Effacer la recherche" data-quick-search-clear hidden><span aria-hidden="true">×</span></button>
             </div>
           </div>
@@ -1002,10 +1002,10 @@ router.get('/:id', async (request, response) => {
           <span>${businessTerm('student')}</span><span>${businessTerm('attendance')}</span><span>Arrivée</span><span>Ponctualité</span><span></span>
         </div>
         <div class="list-group compact-list attendance-roster" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
-          <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
-              <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
+              <p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
               <span class="badge status-badge status-${student.status}" data-attendance-status>${{
@@ -1097,7 +1097,7 @@ router.get('/:id', async (request, response) => {
         ${studentsResult.rows.length > 0 ? `<div class="search">
           <label for="attendance-search">Rechercher dans les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</label>
           <div class="search-controls">
-            <input class="form-control" id="attendance-search" name="attendance_filter" type="search" placeholder="Nom, e-mail ou code…" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
+            <input class="form-control" id="attendance-search" name="attendance_filter" type="search" placeholder="Nom ou code…" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
           </div>
           <p class="help-text" role="status" data-attendance-no-results hidden>Aucun résultat.</p>
         </div>` : ''}

@@ -16,6 +16,11 @@ const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./u
 
 const router = express.Router();
 
+function isDuplicateStudentEmailError(error) {
+  return error?.code === '23505'
+    && error.constraint === 'students_email_case_insensitive_unique';
+}
+
 function studentQrMailErrorMessage(code) {
   return {
     NOT_CONFIGURED: 'La configuration e-mail est incomplète. Configurez-la avant d’envoyer un QR.',
@@ -308,11 +313,12 @@ router.post('/', async (request, response) => {
     });
     response.redirect(303, '/students?notice=created');
   } catch (error) {
-    console.error('Unable to create student:', error);
-    const message = error.code === '23505'
+    const duplicateEmail = isDuplicateStudentEmailError(error);
+    if (!duplicateEmail) console.error('Unable to create student:', error);
+    const message = duplicateEmail
       ? 'Cette adresse e-mail est déjà utilisée.'
       : 'Impossible de créer la fiche pour le moment.';
-    response.status(error.code === '23505' ? 409 : 500).send(renderStudentForm({
+    response.status(duplicateEmail ? 409 : 500).send(renderStudentForm({
       title: `Ajouter un ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: '/students',
       submitLabel: 'Créer',
@@ -623,11 +629,12 @@ router.post('/:id', async (request, response) => {
         : '/students?status=inactive&notice=updated',
     );
   } catch (error) {
-    console.error('Unable to update student:', error);
-    const message = error.code === '23505'
+    const duplicateEmail = isDuplicateStudentEmailError(error);
+    if (!duplicateEmail) console.error('Unable to update student:', error);
+    const message = duplicateEmail
       ? 'Cette adresse e-mail est déjà utilisée.'
       : 'Impossible de modifier la fiche pour le moment.';
-    response.status(error.code === '23505' ? 409 : 500).send(renderStudentForm({
+    response.status(duplicateEmail ? 409 : 500).send(renderStudentForm({
       title: `Modifier le ${getTerm('student').toLocaleLowerCase('fr')}`,
       action: `/students/${request.params.id}`,
       submitLabel: 'Enregistrer',
