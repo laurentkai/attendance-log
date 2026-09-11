@@ -18,6 +18,7 @@ const {
   summaryConfigurationSnapshot,
 } = require('./session-summary-config');
 const { sendSessionSummary } = require('./session-summary');
+const { recordStudentActivity } = require('./student-activity');
 const { getTerm } = require('./terminology');
 const { businessTerm, escapeHtml, renderPage, renderMessagePage } = require('./ui');
 
@@ -297,6 +298,7 @@ async function markStudentPresent(client, sessionId, studentId) {
                ROUND(EXTRACT(EPOCH FROM updated_at) * 1000000)::bigint::text AS version`,
     [sessionId, studentId],
   );
+  await recordStudentActivity(client, studentId, updateResult.rows[0].checked_in_at);
 
   return {
     allowed: true,
@@ -1363,6 +1365,13 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
          RETURNING checked_in_at`,
         [request.courseSessionId, request.studentId, request.body.status],
       );
+      if (previousStatus !== request.body.status) {
+        await recordStudentActivity(
+          client,
+          request.studentId,
+          request.body.status === 'present' ? attendanceResult.rows[0].checked_in_at : null,
+        );
+      }
       const student = await client.query('SELECT first_name, last_name FROM students WHERE id = $1', [request.studentId]);
       await recordAuditEvent({
         client, category: 'attendance', action: 'attendance.manual.update', targetType: 'student',
@@ -1437,6 +1446,7 @@ router.post('/:id/attendance/:studentId/check-in-time', requireSessionManagement
           getApplicationTimezone(),
         ],
       );
+      await recordStudentActivity(client, request.studentId, updated.rows[0].checked_in_at);
       await recordAuditEvent({
         client,
         category: 'attendance',

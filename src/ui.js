@@ -86,6 +86,7 @@ function renderSettingsNavigation(activeSection) {
     <a class="nav-link${activeSection === 'branding' ? ' active' : ''}" href="/settings/branding"${activeSection === 'branding' ? ' aria-current="page"' : ''}>Identité visuelle</a>
     <a class="nav-link${activeSection === 'print-design' ? ' active' : ''}" href="/settings/print-design"${activeSection === 'print-design' ? ' aria-current="page"' : ''}>Design d’impression</a>
     <a class="nav-link${activeSection === 'terminology' ? ' active' : ''}" href="/settings/terminology"${activeSection === 'terminology' ? ' aria-current="page"' : ''}>Terminologie</a>
+    <a class="nav-link${activeSection === 'privacy' ? ' active' : ''}" href="/settings/privacy"${activeSection === 'privacy' ? ' aria-current="page"' : ''}>Protection des données</a>
     <a class="nav-link${activeSection === 'maintenance' ? ' active' : ''}" href="/settings/maintenance"${activeSection === 'maintenance' ? ' aria-current="page"' : ''}>Maintenance</a>
     <a class="nav-link${activeSection === 'users' ? ' active' : ''}" href="/settings/users"${activeSection === 'users' ? ' aria-current="page"' : ''}>Utilisateurs</a>
     <a class="nav-link${activeSection === 'audit' ? ' active' : ''}" href="/settings/audit"${activeSection === 'audit' ? ' aria-current="page"' : ''}>Journal d’audit</a>

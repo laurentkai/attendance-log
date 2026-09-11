@@ -217,6 +217,7 @@ Privacy lifecycle roadmap: participants will progress from active to inactive/so
 - Closed sessions reject attendance writes unless explicitly reopened.
 - Manual and QR attendance use the same authoritative eligibility and persistence logic.
 - `attendance_records.checked_in_at` records the actual transition to present: set it on absent/pending to present, preserve it on duplicate present operations, and clear it when presence is removed. A present historical row with no timestamp means the arrival time is unknown.
+- `students.last_activity_at` is a retention reference for meaningful attendance activity only. Update it atomically when an attendance state genuinely changes or an arrival time is corrected; do not refresh it for duplicate attendance writes, identity edits, reports, badges, or e-mail delivery. Quick Attendance Undo does not create another activity timestamp.
 - Session punctuality is derived from the arrival instant, the optional session-local start time, and the effective activity/session tolerance in the configured `APP_TIMEZONE`; never persist a redundant late flag or rely on the container timezone.
 - Concurrent updates must remain idempotent and safe; client filtering is never the authority.
 - Student QR identity is stable, non-guessable, independent of membership/database IDs, and contains no personal data.

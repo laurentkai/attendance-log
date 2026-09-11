@@ -13,6 +13,7 @@ const CATEGORY_LABELS = Object.freeze({
   class: 'Activités', import: 'Import', maintenance: 'Maintenance', mail: 'E-mail',
   restore: 'Restauration', security: 'Sécurité', session: 'Sessions', student: 'Participants',
   terminology: 'Terminologie', user: 'Utilisateurs', print_design: 'Design d’impression',
+  privacy: 'Protection des données',
 });
 const RESULT_LABELS = Object.freeze({ success: 'Réussi', denied: 'Refusé', failed: 'Échec' });
 const COMPACT_RESULT_LABELS = Object.freeze({ success: 'OK', denied: 'Refusé', failed: 'Échec' });
@@ -40,6 +41,7 @@ const ACTION_LABELS = Object.freeze({
   'membership.add': 'Inscription ajoutée', 'membership.deactivate': 'Inscription désactivée', 'membership.reactivate': 'Inscription réactivée', 'membership.remove': 'Inscription supprimée',
   'operational_data.reset': 'Données métier réinitialisées',
   'print_design.save': 'Modèle d’impression enregistré', 'print_design.reset': 'Modèle d’impression réinitialisé',
+  'privacy.retention.update': 'Politique de rétention modifiée',
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé de récupération exportée', 'security.recovery_key.import': 'Clé de récupération importée', 'security.recovery_key.view': 'Clé de récupération affichée',
   'session.close': 'Session clôturée', 'session.create': 'Session créée', 'session.open': 'Session ouverte', 'session.reopen': 'Session rouverte', 'session.update': 'Session modifiée',
@@ -75,6 +77,7 @@ const COMPACT_ACTION_LABELS = Object.freeze({
   'membership.add': 'Inscription ajoutée', 'membership.deactivate': 'Inscription désactivée', 'membership.reactivate': 'Inscription réactivée', 'membership.remove': 'Inscription supprimée',
   'operational_data.reset': 'Données réinitialisées',
   'print_design.save': 'Modèle enregistré', 'print_design.reset': 'Modèle réinitialisé',
+  'privacy.retention.update': 'Rétention modifiée',
   'restore.failed': 'Restauration échouée', 'restore.start': 'Restauration démarrée', 'restore.success': 'Restauration réussie',
   'security.recovery_key.export': 'Clé exportée', 'security.recovery_key.import': 'Clé importée', 'security.recovery_key.view': 'Clé affichée',
   'session.close': 'Session clôturée', 'session.create': 'Session créée', 'session.open': 'Session ouverte', 'session.reopen': 'Session rouverte', 'session.update': 'Session modifiée',
@@ -105,6 +108,7 @@ const FIELD_LABELS = Object.freeze({
   summary_admin_recipient_count: 'Utilisateurs destinataires',
   summary_external_recipient_count: 'Adresses externes',
   view_pii: 'Voir les données personnelles (PII)',
+  retention_months: 'Rétention des participants (mois)',
 });
 
 function dateValue(value) {
