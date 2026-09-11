@@ -198,6 +198,12 @@ Use **Configuration > Sécurité > Exporter la clé** and keep the recovery-key 
 
 Attendance Log also generates a random, non-secret instance UUID in `/app-secrets/instance-id`. It survives normal deployments and isolates each installation's cloud backup objects. It is not derived from a hostname, database name, or administrator identity. Do not copy another live installation's instance-ID file: a restored installation intentionally keeps its own identity and writes future backups under its own cloud prefix.
 
+## Testing
+
+Run `npm test` for the fast, deterministic unit suite; it requires neither Docker nor PostgreSQL. Run `npm run test:integration` with the normal development PostgreSQL service running to create a temporary isolated database, apply all migrations, execute the SQL integration checks, and remove that database afterward. The integration command refuses non-test database names and never targets the normal development database.
+
+Because the integration runner deliberately uses simple synchronous Docker commands, interrupting it with Ctrl+C at the wrong instant can leave only its randomly named `attendance_log_test_*` database behind. List such databases with `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE '\''attendance_log_test_%'\''"'`, then replace the placeholder with one exact listed name in `docker compose exec postgres sh -c 'dropdb -U "$POSTGRES_USER" --if-exists --force attendance_log_test_REPLACE_WITH_EXACT_NAME'`. Never substitute the normal application database name.
+
 ## Updating Attendance Log
 
 Before a significant update, confirm that a recent backup succeeded in **Configuration > Sauvegardes**. When a cloud destination is configured, **Sauvegarder maintenant** creates an immediate cloud backup.

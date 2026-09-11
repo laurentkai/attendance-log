@@ -1697,6 +1697,22 @@ legend,
   width: 6.5rem;
 }
 
+.data-table-col-identity {
+  width: 38%;
+}
+
+.data-table-col-timestamp {
+  width: 10.5rem;
+}
+
+.data-table-col-duration {
+  width: 11rem;
+}
+
+.data-table-col-state {
+  width: 6.5rem;
+}
+
 .data-table-col-actor {
   width: 21%;
 }

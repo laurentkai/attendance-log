@@ -1,4 +1,5 @@
 const { pool } = require('./db/client');
+const { isValidPublicId } = require('./public-id');
 
 const RETENTION_MONTH_OPTIONS = Object.freeze([12, 24, 36, 60]);
 const ELIGIBILITY_FILTERS = new Set(['all', 'eligible', 'ineligible']);
@@ -188,10 +189,31 @@ async function getRetentionEligibilityPreview({
   };
 }
 
+async function getParticipantRetentionDetail(publicId, { now = new Date(), client = pool } = {}) {
+  if (!isValidPublicId(publicId)) return null;
+  const configuration = await loadRetentionConfiguration(client);
+  const result = await client.query(
+    `SELECT s.public_id, s.first_name, s.last_name, s.email, s.student_code,
+            s.active, s.created_at, s.last_activity_at,
+            COUNT(sc.class_id) FILTER (WHERE sc.active = TRUE)::integer AS active_memberships
+     FROM students s
+     LEFT JOIN student_classes sc ON sc.student_id = s.id
+     WHERE s.public_id = $1
+     GROUP BY s.id`,
+    [publicId],
+  );
+  if (result.rowCount === 0) return null;
+  return {
+    configuration,
+    participant: evaluateRetentionEligibility(result.rows[0], configuration.retentionMonths, now),
+  };
+}
+
 module.exports = {
   ELIGIBILITY_FILTERS,
   RETENTION_MONTH_OPTIONS,
   evaluateRetentionEligibility,
+  getParticipantRetentionDetail,
   getRetentionEligibilityPreview,
   loadRetentionConfiguration,
   normalizeRetentionMonths,

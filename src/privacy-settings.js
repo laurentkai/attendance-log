@@ -1,14 +1,20 @@
 const express = require('express');
 const { getApplicationTimezone } = require('./application-time');
-const { recordAuditEvent } = require('./audit');
+const { recordAuditEvent, recordAuditEventSafely } = require('./audit');
 const {
   RETENTION_MONTH_OPTIONS,
+  getParticipantRetentionDetail,
   getRetentionEligibilityPreview,
   loadRetentionConfiguration,
   normalizeRetentionMonths,
   saveRetentionConfiguration,
 } = require('./data-retention');
 const { pool, withTransaction } = require('./db/client');
+const { isValidPublicId } = require('./public-id');
+const {
+  buildParticipantDataWorkbook,
+  loadParticipantDataExport,
+} = require('./participant-data-export');
 const { getTerm } = require('./terminology');
 const { businessTerm, escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
@@ -30,6 +36,10 @@ function formatInactivity(participant) {
     return `${participant.inactivity_days} jour${participant.inactivity_days === 1 ? '' : 's'}${suffix}`;
   }
   return `${participant.inactivity_months} mois${suffix}`;
+}
+
+function retentionPolicyLabel(months) {
+  return months === null ? 'Jamais' : `${months} mois`;
 }
 
 function retentionOptions(selected) {
@@ -63,18 +73,17 @@ function renderSummary(summary) {
 
 function renderRows(participants) {
   if (participants.length === 0) {
-    return `<tr><td class="text-center text-body-secondary py-4" colspan="7">Aucun ${businessTerm('student').toLocaleLowerCase('fr')} ne correspond aux critères.</td></tr>`;
+    return `<tr><td class="text-center text-body-secondary py-4" colspan="5">Aucun ${businessTerm('student').toLocaleLowerCase('fr')} ne correspond aux critères.</td></tr>`;
   }
   return participants.map((participant) => {
     const name = `${participant.first_name} ${participant.last_name}`;
-    return `<tr>
-      <td><span class="fw-semibold">${escapeHtml(name)}</span> <span class="text-body-secondary text-nowrap">· <span class="student-code" translate="no">${escapeHtml(participant.student_code)}</span></span></td>
-      <td><span class="badge status-badge status-${participant.active ? 'active' : 'inactive'}">${participant.active ? 'Actif' : 'Inactif'}</span></td>
-      <td class="text-nowrap">${participant.last_activity_at ? escapeHtml(formatDateTime(participant.last_activity_at)) : '—'}</td>
-      <td class="numeric">${participant.active_memberships}</td>
-      <td>${escapeHtml(formatInactivity(participant))}</td>
-      <td><span class="fw-semibold ${participant.eligible ? 'text-success' : 'text-body-secondary'}">${participant.eligible ? 'Éligible' : 'Non éligible'}</span></td>
-      <td>${escapeHtml(participant.reasons.join(' · '))}</td>
+    const detailUrl = `/settings/privacy/participants/${participant.public_id}`;
+    return `<tr class="data-table-log-row" data-retention-detail-url="${detailUrl}">
+      <td><span class="data-table-cell-truncate fw-semibold" title="${escapeHtml(name)}">${escapeHtml(name)}</span></td>
+      <td><span class="data-table-cell-truncate" title="${escapeHtml(formatDateTime(participant.last_activity_at))}">${participant.last_activity_at ? escapeHtml(formatDateTime(participant.last_activity_at)) : '—'}</span></td>
+      <td><span class="data-table-cell-truncate" title="${escapeHtml(formatInactivity(participant))}">${escapeHtml(formatInactivity(participant))}</span></td>
+      <td><span class="data-table-result-state ${participant.eligible ? 'text-success' : 'text-body-secondary'}">${participant.eligible ? 'Éligible' : 'Non éligible'}</span></td>
+      <td class="data-table-chevron"><button class="data-table-row-trigger" type="button" data-retention-detail-url="${detailUrl}" aria-label="Afficher les détails de rétention pour ${escapeHtml(name)}" title="Afficher les détails">›</button></td>
     </tr>`;
   }).join('');
 }
@@ -140,13 +149,26 @@ function renderPrivacyPage(preview, { error = '', notice = '' } = {}) {
         <a class="nav-link${preview.filter === 'ineligible' ? ' active' : ''}" href="/settings/privacy${escapeHtml(queryFor({ filter: 'ineligible', search: preview.search }))}"${preview.filter === 'ineligible' ? ' aria-current="page"' : ''}>Non éligibles</a>
       </nav>
       <div class="table-responsive data-table-scroll" tabindex="0" role="region" aria-label="Aperçu de l’éligibilité des participants">
-        <table class="table table-sm table-hover align-middle mb-0 data-table">
-          <thead><tr><th scope="col">${businessTerm('student')}</th><th scope="col">Statut</th><th scope="col">Dernière activité</th><th class="numeric" scope="col">Inscriptions actives</th><th scope="col">Inactivité</th><th scope="col">Éligibilité</th><th scope="col">Motif</th></tr></thead>
+        <table class="table table-sm table-hover align-middle mb-0 data-table data-table-compact">
+          <colgroup><col class="data-table-col-identity"><col class="data-table-col-timestamp"><col class="data-table-col-duration"><col class="data-table-col-state"><col class="data-table-col-chevron"></colgroup>
+          <thead><tr><th scope="col">${businessTerm('student')}</th><th scope="col">Dernière activité</th><th scope="col">Inactivité</th><th scope="col">Éligibilité</th><th class="data-table-chevron" scope="col"><span class="visually-hidden">Détails</span></th></tr></thead>
           <tbody>${renderRows(preview.participants)}</tbody>
         </table>
       </div>
       ${pagination}
     </section>`,
+    after: `<div class="offcanvas offcanvas-end" tabindex="-1" id="privacy-participant-detail" aria-labelledby="privacy-participant-detail-title">
+      <div class="offcanvas-header"><h2 class="offcanvas-title h5" id="privacy-participant-detail-title">Données du participant</h2><button class="btn-close" type="button" data-bs-dismiss="offcanvas" aria-label="Fermer"></button></div>
+      <div class="offcanvas-body">
+        <section><h3 class="h6">Identité</h3><dl class="audit-detail-list">
+          <dt>Participant</dt><dd data-privacy-field="name">—</dd><dt>E-mail</dt><dd class="text-break" data-privacy-field="email">—</dd><dt>Code</dt><dd class="font-monospace" data-privacy-field="code">—</dd><dt>Statut</dt><dd data-privacy-field="status">—</dd>
+        </dl></section>
+        <section class="border-top pt-3 mt-3"><h3 class="h6">Rétention</h3><dl class="audit-detail-list">
+          <dt>Créé le</dt><dd data-privacy-field="createdAt">—</dd><dt>Dernière activité</dt><dd data-privacy-field="lastActivityAt">—</dd><dt>Date de référence</dt><dd data-privacy-field="referenceDate">—</dd><dt>Inactivité</dt><dd data-privacy-field="inactivity">—</dd><dt>Politique</dt><dd data-privacy-field="retentionPolicy">—</dd><dt>Inscriptions actives</dt><dd data-privacy-field="activeMemberships">—</dd><dt>Éligibilité</dt><dd data-privacy-field="eligibility">—</dd><dt>Motif</dt><dd data-privacy-field="reasons">—</dd>
+        </dl></section>
+        <div class="border-top pt-3 mt-3"><a class="btn btn-primary disabled" aria-disabled="true" tabindex="-1" data-privacy-export>Exporter les données</a></div>
+      </div>
+    </div><script src="/js/privacy-center.js" defer></script>`,
   }));
 }
 
@@ -171,6 +193,74 @@ router.get('/', async (request, response) => {
       title: 'Protection des données',
       notifications: '<p class="alert alert-danger" role="alert">Impossible de charger l’aperçu de rétention pour le moment.</p>',
     })));
+  }
+});
+
+router.get('/participants/:studentId/export.xlsx', async (request, response) => {
+  response.set({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+  if (!isValidPublicId(request.params.studentId)) return response.status(404).send('Participant introuvable.');
+  let data = null;
+  try {
+    data = await loadParticipantDataExport(request.params.studentId);
+    if (!data) return response.status(404).send('Participant introuvable.');
+    const workbook = buildParticipantDataWorkbook(data);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    await recordAuditEvent({
+      category: 'privacy', action: 'privacy.student.export', targetType: 'student',
+      targetPublicId: data.identity.publicId,
+      targetLabel: `${data.identity.firstName} ${data.identity.lastName}`,
+      summary: 'Données personnelles d’un participant exportées.',
+      metadata: { format: 'xlsx', counts: { memberships: data.memberships.length, attendance: data.attendance.length, audit: data.audit.length } },
+    });
+    response.set({
+      'Cache-Control': 'private, no-store, max-age=0',
+      Pragma: 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Disposition': `attachment; filename="attendance-log-data-export-${data.identity.publicId}.xlsx"`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    return response.send(buffer);
+  } catch (error) {
+    await recordAuditEventSafely({
+      category: 'privacy', action: 'privacy.student.export', targetType: 'student',
+      targetPublicId: request.params.studentId,
+      targetLabel: data ? `${data.identity.firstName} ${data.identity.lastName}` : null,
+      result: 'failed', summary: 'Échec de l’export des données personnelles d’un participant.',
+      metadata: { format: 'xlsx', error_code: error.code || 'EXPORT_FAILED' },
+    });
+    console.error('Unable to export participant personal data:', error.code || 'EXPORT_FAILED');
+    return response.status(500).send('Impossible d’exporter les données pour le moment.');
+  }
+});
+
+router.get('/participants/:studentId', async (request, response) => {
+  response.set({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+  if (!isValidPublicId(request.params.studentId)) return response.status(404).json({ error: 'PARTICIPANT_NOT_FOUND' });
+  try {
+    const detail = await getParticipantRetentionDetail(request.params.studentId);
+    if (!detail) return response.status(404).json({ error: 'PARTICIPANT_NOT_FOUND' });
+    const participant = detail.participant;
+    response.set({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+    return response.json({
+      fields: {
+        name: `${participant.first_name} ${participant.last_name}`,
+        email: participant.email,
+        code: participant.student_code,
+        status: participant.active ? 'Actif' : 'Inactif',
+        createdAt: formatDateTime(participant.created_at),
+        lastActivityAt: formatDateTime(participant.last_activity_at),
+        referenceDate: formatDateTime(participant.reference_date),
+        inactivity: formatInactivity(participant),
+        retentionPolicy: retentionPolicyLabel(detail.configuration.retentionMonths),
+        activeMemberships: String(participant.active_memberships),
+        eligibility: participant.eligible ? 'Éligible' : 'Non éligible',
+        reasons: participant.reasons.join(' · '),
+      },
+      exportUrl: `/settings/privacy/participants/${participant.public_id}/export.xlsx`,
+    });
+  } catch (error) {
+    console.error('Unable to load participant retention detail:', error.code || 'DATABASE_ERROR');
+    return response.status(500).json({ error: 'PARTICIPANT_DETAIL_UNAVAILABLE' });
   }
 });
 

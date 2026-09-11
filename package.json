@@ -5,6 +5,8 @@
   "description": "Mobile-first attendance application for a navigation school",
   "main": "src/server.js",
   "scripts": {
+    "test": "node --test",
+    "test:integration": "node scripts/run-integration-suite.js",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "migrate": "node src/db/migrate.js",
