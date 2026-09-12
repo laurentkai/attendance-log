@@ -204,9 +204,17 @@ Run `npm test` for the fast, deterministic unit suite; it requires neither Docke
 
 Because the integration runner deliberately uses simple synchronous Docker commands, interrupting it with Ctrl+C at the wrong instant can leave only its randomly named `attendance_log_test_*` database behind. List such databases with `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE '\''attendance_log_test_%'\''"'`, then replace the placeholder with one exact listed name in `docker compose exec postgres sh -c 'dropdb -U "$POSTGRES_USER" --if-exists --force attendance_log_test_REPLACE_WITH_EXACT_NAME'`. Never substitute the normal application database name.
 
-## Participant anonymization
+## GDPR and privacy architecture
 
-Administrators may anonymize one eligible inactive participant at a time from **Configuration > Protection des données**. The operation is irreversible and is allowed only when the configured retention threshold has been reached and no active membership remains. It replaces identity and QR identifiers while retaining memberships, attendance, timestamps, and statistical history anonymously. V1 is manual only: there is no scheduled or bulk anonymization. Existing backup archives are not rewritten and may retain the former identity until they expire under the configured backup-retention policy.
+Business roles determine which workflows an administrator, manager, or attendance operator may use. The independent per-user **View PII** capability controls optional identified data in Reporting only; when it is disabled, Reporting removes participant identity at the data layer and uses a stable pseudonym scoped to each activity/class. Attendance screens separately minimize identity to the operational name and participant code needed to record the correct person.
+
+For ASBL Nouveaux Horizons, the organizational policy is to retain identifiable participant data for a maximum of 12 months after the last meaningful activity once the participant is inactive and has no active membership. **Configuration > Protection des données** provides a non-destructive eligibility preview and administrator-only export of the data held about one participant.
+
+An administrator may manually anonymize one eligible participant at a time. The atomic, irreversible operation replaces identity, participant code, and QR identity; invalidates the former QR; redacts participant PII from targeted Audit Log history; and preserves memberships, attendance, timestamps, and statistical history anonymously. There is currently **no automatic, scheduled, or bulk anonymization**.
+
+Existing backup archives are not rewritten after live anonymization and may retain the former identity until they expire under the configured backup-retention/rotation policy. These safeguards support the organization's privacy controls but must not be described as proof of legal compliance.
+
+Participant-facing information is available at `/privacy`. Internal governance documentation is maintained separately in [the Attendance/Punctuality Legitimate Interest Assessment](docs/gdpr-legitimate-interest-assessment.md) and [the Attendance Log processing register](docs/gdpr-processing-register.md).
 
 ## Updating Attendance Log
 

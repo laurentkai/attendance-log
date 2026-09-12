@@ -17,6 +17,7 @@ function authPage(title, content) {
   return renderPage(title, `<div class="container-sm py-4 py-md-5" style="max-width: 32rem">
     <div class="mb-4 text-center"><p class="eyebrow">Administration</p><h1 class="h2">${escapeHtml(title)}</h1></div>
     ${content}
+    <p class="mt-4 mb-0 text-center small"><a class="link-secondary" href="/privacy">Protection des données</a></p>
   </div>`, { authenticated: false, pageClass: 'auth-page' });
 }
 

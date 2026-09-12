@@ -69,7 +69,9 @@ function renderNavigation() {
 
 function renderFooter() {
   return `<footer class="app-footer">
-    <div class="app-frame">
+    <div class="app-frame gap-2">
+      <a class="app-footer-brand" href="/privacy">Protection des données</a>
+      <span class="text-body-tertiary small" aria-hidden="true">·</span>
       <a class="app-footer-brand" href="https://labs.elinaka.lu">
         <img src="https://labs.elinaka.lu/elinaka-labs-icon.png" width="16" height="16" alt="" loading="lazy" referrerpolicy="no-referrer">
         <span>Powered by <span translate="no">Elinaka Labs</span></span>

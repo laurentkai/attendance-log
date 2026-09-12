@@ -38,6 +38,7 @@ const { requestContextMiddleware } = require('./request-context');
 const studentImportRouter = require('./student-import');
 const studentQrPrintRouter = require('./student-qr-print');
 const printDesignSettingsRouter = require('./print-design-settings');
+const { router: privacyNoticeRouter } = require('./privacy-notice');
 const privacySettingsRouter = require('./privacy-settings');
 const studentsRouter = require('./students');
 const terminologySettingsRouter = require('./terminology-settings');
@@ -86,6 +87,7 @@ app.use('/vendor/bootstrap', express.static(path.join(
   'bootstrap',
   'dist',
 )));
+app.use(privacyNoticeRouter);
 
 app.get('/health', async (_request, response) => {
   if (isMaintenanceActive()) {
