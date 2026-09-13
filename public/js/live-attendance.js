@@ -96,13 +96,16 @@ function startPolling(refresh) {
 
 const attendanceSearch = document.querySelector('[data-attendance-search]');
 const attendanceRows = [...document.querySelectorAll('[data-student-id]')];
+let attendanceFilter = '';
+const attendanceFilterButtons = [...document.querySelectorAll('[data-attendance-filter]')];
 
 function filterAttendanceRows() {
   if (!attendanceSearch) return;
   const query = attendanceSearch.value.trim().toLocaleLowerCase();
   let visibleCount = 0;
   attendanceRows.forEach((row) => {
-    const matches = row.dataset.inRoster !== 'false' && row.dataset.search.includes(query);
+    const matchesState = !attendanceFilter || row.querySelector('[data-attendance-status]')?.classList.contains(`status-${attendanceFilter}`);
+    const matches = row.dataset.inRoster !== 'false' && row.dataset.search.includes(query) && matchesState;
     row.hidden = !matches;
     if (matches) visibleCount += 1;
   });
@@ -111,6 +114,15 @@ function filterAttendanceRows() {
 }
 
 attendanceSearch?.addEventListener('input', filterAttendanceRows);
+attendanceFilterButtons.forEach((button) => button.addEventListener('click', () => {
+  attendanceFilter = button.dataset.attendanceFilter;
+  attendanceFilterButtons.forEach((item) => {
+    const active = item === button;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-pressed', String(active));
+  });
+  filterAttendanceRows();
+}));
 
 const liveSession = document.querySelector('[data-live-session]');
 let refreshLiveSession;
@@ -119,6 +131,7 @@ if (liveSession) {
     const status = await fetchSessionStatus(liveSession.dataset.sessionId);
     liveSession.querySelector('[data-present-count]').textContent = status.present;
     liveSession.querySelector('[data-total-count]').textContent = status.total;
+    updateAttendanceProgress(liveSession, status.present, status.total);
     updateStatusBadge(
       liveSession.querySelector('[data-session-state]'),
       status.state,
@@ -209,11 +222,25 @@ if (arrivalTimeModal) {
   arrivalTimeModal.addEventListener('shown.bs.modal', () => input.focus());
 }
 
+function updateAttendanceProgress(container, present, total) {
+  const progress = container.querySelector('[data-attendance-progress]');
+  if (progress) {
+    progress.max = Math.max(1, total);
+    progress.value = Math.min(total, Math.max(0, present));
+    progress.setAttribute('aria-label', t('dashboard.present_count', { present, total }));
+  }
+  const remaining = container.querySelector('[data-attendance-remaining]');
+  if (remaining) remaining.textContent = t('workspace.remaining', { count: Math.max(0, total - present) });
+}
+
 document.querySelectorAll('[data-live-session-card]').forEach((card) => {
   startPolling(async () => {
     const status = await fetchSessionStatus(card.dataset.sessionId);
     card.querySelector('[data-present-count]')?.replaceChildren(String(status.present));
     card.querySelector('[data-total-count]')?.replaceChildren(String(status.total));
+    updateAttendanceProgress(card, status.present, status.total);
+    const countLabel = card.querySelector('.compact-count[aria-label]');
+    if (countLabel) countLabel.setAttribute('aria-label', t('dashboard.present_count', { present: status.present, total: status.total }));
     updateStatusBadge(card.querySelector('[data-session-state]'), status.state, stateLabels[status.state]);
 
     if (status.state === 'closed') {
@@ -226,6 +253,7 @@ document.querySelectorAll('[data-live-session-card]').forEach((card) => {
           dashboard.querySelector('[data-live-empty-state]')?.removeAttribute('hidden');
         }
       } else {
+        card.querySelector('[data-session-quick]')?.setAttribute('hidden', '');
         card.querySelector('[data-session-edit]')?.setAttribute('hidden', '');
         card.querySelector('[data-session-edit-disabled]')?.removeAttribute('hidden');
       }
@@ -530,6 +558,7 @@ if (quickAttendance) {
   const updateQuickCount = (present, total) => {
     quickAttendance.querySelector('[data-present-count]').textContent = present;
     quickAttendance.querySelector('[data-total-count]').textContent = total;
+    updateAttendanceProgress(quickAttendance, present, total);
   };
 
   const updateSearchClearButton = () => {

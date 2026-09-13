@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'attendance-log-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v15`;
+const CACHE_NAME = `${CACHE_PREFIX}v17`;
 const OFFLINE_URL = '/offline.html';
 const STATIC_ASSETS = [
   OFFLINE_URL,
@@ -9,6 +9,8 @@ const STATIC_ASSETS = [
   '/vendor/bootstrap/css/bootstrap.min.css',
   '/vendor/bootstrap/js/bootstrap.bundle.min.js',
   '/css/styles.css',
+  '/fonts/plex/IBMPlexSans-Regular.woff2',
+  '/fonts/plex/IBMPlexSans-SemiBold.woff2',
   '/js/backup-settings.js',
   '/js/i18n.js',
   '/js/classes.js',

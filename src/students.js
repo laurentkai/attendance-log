@@ -13,7 +13,7 @@ const { createStudentQrPng } = require('./student-qr');
 const { isValidPublicId } = require('./public-id');
 const { resolveParticipantCommunicationLanguage, t } = require('./i18n');
 const { getTerm } = require('./terminology');
-const { businessTerm, escapeHtml, renderLanguageOptions, renderMessagePage, renderPage } = require('./ui');
+const { businessTerm, escapeHtml, renderActionMenu, renderCollectionTools, renderLanguageOptions, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
 
@@ -97,6 +97,7 @@ function renderStudentForm({
     </header>
     ${errorMessage}
     <form class="card card-body app-form" method="post" action="${escapeHtml(action)}">
+      <div class="form-grid">
       <div class="form-field">
         <label for="first_name">${escapeHtml(t(language, 'students.form.first_name'))} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="first_name" name="first_name" type="text" value="${escapeHtml(values.firstName || '')}" autocomplete="given-name" required>
@@ -105,6 +106,7 @@ function renderStudentForm({
       <div class="form-field">
         <label for="last_name">${escapeHtml(t(language, 'students.form.last_name'))} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="last_name" name="last_name" type="text" value="${escapeHtml(values.lastName || '')}" autocomplete="family-name" required>
+      </div>
       </div>
 
       <div class="form-field">
@@ -206,17 +208,12 @@ router.get('/', async (request, response) => {
     const cards = result.rows.length === 0
       ? `<p class="empty-state">${escapeHtml(t(language, `students.directory.empty_${showInactive ? 'inactive' : 'active'}`, { students: getTerm(language, 'student', 'plural') }))}</p>`
       : `<section data-filterable-list>
-          <div class="search">
-            <label for="student-search">${escapeHtml(t(language, 'students.directory.search_label'))}</label>
-            <div class="search-controls">
-              <input class="form-control" id="student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'students.directory.search_placeholder'))}" aria-controls="student-list" data-list-search>
-            </div>
-          </div>
+          ${renderCollectionTools({ language, id: 'student-list', placeholder: t(language, 'students.directory.search_placeholder'), count: result.rows.length })}
           <p class="empty-state" role="status" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="student-list" data-list-results>${result.rows.map((student) => `
-          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml((student.anonymized_at ? `${student.first_name} ${student.last_name}` : `${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`).toLocaleLowerCase())}">
+          <article class="list-group-item compact-row compact-row-status collection-row student-row" data-list-row data-search="${escapeHtml((student.anonymized_at ? `${student.first_name} ${student.last_name}` : `${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`).toLocaleLowerCase())}">
             <div class="compact-identity student-identity">
-              <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
+              <p class="compact-title">${student.anonymized_at ? `${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}` : `<a href="/students/${student.public_id}/edit">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</a>`}</p>
               ${student.anonymized_at
                 ? `<p class="compact-meta">${escapeHtml(t(language, 'students.directory.identity_removed'))}</p>`
                 : `<p class="compact-meta"><a href="mailto:${escapeHtml(student.email)}">${escapeHtml(student.email)}</a> · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>`}
@@ -225,10 +222,12 @@ router.get('/', async (request, response) => {
               <span class="badge status-badge status-${student.active ? 'active' : 'inactive'}">${escapeHtml(t(language, 'students.qr.status', { status: t(language, `status.${student.anonymized_at ? 'anonymized' : student.active ? 'active' : 'inactive'}`) }))}</span>
             </div>
             <div class="compact-actions" aria-label="${escapeHtml(t(language, 'students.directory.actions_for', { name: `${student.first_name} ${student.last_name}` }))}">
-              ${student.anonymized_at ? '' : `<a class="btn btn-light" href="/students/${student.public_id}/edit">${escapeHtml(t(language, 'action.edit'))}</a>`}
-              ${student.active ? `<form method="post" action="/students/${student.public_id}/deactivate" data-confirm="${escapeHtml(t(language, 'students.confirm.deactivate'))}">
-                <button class="btn btn-outline-danger" type="submit">${escapeHtml(t(language, 'action.deactivate'))}</button>
-              </form>` : ''}
+              ${student.anonymized_at ? '' : renderActionMenu(t(language, 'action.actions_for', { name: `${student.first_name} ${student.last_name}` }), `
+                <a class="dropdown-item" href="/students/${student.public_id}/edit">${escapeHtml(t(language, 'action.edit'))}</a>
+                <a class="dropdown-item" href="/students/${student.public_id}/qr">${escapeHtml(t(language, 'students.form.show_qr'))}</a>
+                ${student.active ? `<div class="dropdown-divider"></div><form method="post" action="/students/${student.public_id}/deactivate" data-confirm="${escapeHtml(t(language, 'students.confirm.deactivate'))}">
+                  <button class="dropdown-item text-danger" type="submit">${escapeHtml(t(language, 'action.deactivate'))}</button>
+                </form>` : ''}`)}
             </div>
           </article>`).join('')}</div>
         </section>`;

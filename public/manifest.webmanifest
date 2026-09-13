@@ -8,8 +8,8 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f4f7f9",
-  "theme_color": "#f4f7f9",
+  "background_color": "#f4f7f8",
+  "theme_color": "#f4f7f8",
   "icons": [
     {
       "src": "/icons/attendance-log-192.png",

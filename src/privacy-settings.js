@@ -24,7 +24,7 @@ const {
 } = require('./student-anonymization');
 const { getTerm } = require('./terminology');
 const {
-  businessTerm, escapeHtml, renderMessagePage, renderPage, renderSettingsLayout,
+  businessTerm, escapeHtml, renderMetricStrip, renderMessagePage, renderPage, renderSettingsLayout,
 } = require('./ui');
 
 const router = express.Router();
@@ -89,7 +89,7 @@ function renderSummary(summary, language) {
     [t(language, 'privacy.summary.insufficient_date'), summary.blockedByInsufficientDate],
     [t(language, 'privacy.summary.policy_disabled'), summary.blockedByDisabledPolicy],
   ];
-  return `<div class="row g-2" aria-label="${escapeHtml(t(language, 'privacy.summary.label'))}">${items.map(([label, value]) => `<div class="col-6 col-md-4"><div class="border rounded bg-body px-3 py-2 h-100"><span class="d-block small text-body-secondary">${escapeHtml(label)}</span><strong class="fs-5 font-monospace">${value}</strong></div></div>`).join('')}</div>`;
+  return renderMetricStrip(items, t(language, 'privacy.summary.label'), 'policy-summary');
 }
 
 function renderRows(participants, language) {

@@ -21,7 +21,7 @@ const { sendSessionSummary } = require('./session-summary');
 const { recordStudentActivity } = require('./student-activity');
 const { getTerm } = require('./terminology');
 const { normalizeLanguageOverride, t } = require('./i18n');
-const { businessTerm, escapeHtml, renderLanguageOptions, renderPage, renderMessagePage } = require('./ui');
+const { businessTerm, escapeHtml, renderActionMenu, renderAttendanceProgress, renderDateMarker, renderLanguageOptions, renderPage, renderMessagePage } = require('./ui');
 
 const router = express.Router();
 const requireAttendanceManagement = requirePermission(permissions.manageAttendance);
@@ -163,23 +163,8 @@ function renderSessionForm({ title, action, submitLabel, values, classes, adminU
       </div>
 
       <div class="form-field">
-        <label for="session-punctuality-tolerance">${escapeHtml(t(language, 'sessions.form.tolerance'))}</label>
-        <select class="form-select" id="session-punctuality-tolerance" name="punctuality_tolerance_override_minutes" data-session-tolerance>
-          <option value="" data-inherit-option>${escapeHtml(t(language, 'sessions.form.inherit_activity', { class: getTerm(language, 'class'), minutes: inheritedTolerance }))}</option>
-          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_override_minutes) === minutes ? ' selected' : ''}>${escapeHtml(t(language, 'punctuality.tolerance_option', { minutes }))}</option>`).join('')}
-        </select>
-      </div>
-
-      <div class="form-field">
         <label for="title">${escapeHtml(t(language, 'sessions.form.title'))} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="title" name="title" type="text" value="${escapeHtml(values.title)}" autocomplete="off" required>
-      </div>
-
-      <div class="form-field">
-        <label for="language">${escapeHtml(t(language, 'sessions.form.generated_language'))}</label>
-        <select class="form-select" id="language" name="language">
-          ${renderLanguageOptions(values.language, { language, emptyLabel: t(language, 'sessions.form.inherit_activity_language', { class: getTerm(language, 'class') }) })}
-        </select>
       </div>
 
       <div class="form-field">
@@ -192,10 +177,30 @@ function renderSessionForm({ title, action, submitLabel, values, classes, adminU
         <textarea class="form-control" id="notes" name="notes" rows="5" autocomplete="off">${escapeHtml(values.notes ?? '')}</textarea>
       </div>
 
+      <details class="form-disclosure"${error ? ' open' : ''}>
+        <summary>${escapeHtml(t(language, 'workspace.configuration'))}</summary>
+        <div class="form-disclosure-content">
+      <div class="form-field">
+        <label for="language">${escapeHtml(t(language, 'sessions.form.generated_language'))}</label>
+        <select class="form-select" id="language" name="language">
+          ${renderLanguageOptions(values.language, { language, emptyLabel: t(language, 'sessions.form.inherit_activity_language', { class: getTerm(language, 'class') }) })}
+        </select>
+      </div>
+
+      <div class="form-field">
+        <label for="session-punctuality-tolerance">${escapeHtml(t(language, 'sessions.form.tolerance'))}</label>
+        <select class="form-select" id="session-punctuality-tolerance" name="punctuality_tolerance_override_minutes" data-session-tolerance>
+          <option value="" data-inherit-option>${escapeHtml(t(language, 'sessions.form.inherit_activity', { class: getTerm(language, 'class'), minutes: inheritedTolerance }))}</option>
+          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_override_minutes) === minutes ? ' selected' : ''}>${escapeHtml(t(language, 'punctuality.tolerance_option', { minutes }))}</option>`).join('')}
+        </select>
+      </div>
+
       ${renderSummaryConfigurationFields({
         adminUsers, values, scope: 'session', inheritedAttachXlsx, language,
       })}
 
+        </div>
+      </details>
       <div class="form-actions d-flex flex-wrap gap-2">
         <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
         <a class="btn btn-outline-secondary" href="/sessions">${escapeHtml(t(language, 'action.cancel'))}</a>
@@ -366,21 +371,36 @@ router.get('/', async (request, response) => {
   const searchQuery = typeof request.query.q === 'string' ? request.query.q.trim().slice(0, 100) : '';
   const searchPattern = `%${searchQuery}%`;
   const classId = isValidPublicId(request.query.class_id || '') ? request.query.class_id : '';
+  const state = ['scheduled', 'open', 'closed'].includes(request.query.state) ? request.query.state : '';
+  const sort = request.query.sort === 'oldest' ? 'oldest' : 'newest';
+  const pageIndex = /^\d{1,6}$/.test(request.query.page || '') ? Math.max(0, Number(request.query.page) - 1) : 0;
+  const filterUrl = (nextState) => {
+    const params = new URLSearchParams();
+    if (classId) params.set('class_id', classId);
+    if (searchQuery) params.set('q', searchQuery);
+    if (nextState) params.set('state', nextState);
+    params.set('sort', nextState === 'scheduled' ? 'oldest' : sort);
+    return `/sessions?${escapeHtml(params.toString())}`;
+  };
 
   try {
     const [result, classResult] = await Promise.all([
       pool.query(
         `SELECT cs.public_id, cs.date, cs.start_time, cs.title, cs.instructor, cs.state,
-                c.name AS class_name
+                c.name AS class_name, COUNT(*) OVER () AS result_count
          FROM course_sessions cs
          INNER JOIN classes c ON c.id = cs.class_id
          WHERE ($1::uuid IS NULL OR c.public_id = $1)
+           AND ($4 = '' OR cs.state = $4)
            AND ($2 = ''
             OR cs.title ILIKE $3
             OR c.name ILIKE $3
             OR cs.instructor ILIKE $3)
-         ORDER BY cs.date DESC, LOWER(cs.title), cs.id DESC`,
-        [classId || null, searchQuery, searchPattern],
+         ORDER BY CASE WHEN $5 = 'oldest' THEN cs.date END ASC,
+                  CASE WHEN $5 = 'newest' THEN cs.date END DESC,
+                  cs.start_time NULLS LAST, LOWER(cs.title), cs.id DESC
+         LIMIT 50 OFFSET $6`,
+        [classId || null, searchQuery, searchPattern, state, sort, pageIndex * 50],
       ),
       classId
         ? pool.query('SELECT public_id, name FROM classes WHERE public_id = $1', [classId])
@@ -392,6 +412,10 @@ router.get('/', async (request, response) => {
       response.status(page.status).send(page.html);
       return;
     }
+    if (pageIndex > 0 && result.rows.length === 0) {
+      // Return a stale or out-of-range page to the same filtered first page.
+      return response.redirect(303, filterUrl(state).replaceAll('&amp;', '&'));
+    }
     const notices = {
       created: t(language, 'sessions.notice.created', { session: getTerm(language, 'session') }),
       updated: t(language, 'sessions.notice.updated', { session: getTerm(language, 'session') }),
@@ -400,26 +424,32 @@ router.get('/', async (request, response) => {
       ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
+    const resultCount = Number(result.rows[0]?.result_count || 0);
+    const pageUrl = (page) => `/sessions?${escapeHtml(new URLSearchParams({
+      ...(classId ? { class_id: classId } : {}), ...(searchQuery ? { q: searchQuery } : {}),
+      ...(state ? { state } : {}), sort, page: String(page),
+    }).toString())}`;
     const sessions = result.rows.length === 0
       ? `<p class="empty-state">${searchQuery
         ? escapeHtml(t(language, 'sessions.list.no_search_results', { session: getTerm(language, 'session') }))
         : escapeHtml(t(language, 'sessions.list.empty', { session: getTerm(language, 'session') }))}</p>`
       : `<div class="list-group compact-list">${result.rows.map((session) => `
-          <article class="list-group-item compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.public_id}"` : ''}>
+          <article class="list-group-item compact-row compact-row-status session-row collection-row session-collection-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.public_id}"` : ''}>
+            ${renderDateMarker(session.date)}
             <div class="compact-identity session-identity">
               <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}${session.start_time ? ` · ${escapeHtml(normalizeClockTime(session.start_time))}` : ''}</p>
-              <p class="compact-title">${escapeHtml(session.title)}</p>
+              <p class="compact-title"><a href="/sessions/${session.public_id}">${escapeHtml(session.title)}</a></p>
               <p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p>
             </div>
             <div class="compact-status">
               <span class="badge status-badge status-${session.state}" data-session-state>${escapeHtml(getStateLabel(session.state, language))}</span>
             </div>
-            <div class="compact-actions compact-actions--split" aria-label="${escapeHtml(t(language, 'sessions.list.actions_for', { title: session.title }))}">
-              <a class="btn btn-primary" href="/sessions/${session.public_id}">${session.state === 'scheduled' ? escapeHtml(t(language, 'sessions.list.view_session', { session: getTerm(language, 'session') })) : businessTerm(language, 'attendance', 'plural')}</a>
-              ${canManageSessions ? `<span class="session-edit-slot">
-                <a class="btn btn-light" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>${escapeHtml(t(language, 'action.edit'))}</a>
-                <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>${escapeHtml(t(language, 'action.edit'))}</button>
-              </span>` : ''}
+            <div class="compact-actions" aria-label="${escapeHtml(t(language, 'sessions.list.actions_for', { title: session.title }))}">
+              <a class="btn btn-light" href="/sessions/${session.public_id}">${session.state === 'scheduled' ? escapeHtml(t(language, 'sessions.list.view_session', { session: getTerm(language, 'session') })) : businessTerm(language, 'attendance', 'plural')}</a>
+              ${renderActionMenu(t(language, 'sessions.list.actions_for', { title: session.title }), `
+                <a class="dropdown-item" href="/sessions/${session.public_id}">${escapeHtml(t(language, 'workspace.details'))}</a>
+                ${session.state === 'open' ? `<a class="dropdown-item" href="/sessions/${session.public_id}/quick-attendance" data-session-quick>${escapeHtml(t(language, 'attendance.roster.quick_mode'))}</a>` : ''}
+                ${canManageSessions ? `<a class="dropdown-item" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>${escapeHtml(t(language, 'action.edit'))}</a><button class="dropdown-item" disabled data-session-edit-disabled${session.state === 'closed' ? '' : ' hidden'}>${escapeHtml(t(language, 'action.edit'))}</button>` : ''}`)}
             </div>
           </article>`).join('')}</div>`;
 
@@ -435,17 +465,28 @@ router.get('/', async (request, response) => {
         <a class="nav-link" href="/classes/${classRecord.public_id}">${businessTerm(language, 'student', 'plural')}</a>
         <a class="nav-link active" href="/sessions?class_id=${classRecord.public_id}" aria-current="page">${businessTerm(language, 'session', 'plural')}</a>
       </nav>` : ''}
+      <nav class="nav nav-pills view-switch" aria-label="${escapeHtml(t(language, 'workspace.state'))}">
+        ${['', 'open', 'scheduled', 'closed'].map((value) => `<a class="nav-link${state === value ? ' active' : ''}" href="${filterUrl(value)}"${state === value ? ' aria-current="page"' : ''}>${escapeHtml(t(language, value ? `status.${value}` : 'workspace.all'))}</a>`).join('')}
+      </nav>
       <form class="search" method="get" action="/sessions" role="search">
         <label for="session-search">${escapeHtml(t(language, 'sessions.list.search_label', { session: getTerm(language, 'session') }))}</label>
         ${classId ? `<input name="class_id" type="hidden" value="${classId}">` : ''}
+        ${state ? `<input name="state" type="hidden" value="${state}">` : ''}
         <div class="search-controls">
           <input class="form-control" id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'sessions.list.search_placeholder', { class: getTerm(language, 'class'), instructor: getTerm(language, 'instructor') }))}">
-          <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'action.search'))}</button>
-          ${searchQuery ? `<a class="btn btn-outline-secondary" href="/sessions${classId ? `?class_id=${classId}` : ''}">${escapeHtml(t(language, 'action.clear'))}</a>` : ''}
+          <select class="form-select" name="sort" aria-label="${escapeHtml(t(language, 'workspace.sort'))}"><option value="newest"${sort === 'newest' ? ' selected' : ''}>${escapeHtml(t(language, 'workspace.newest'))}</option><option value="oldest"${sort === 'oldest' ? ' selected' : ''}>${escapeHtml(t(language, 'workspace.oldest'))}</option></select>
+          <button class="btn btn-outline-secondary" type="submit">${escapeHtml(t(language, 'action.search'))}</button>
+          ${searchQuery ? `<a class="btn btn-light" href="/sessions?${classId ? `class_id=${classId}&amp;` : ''}state=${state}&amp;sort=${sort}">${escapeHtml(t(language, 'action.clear'))}</a>` : ''}
         </div>
       </form>
+      <p class="collection-count">${escapeHtml(t(language, 'workspace.result_count', { count: resultCount }))}</p>
       ${notice}
-      ${sessions}`, { language }));
+      ${sessions}
+      ${resultCount > 50 || pageIndex > 0 ? `<nav class="collection-pagination" aria-label="${escapeHtml(t(language, 'workspace.pages'))}">
+        ${pageIndex > 0 ? `<a class="btn btn-light" href="${pageUrl(pageIndex)}">${escapeHtml(t(language, 'workspace.previous'))}</a>` : ''}
+        ${result.rows.length ? `<span class="collection-count">${escapeHtml(t(language, 'workspace.page_count', { from: pageIndex * 50 + 1, to: pageIndex * 50 + result.rows.length, count: resultCount }))}</span>` : ''}
+        ${(pageIndex + 1) * 50 < resultCount ? `<a class="btn btn-light" href="${pageUrl(pageIndex + 2)}">${escapeHtml(t(language, 'workspace.next'))}</a>` : ''}
+      </nav>` : ''}`, { language }));
   } catch (error) {
     console.error('Unable to list course sessions:', error);
     const page = renderMessagePage(t(language, 'sessions.error.list.title', { sessions: getTerm(language, 'session', 'plural') }), t(language, 'sessions.error.list.message'), 503, language);
@@ -910,7 +951,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
       <div class="quick-attendance" data-quick-attendance data-session-id="${session.public_id}">
         <h1 class="visually-hidden">${escapeHtml(t(language, 'attendance.quick.title', { attendance: getTerm(language, 'attendance', 'plural') }))}</h1>
         <header class="quick-topbar">
-          <strong class="quick-attendance-count" aria-label="${escapeHtml(t(language, 'attendance.quick.count_aria', { attendance: getTerm(language, 'attendance', 'plural') }))}"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> ${businessTerm(language, 'attendance', 'plural')}</strong>
+          <strong class="quick-attendance-count" aria-label="${escapeHtml(t(language, 'attendance.quick.count_aria', { attendance: getTerm(language, 'attendance', 'plural') }))}"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> ${escapeHtml(t(language, 'attendance.roster.present_suffix'))}</strong>
           <div class="quick-topbar-actions">
             <button class="btn btn-light quick-undo" type="button" data-quick-undo disabled>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
@@ -919,9 +960,10 @@ router.get('/:id/quick-attendance', async (request, response) => {
               </svg>
               <span>${escapeHtml(t(language, 'action.undo'))}</span>
             </button>
-            <a class="quick-close" href="/sessions/${session.public_id}" aria-label="${escapeHtml(t(language, 'attendance.quick.close'))}"><span aria-hidden="true">×</span></a>
+            <a class="quick-close" href="/sessions/${session.public_id}" data-quick-close aria-label="${escapeHtml(t(language, 'attendance.quick.close'))}"><span aria-hidden="true">×</span></a>
           </div>
         </header>
+        ${renderAttendanceProgress(presentCount, rosterResult.rowCount, language)}
         <p class="alert alert-warning" data-quick-readonly hidden>${escapeHtml(t(language, 'attendance.quick.readonly', { session: getTerm(language, 'session') }))}</p>
         <div class="nav nav-pills view-switch quick-mode-switch" role="group" aria-label="${escapeHtml(t(language, 'attendance.quick.mode_aria'))}">
           <button class="nav-link active" type="button" aria-pressed="true" aria-controls="quick-manual-mode" data-quick-mode="manual">${escapeHtml(t(language, 'attendance.quick.search'))}</button>
@@ -1112,15 +1154,19 @@ router.get('/:id', async (request, response) => {
         <div class="context-actions d-flex flex-wrap gap-2">
           <a class="btn btn-primary" href="/sessions/${session.public_id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>${escapeHtml(t(language, 'attendance.roster.quick_mode'))}</a>
           ${canManageSessions ? `<form method="post" action="/sessions/${session.public_id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${escapeHtml(t(language, session.state === 'scheduled' ? 'action.open' : 'action.reopen'))}</button></form>
-          <a class="btn btn-outline-secondary" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>${escapeHtml(t(language, 'action.edit'))}</a>
-          <form method="post" action="/sessions/${session.public_id}/resend-summary"${session.state === 'closed' ? '' : ' hidden'}><button class="btn btn-outline-secondary" type="submit">${escapeHtml(t(language, 'attendance.roster.resend_summary'))}</button></form>
-          <form method="post" action="/sessions/${session.public_id}/close" data-session-close data-confirm="${escapeHtml(t(language, 'attendance.roster.close_confirm', { session: getTerm(language, 'session'), students: getTerm(language, 'student', 'plural') }))}"${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">${escapeHtml(t(language, 'attendance.roster.close_session', { session: getTerm(language, 'session') }))}</button></form>` : ''}
+          ${renderActionMenu(t(language, 'workspace.register_tools'), `
+            <a class="dropdown-item" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>${escapeHtml(t(language, 'action.edit'))}</a>
+            <form method="post" action="/sessions/${session.public_id}/resend-summary"${session.state === 'closed' ? '' : ' hidden'}><button class="dropdown-item" type="submit">${escapeHtml(t(language, 'attendance.roster.resend_summary'))}</button></form>
+            <a class="dropdown-item" href="/sessions">${escapeHtml(t(language, 'action.back'))}</a>
+            <form method="post" action="/sessions/${session.public_id}/close" data-session-close data-confirm="${escapeHtml(t(language, 'attendance.roster.close_confirm', { session: getTerm(language, 'session'), students: getTerm(language, 'student', 'plural') }))}"${session.state === 'open' ? '' : ' hidden'}><button class="dropdown-item text-danger" type="submit">${escapeHtml(t(language, 'attendance.roster.close_session', { session: getTerm(language, 'session') }))}</button></form>`)}
+          ` : ''}
         </div>
       </header>
       ${notice}
       ${session.state === 'closed' ? `<p class="alert alert-warning">${escapeHtml(t(language, canManageSessions ? 'attendance.roster.closed_manager' : 'attendance.roster.closed_operator', { session: getTerm(language, 'session'), attendance: getTerm(language, 'attendance', 'plural') }))}</p>` : ''}
       <section class="card card-body summary-card attendance-summary" aria-label="${escapeHtml(t(language, 'attendance.roster.summary_aria', { attendance: getTerm(language, 'attendance', 'plural') }))}" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.public_id}"` : ''}>
         <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> ${escapeHtml(t(language, 'attendance.roster.present_suffix'))}</strong>
+        ${renderAttendanceProgress(presentCount, studentsResult.rows.length, language)}
         <span class="badge status-badge status-${session.state}" data-session-state aria-live="polite">${escapeHtml(getStateLabel(session.state, language))}</span>
       </section>
       <p class="alert alert-warning" data-live-readonly hidden>${escapeHtml(t(language, 'attendance.roster.live_readonly', { session: getTerm(language, 'session'), attendance: getTerm(language, 'attendance', 'plural') }))}</p>
@@ -1131,13 +1177,16 @@ router.get('/:id', async (request, response) => {
             <h2 id="attendance-title">${businessTerm(language, 'attendance', 'plural')}</h2>
           </div>
         </div>
-        ${studentsResult.rows.length > 0 ? `<div class="search">
+        ${studentsResult.rows.length > 0 ? `<div class="register-filter-bar"><div class="search">
           <label for="attendance-search">${escapeHtml(t(language, 'attendance.roster.search', { students: getTerm(language, 'student', 'plural') }))}</label>
           <div class="search-controls">
             <input class="form-control" id="attendance-search" name="attendance_filter" type="search" placeholder="${escapeHtml(t(language, 'attendance.quick.search_placeholder'))}" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
           </div>
           <p class="help-text" role="status" data-attendance-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
-        </div>` : ''}
+        </div>
+        <div class="nav nav-pills view-switch register-status-filter" role="group" aria-label="${escapeHtml(t(language, 'workspace.state'))}">
+          ${['', 'pending', 'present', 'absent'].map((value) => `<button class="nav-link${value === '' ? ' active' : ''}" type="button" data-attendance-filter="${value}" aria-pressed="${value === ''}">${escapeHtml(t(language, value ? `status.${value}` : 'workspace.all'))}</button>`).join('')}
+        </div></div>` : ''}
         ${studentList}
       </section>`, { language }));
   } catch (error) {
