@@ -1,4 +1,4 @@
-(() => {
+window.AttendanceLogI18n.ready.then(() => {
   const editor = document.querySelector('[data-print-design-editor]');
   const profileSelect = document.querySelector('[data-print-design-profile]');
   if (profileSelect) profileSelect.addEventListener('change', () => profileSelect.form.submit());
@@ -201,13 +201,13 @@
     try {
       const qr = design.elements.qr;
       const collision = Object.entries(design.elements).some(([name, element]) => name !== 'qr' && element.enabled && overlaps(qr, element));
-      if (collision) throw new Error('Aucun élément ne peut recouvrir le QR.');
+      if (collision) throw new Error(window.AttendanceLogI18n.t('print.design.error.qr_collision'));
       editor.querySelector('[data-design-json]').value = JSON.stringify(design);
       errorBox.hidden = true;
     } catch (error) {
-      event.preventDefault(); errorBox.textContent = error.message || 'Le modèle ne peut pas être préparé.'; errorBox.hidden = false;
+      event.preventDefault(); errorBox.textContent = error.message || window.AttendanceLogI18n.t('print.design.error.prepare'); errorBox.hidden = false;
     }
   });
   refreshStageScale();
   new ResizeObserver(refreshStageScale).observe(stage);
-})();
+}).catch(() => {});

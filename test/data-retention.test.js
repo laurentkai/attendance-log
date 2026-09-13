@@ -24,25 +24,25 @@ function participant(overrides = {}) {
 test('retention disabled never produces an eligible participant', () => {
   const result = evaluateRetentionEligibility(participant(), null, NOW);
   assert.equal(result.eligible, false);
-  assert(result.reasons.includes('Politique de rétention désactivée'));
+  assert(result.reasons.includes('policy_disabled'));
 });
 
 test('active participants and active memberships block eligibility', () => {
   const active = evaluateRetentionEligibility(participant({ active: true }), 12, NOW);
   const membership = evaluateRetentionEligibility(participant({ active_memberships: 1 }), 12, NOW);
   assert.equal(active.eligible, false);
-  assert(active.reasons.includes('Participant actif'));
+  assert(active.reasons.includes('active_participant'));
   assert.equal(membership.eligible, false);
-  assert(membership.reasons.includes('Inscription active'));
+  assert(membership.reasons.includes('active_membership'));
 });
 
 test('recent reference blocks and old reference permits eligibility', () => {
   const recent = evaluateRetentionEligibility(participant({ last_activity_at: '2026-08-01T00:00:00.000Z' }), 12, NOW);
   const old = evaluateRetentionEligibility(participant(), 12, NOW);
   assert.equal(recent.eligible, false);
-  assert(recent.reasons.includes('Activité trop récente'));
+  assert(recent.reasons.includes('recent_activity'));
   assert.equal(old.eligible, true);
-  assert.deepEqual(old.reasons, ['Éligible']);
+  assert.deepEqual(old.reasons, ['eligible']);
 });
 
 test('exact threshold is eligible and one instant after it is not', () => {
@@ -74,7 +74,7 @@ test('missing and invalid reference dates are blocked safely', () => {
   for (const createdAt of [null, 'not-a-date']) {
     const result = evaluateRetentionEligibility(participant({ created_at: createdAt, last_activity_at: null }), 12, NOW);
     assert.equal(result.eligible, false);
-    assert(result.reasons.includes('Date d’activité insuffisante'));
+    assert(result.reasons.includes('insufficient_date'));
   }
 });
 

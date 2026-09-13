@@ -53,14 +53,14 @@ function evaluateRetentionEligibility(participant, retentionMonths, now = new Da
     : subtractCalendarMonths(normalizedNow, retentionMonths);
   const reasons = [];
 
-  if (participant.anonymized_at) reasons.push('Participant déjà anonymisé');
-  if (retentionMonths === null) reasons.push('Politique de rétention désactivée');
-  if (participant.active) reasons.push('Participant actif');
-  if (activeMemberships > 0) reasons.push('Inscription active');
+  if (participant.anonymized_at) reasons.push('already_anonymized');
+  if (retentionMonths === null) reasons.push('policy_disabled');
+  if (participant.active) reasons.push('active_participant');
+  if (activeMemberships > 0) reasons.push('active_membership');
   if (!normalizedReference || Number.isNaN(normalizedReference.valueOf())) {
-    reasons.push('Date d’activité insuffisante');
+    reasons.push('insufficient_date');
   } else if (threshold && normalizedReference > threshold) {
-    reasons.push('Activité trop récente');
+    reasons.push('recent_activity');
   }
 
   const eligible = reasons.length === 0;
@@ -75,7 +75,7 @@ function evaluateRetentionEligibility(participant, retentionMonths, now = new Da
     inactivity_months: normalizedReference
       ? completeCalendarMonthsBetween(normalizedReference, normalizedNow)
       : null,
-    reasons: eligible ? ['Éligible'] : reasons,
+    reasons: eligible ? ['eligible'] : reasons,
   };
 }
 
@@ -156,22 +156,22 @@ async function getRetentionEligibilityPreview({
       && configuration.retentionMonths !== null
       && participant.reference_date
       && !participant.eligible
-      && participant.reasons.includes('Activité trop récente')).length,
+      && participant.reasons.includes('recent_activity')).length,
     blockedByInsufficientDate: participants.filter((participant) => !participant.active
       && participant.active_memberships === 0
       && configuration.retentionMonths !== null
-      && participant.reasons.includes('Date d’activité insuffisante')).length,
+      && participant.reasons.includes('insufficient_date')).length,
     blockedByDisabledPolicy: configuration.retentionMonths === null
       ? participants.filter((participant) => !participant.active).length
       : 0,
   };
-  const searchNeedle = normalizedSearch.toLocaleLowerCase('fr');
+  const searchNeedle = normalizedSearch.toLocaleLowerCase();
   const filtered = participants.filter((participant) => {
     if (normalizedFilter === 'eligible' && !participant.eligible) return false;
     if (normalizedFilter === 'ineligible' && participant.eligible) return false;
     if (!searchNeedle) return true;
     return `${participant.first_name} ${participant.last_name} ${participant.email} ${participant.student_code}`
-      .toLocaleLowerCase('fr')
+      .toLocaleLowerCase()
       .includes(searchNeedle);
   });
   const totalPages = Math.max(1, Math.ceil(filtered.length / normalizedPageSize));

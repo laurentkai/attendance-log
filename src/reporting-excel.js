@@ -1,13 +1,8 @@
 const ExcelJS = require('exceljs');
-const { formatLocalTime, normalizeClockTime } = require('./application-time');
+const { formatLocalTime, getSpreadsheetDateFormats, normalizeClockTime } = require('./application-time');
 const { formatDateForInput } = require('./date-format');
 const { getTerm } = require('./terminology');
-
-const STATUS_LABELS = {
-  present: 'Présent',
-  absent: 'Absent',
-  pending: 'En attente',
-};
+const { DEFAULT_LANGUAGE, t } = require('./i18n');
 
 function createWorkbook() {
   const workbook = new ExcelJS.Workbook();
@@ -37,37 +32,42 @@ function configureSheet(sheet, columns) {
   sheet.autoFilter = { from: 'A1', to: `${sheet.getColumn(columns.length).letter}1` };
 }
 
-function addSummarySheet(workbook, title, summary, extraRows = []) {
-  const sheet = workbook.addWorksheet('Synthèse');
+function term(language, terminology, concept, form = 'singular') {
+  return getTerm(language, concept, form, terminology);
+}
+
+function addSummarySheet(workbook, title, summary, extraRows = [], language = DEFAULT_LANGUAGE, terminology) {
+  const sheet = workbook.addWorksheet(t(language, 'report.sheet.summary'));
   sheet.columns = [
-    { header: 'Indicateur', key: 'label', width: 34 },
-    { header: 'Valeur', key: 'value', width: 24 },
+    { header: t(language, 'report.column.metric'), key: 'label', width: 34 },
+    { header: t(language, 'report.column.value'), key: 'value', width: 24 },
   ];
-  const attendanceRateLabel = `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`;
+  const attendanceRateLabel = t(language, 'report.column.attendance_rate', { attendance: term(language, terminology, 'attendance') });
+  const punctualityRateLabel = t(language, 'report.column.punctuality_rate');
   const rows = [
-    ['Rapport', title],
+    [t(language, 'report.column.report'), title],
     ...extraRows,
-    [`${getTerm('session', 'plural')} clôturées`, summary.closedSessionCount],
-    [`Nombre de ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, summary.opportunities],
-    ['Présents', summary.present],
-    ['Absents', summary.absent],
+    [t(language, 'report.column.sessions_closed', { sessions: term(language, terminology, 'session', 'plural') }), summary.closedSessionCount],
+    [t(language, 'report.column.attendance_count', { attendance: term(language, terminology, 'attendance', 'plural') }), summary.opportunities],
+    [t(language, 'status.present'), summary.present],
+    [t(language, 'status.absent'), summary.absent],
     [attendanceRateLabel, summary.attendanceRate],
     ...(summary.punctualityApplicable ? [
-      ['Présents avec heure connue', summary.punctualityKnown],
-      ['À l’heure', summary.onTime],
-      ['En retard', summary.late],
-      ['Taux de ponctualité', summary.punctualityRate],
+      [t(language, 'report.column.present_known_arrival'), summary.punctualityKnown],
+      [t(language, 'status.on_time'), summary.onTime],
+      [t(language, 'status.late'), summary.late],
+      [punctualityRateLabel, summary.punctualityRate],
     ] : []),
-    ['Généré le', new Date()],
+    [t(language, 'report.value.generated_at'), new Date()],
   ];
   rows.forEach(([label, value]) => sheet.addRow({ label, value }));
   sheet.getRow(1).font = { bold: true };
   sheet.getColumn(2).eachCell((cell) => {
-    if (cell.value instanceof Date) cell.numFmt = 'dd/mm/yyyy hh:mm';
+    if (cell.value instanceof Date) cell.numFmt = getSpreadsheetDateFormats().dateTime;
   });
   const rateRow = rows.findIndex(([label]) => label === attendanceRateLabel) + 2;
   sheet.getCell(rateRow, 2).numFmt = '0.0%';
-  const punctualityRateRow = rows.findIndex(([label]) => label === 'Taux de ponctualité');
+  const punctualityRateRow = rows.findIndex(([label]) => label === punctualityRateLabel);
   if (punctualityRateRow >= 0) sheet.getCell(punctualityRateRow + 2, 2).numFmt = '0.0%';
   return sheet;
 }
@@ -86,7 +86,7 @@ function addSessionRows(sheet, sessions) {
     late: session.punctualityApplicable ? session.late : null,
     punctualityRate: session.punctualityApplicable ? session.punctualityRate : null,
   }));
-  sheet.getColumn('date').numFmt = 'dd/mm/yyyy';
+  sheet.getColumn('date').numFmt = getSpreadsheetDateFormats().date;
   sheet.getColumn('rate').numFmt = '0.0%';
   sheet.getColumn('punctualityRate').numFmt = '0.0%';
 }
@@ -111,6 +111,7 @@ function addDetailRows(sheet, details, {
   includeStudent = true,
   includeCourse = true,
   includeIdentity = true,
+  language = DEFAULT_LANGUAGE,
 } = {}) {
   details.forEach((row) => {
     const values = {
@@ -120,12 +121,12 @@ function addDetailRows(sheet, details, {
       instructor: row.instructor,
       student: participantLabel(row),
       ...(includeIdentity ? { code: row.student_code, email: row.email } : {}),
-      status: STATUS_LABELS[row.status] || row.status,
+      status: ['present', 'absent', 'pending'].includes(row.status) ? t(language, `status.${row.status}`) : row.status,
       startTime: normalizeClockTime(row.start_time || '') || null,
-      arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || 'Inconnue' : null,
+      arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || t(language, 'common.unknown') : null,
       delayMinutes: row.punctuality?.delayMinutes ?? null,
       punctuality: row.punctuality?.available
-        ? row.punctuality.status === 'late' ? 'En retard' : 'À l’heure'
+        ? t(language, `status.${row.punctuality.status}`)
         : null,
     };
     if (!includeStudent) {
@@ -136,150 +137,152 @@ function addDetailRows(sheet, details, {
     if (!includeCourse) delete values.course;
     sheet.addRow(values);
   });
-  sheet.getColumn('date').numFmt = 'dd/mm/yyyy';
+  sheet.getColumn('date').numFmt = getSpreadsheetDateFormats().date;
 }
 
-function buildCourseWorkbook(report) {
+function buildCourseWorkbook(report, { language = DEFAULT_LANGUAGE, terminology } = {}) {
   const includeIdentity = report.canViewPii === true;
   const workbook = createWorkbook();
-  addSummarySheet(workbook, `Rapport pour ${report.course.name}`, report.summary, [
-    [getTerm('class'), report.course.name],
-  ]);
+  addSummarySheet(workbook, t(language, 'report.title.for_subject', { subject: report.course.name }), report.summary, [
+    [term(language, terminology, 'class'), report.course.name],
+  ], language, terminology);
 
-  const sessionSheet = workbook.addWorksheet('Par séance');
+  const sessionSheet = workbook.addWorksheet(t(language, 'report.sheet.by_session', { session: term(language, terminology, 'session') }));
   configureSheet(sessionSheet, [
-    { header: 'Date', key: 'date', width: 14 },
-    { header: getTerm('session'), key: 'title', width: 30 },
-    { header: getTerm('instructor'), key: 'instructor', width: 24 },
-    { header: 'Heure de début', key: 'startTime', width: 16 },
-    { header: `${getTerm('student', 'plural')} attendus`, key: 'expected', width: 18 },
-    { header: 'Présents', key: 'present', width: 12 },
-    { header: 'Absents', key: 'absent', width: 12 },
-    { header: `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`, key: 'rate', width: 19 },
-    { header: 'À l’heure', key: 'onTime', width: 12 },
-    { header: 'En retard', key: 'late', width: 12 },
-    { header: 'Taux de ponctualité', key: 'punctualityRate', width: 20 },
+    { header: t(language, 'report.column.date'), key: 'date', width: 14 },
+    { header: term(language, terminology, 'session'), key: 'title', width: 30 },
+    { header: term(language, terminology, 'instructor'), key: 'instructor', width: 24 },
+    { header: t(language, 'report.column.start_time'), key: 'startTime', width: 16 },
+    { header: t(language, 'report.column.expected', { participants: term(language, terminology, 'student', 'plural') }), key: 'expected', width: 18 },
+    { header: t(language, 'status.present'), key: 'present', width: 12 },
+    { header: t(language, 'status.absent'), key: 'absent', width: 12 },
+    { header: t(language, 'report.column.attendance_rate', { attendance: term(language, terminology, 'attendance') }), key: 'rate', width: 19 },
+    { header: t(language, 'status.on_time'), key: 'onTime', width: 12 },
+    { header: t(language, 'status.late'), key: 'late', width: 12 },
+    { header: t(language, 'report.column.punctuality_rate'), key: 'punctualityRate', width: 20 },
   ]);
   addSessionRows(sessionSheet, report.sessions);
 
-  const studentSheet = workbook.addWorksheet('Par élève');
+  const studentSheet = workbook.addWorksheet(t(language, 'report.sheet.by_participant', { student: term(language, terminology, 'student') }));
   configureSheet(studentSheet, [
-    { header: getTerm('student'), key: 'student', width: 28 },
-    ...(includeIdentity ? [{ header: 'Code d’identification', key: 'code', width: 20 }] : []),
-    { header: `${getTerm('session', 'plural')} concernées`, key: 'sessions', width: 21 },
-    { header: getTerm('attendance', 'plural'), key: 'present', width: 13 },
-    { header: 'Absences', key: 'absent', width: 13 },
-    { header: `Taux de ${getTerm('attendance').toLocaleLowerCase('fr')}`, key: 'rate', width: 19 },
+    { header: term(language, terminology, 'student'), key: 'student', width: 28 },
+    ...(includeIdentity ? [{ header: t(language, 'report.column.code'), key: 'code', width: 20 }] : []),
+    { header: t(language, 'report.column.sessions_covered', { sessions: term(language, terminology, 'session', 'plural') }), key: 'sessions', width: 21 },
+    { header: term(language, terminology, 'attendance', 'plural'), key: 'present', width: 13 },
+    { header: t(language, 'status.absent'), key: 'absent', width: 13 },
+    { header: t(language, 'report.column.attendance_rate', { attendance: term(language, terminology, 'attendance') }), key: 'rate', width: 19 },
   ]);
   addStudentRows(studentSheet, report.students, { includeIdentity });
 
-  const detailSheet = workbook.addWorksheet('Détail');
+  const detailSheet = workbook.addWorksheet(t(language, 'report.sheet.detail'));
   configureSheet(detailSheet, [
-    { header: 'Date', key: 'date', width: 14 },
-    { header: getTerm('class'), key: 'course', width: 24 },
-    { header: getTerm('session'), key: 'session', width: 30 },
-    { header: getTerm('student'), key: 'student', width: 28 },
+    { header: t(language, 'report.column.date'), key: 'date', width: 14 },
+    { header: term(language, terminology, 'class'), key: 'course', width: 24 },
+    { header: term(language, terminology, 'session'), key: 'session', width: 30 },
+    { header: term(language, terminology, 'student'), key: 'student', width: 28 },
     ...(includeIdentity ? [
-      { header: 'Code d’identification', key: 'code', width: 20 },
-      { header: 'E-mail', key: 'email', width: 34 },
+      { header: t(language, 'report.column.code'), key: 'code', width: 20 },
+      { header: t(language, 'report.column.email'), key: 'email', width: 34 },
     ] : []),
-    { header: 'Statut', key: 'status', width: 14 },
-    { header: 'Heure de début', key: 'startTime', width: 16 },
-    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
-    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
-    { header: 'Ponctualité', key: 'punctuality', width: 15 },
+    { header: t(language, 'report.column.status'), key: 'status', width: 14 },
+    { header: t(language, 'report.column.start_time'), key: 'startTime', width: 16 },
+    { header: t(language, 'report.column.arrival_time'), key: 'arrivalTime', width: 17 },
+    { header: t(language, 'report.column.delay_minutes'), key: 'delayMinutes', width: 13 },
+    { header: t(language, 'report.column.punctuality'), key: 'punctuality', width: 15 },
   ]);
-  addDetailRows(detailSheet, report.details, { includeIdentity });
+  addDetailRows(detailSheet, report.details, { includeIdentity, language });
   return workbook;
 }
 
-function buildSessionWorkbook(report, { includeParticipantEmail = true } = {}) {
+function buildSessionWorkbook(report, { includeParticipantEmail = true, language = DEFAULT_LANGUAGE, terminology } = {}) {
   const includeIdentity = report.canViewPii === true;
   const workbook = createWorkbook();
-  addSummarySheet(workbook, `Rapport pour ${report.session.title}`, {
+  addSummarySheet(workbook, t(language, 'report.title.for_subject', { subject: report.session.title }), {
     closedSessionCount: 1,
     ...report.summary,
   }, [
-    [getTerm('class'), report.session.class_name],
-    ['Date', toExcelDate(report.session.date)],
-    [getTerm('instructor'), report.session.instructor],
-    ['Heure de début', normalizeClockTime(report.session.start_time || '') || 'Non définie'],
-    ['Tolérance de ponctualité', report.session.start_time
-      ? `+${report.session.effective_tolerance_minutes} minutes`
-      : 'Non applicable'],
-  ]);
+    [term(language, terminology, 'class'), report.session.class_name],
+    [t(language, 'report.column.date'), toExcelDate(report.session.date)],
+    [term(language, terminology, 'instructor'), report.session.instructor],
+    [t(language, 'report.column.start_time'), normalizeClockTime(report.session.start_time || '') || t(language, 'report.value.not_set')],
+    [t(language, 'report.extra.punctuality_tolerance'), report.session.start_time
+      ? t(language, 'report.value.tolerance_minutes', { minutes: report.session.effective_tolerance_minutes })
+      : t(language, 'report.value.not_applicable')],
+  ], language, terminology);
 
-  const sheet = workbook.addWorksheet('Présences');
+  const sheet = workbook.addWorksheet(t(language, 'report.sheet.attendance', { attendance: term(language, terminology, 'attendance', 'plural') }));
   configureSheet(sheet, [
-    { header: getTerm('student'), key: 'student', width: 28 },
-    ...(includeIdentity ? [{ header: 'Code d’identification', key: 'code', width: 20 }] : []),
-    ...(includeIdentity && includeParticipantEmail ? [{ header: 'E-mail', key: 'email', width: 34 }] : []),
-    { header: 'Statut', key: 'status', width: 14 },
-    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
-    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
-    { header: 'Ponctualité', key: 'punctuality', width: 15 },
+    { header: term(language, terminology, 'student'), key: 'student', width: 28 },
+    ...(includeIdentity ? [{ header: t(language, 'report.column.code'), key: 'code', width: 20 }] : []),
+    ...(includeIdentity && includeParticipantEmail ? [{ header: t(language, 'report.column.email'), key: 'email', width: 34 }] : []),
+    { header: t(language, 'report.column.status'), key: 'status', width: 14 },
+    { header: t(language, 'report.column.arrival_time'), key: 'arrivalTime', width: 17 },
+    { header: t(language, 'report.column.delay_minutes'), key: 'delayMinutes', width: 13 },
+    { header: t(language, 'report.column.punctuality'), key: 'punctuality', width: 15 },
   ]);
   report.details.forEach((row) => sheet.addRow({
     student: participantLabel(row),
     ...(includeIdentity ? { code: row.student_code } : {}),
     ...(includeIdentity && includeParticipantEmail ? { email: row.email } : {}),
-    status: STATUS_LABELS[row.status] || row.status,
-    arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || 'Inconnue' : null,
+    status: ['present', 'absent', 'pending'].includes(row.status) ? t(language, `status.${row.status}`) : row.status,
+    arrivalTime: row.status === 'present' ? formatLocalTime(row.checked_in_at) || t(language, 'common.unknown') : null,
     delayMinutes: row.punctuality?.delayMinutes ?? null,
     punctuality: row.punctuality?.available
-      ? row.punctuality.status === 'late' ? 'En retard' : 'À l’heure'
+      ? t(language, `status.${row.punctuality.status}`)
       : null,
   }));
   return workbook;
 }
 
-function buildStudentWorkbook(report) {
+function buildStudentWorkbook(report, { language = DEFAULT_LANGUAGE, terminology } = {}) {
   const workbook = createWorkbook();
   addSummarySheet(
     workbook,
-    `Rapport pour ${report.student.first_name} ${report.student.last_name}`,
+    t(language, 'report.title.for_subject', { subject: `${report.student.first_name} ${report.student.last_name}` }),
     report.summary,
-    [['Code d’identification', report.student.student_code]],
+    [[t(language, 'report.column.code'), report.student.student_code]],
+    language,
+    terminology,
   );
 
-  const sheet = workbook.addWorksheet('Historique');
+  const sheet = workbook.addWorksheet(t(language, 'report.sheet.history'));
   configureSheet(sheet, [
-    { header: 'Date', key: 'date', width: 14 },
-    { header: getTerm('class'), key: 'course', width: 24 },
-    { header: getTerm('session'), key: 'session', width: 30 },
-    { header: getTerm('instructor'), key: 'instructor', width: 24 },
-    { header: 'Statut', key: 'status', width: 14 },
-    { header: 'Heure de début', key: 'startTime', width: 16 },
-    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
-    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
-    { header: 'Ponctualité', key: 'punctuality', width: 15 },
+    { header: t(language, 'report.column.date'), key: 'date', width: 14 },
+    { header: term(language, terminology, 'class'), key: 'course', width: 24 },
+    { header: term(language, terminology, 'session'), key: 'session', width: 30 },
+    { header: term(language, terminology, 'instructor'), key: 'instructor', width: 24 },
+    { header: t(language, 'report.column.status'), key: 'status', width: 14 },
+    { header: t(language, 'report.column.start_time'), key: 'startTime', width: 16 },
+    { header: t(language, 'report.column.arrival_time'), key: 'arrivalTime', width: 17 },
+    { header: t(language, 'report.column.delay_minutes'), key: 'delayMinutes', width: 13 },
+    { header: t(language, 'report.column.punctuality'), key: 'punctuality', width: 15 },
   ]);
-  addDetailRows(sheet, report.details, { includeStudent: false });
+  addDetailRows(sheet, report.details, { includeStudent: false, language });
   return workbook;
 }
 
-function buildGlobalWorkbook(report) {
+function buildGlobalWorkbook(report, { language = DEFAULT_LANGUAGE, terminology } = {}) {
   const includeIdentity = report.canViewPii === true;
   const workbook = createWorkbook();
-  addSummarySheet(workbook, `Export global des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, report.summary);
+  addSummarySheet(workbook, t(language, 'report.title.global_attendance', { attendance: term(language, terminology, 'attendance', 'plural') }), report.summary, [], language, terminology);
 
-  const sheet = workbook.addWorksheet('Présences');
+  const sheet = workbook.addWorksheet(t(language, 'report.sheet.attendance', { attendance: term(language, terminology, 'attendance', 'plural') }));
   configureSheet(sheet, [
-    { header: 'Date', key: 'date', width: 14 },
-    { header: getTerm('class'), key: 'course', width: 24 },
-    { header: getTerm('session'), key: 'session', width: 30 },
-    { header: getTerm('student'), key: 'student', width: 28 },
+    { header: t(language, 'report.column.date'), key: 'date', width: 14 },
+    { header: term(language, terminology, 'class'), key: 'course', width: 24 },
+    { header: term(language, terminology, 'session'), key: 'session', width: 30 },
+    { header: term(language, terminology, 'student'), key: 'student', width: 28 },
     ...(includeIdentity ? [
-      { header: 'Code d’identification', key: 'code', width: 20 },
-      { header: 'E-mail', key: 'email', width: 34 },
+      { header: t(language, 'report.column.code'), key: 'code', width: 20 },
+      { header: t(language, 'report.column.email'), key: 'email', width: 34 },
     ] : []),
-    { header: 'Statut', key: 'status', width: 14 },
-    { header: 'Heure de début', key: 'startTime', width: 16 },
-    { header: 'Heure d’arrivée', key: 'arrivalTime', width: 17 },
-    { header: 'Écart (min)', key: 'delayMinutes', width: 13 },
-    { header: 'Ponctualité', key: 'punctuality', width: 15 },
+    { header: t(language, 'report.column.status'), key: 'status', width: 14 },
+    { header: t(language, 'report.column.start_time'), key: 'startTime', width: 16 },
+    { header: t(language, 'report.column.arrival_time'), key: 'arrivalTime', width: 17 },
+    { header: t(language, 'report.column.delay_minutes'), key: 'delayMinutes', width: 13 },
+    { header: t(language, 'report.column.punctuality'), key: 'punctuality', width: 15 },
   ]);
-  addDetailRows(sheet, report.details, { includeIdentity });
+  addDetailRows(sheet, report.details, { includeIdentity, language });
   return workbook;
 }
 

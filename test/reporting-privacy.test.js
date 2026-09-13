@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 process.env.DATABASE_URL ||= 'postgresql://unit:unit@127.0.0.1:1/unit';
 
 const { pseudonymFor, ReportingPrivacyError } = require('../src/reporting-privacy');
+const { copyTerminology } = require('../src/terminology');
 
 const KEY = Buffer.alloc(32, 0x11);
 const OTHER_KEY = Buffer.alloc(32, 0x22);
@@ -16,7 +17,7 @@ test('pseudonym is deterministic and uses the expected display format', () => {
   const first = pseudonymFor(KEY, ACTIVITY_A, STUDENT_A);
   const second = pseudonymFor(KEY, ACTIVITY_A, STUDENT_A);
   assert.equal(first, second);
-  assert.match(first, /^Participant [0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
+  assert.match(first, /^Student [0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
   assert.equal(first.includes(STUDENT_A), false);
 });
 
@@ -25,6 +26,14 @@ test('activity scope, participant identity, and secret each affect the pseudonym
   assert.notEqual(pseudonymFor(KEY, ACTIVITY_B, STUDENT_A), baseline);
   assert.notEqual(pseudonymFor(KEY, ACTIVITY_A, STUDENT_B), baseline);
   assert.notEqual(pseudonymFor(OTHER_KEY, ACTIVITY_A, STUDENT_A), baseline);
+});
+
+test('pseudonym display terminology follows explicit output language', () => {
+  const terminology = copyTerminology();
+  terminology.en.student.singular = 'Learner';
+  terminology.fr.student.singular = 'Navigateur';
+  assert.match(pseudonymFor(KEY, ACTIVITY_A, STUDENT_A, 'en', terminology), /^Learner /);
+  assert.match(pseudonymFor(KEY, ACTIVITY_A, STUDENT_A, 'fr', terminology), /^Navigateur /);
 });
 
 test('malformed or missing identifiers are rejected safely', () => {

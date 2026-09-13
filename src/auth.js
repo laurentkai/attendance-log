@@ -4,21 +4,26 @@ const { normalizeEmail, normalizeUsername, validateEmail } = require('./admin-us
 const { authenticateBreakGlass } = require('./break-glass-auth');
 const { pool } = require('./db/client');
 const { getOtpRequestAvailability, requestOtp, verifyOtp } = require('./otp-auth');
+const { languageFromAcceptLanguage, t } = require('./i18n');
 const { hasPermission } = require('./permissions');
 const { escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
 const SESSION_ABSOLUTE_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
-const OTP_REQUEST_NOTICE = 'Si cette adresse correspond à un compte actif, un code de connexion a été demandé. S’il n’arrive pas, réessayez après le délai indiqué.';
+const OTP_REQUEST_NOTICE_KEY = 'auth.otp.request_notice';
 
 function wantsJson(request) { return request.accepts(['html', 'json']) === 'json'; }
 
-function authPage(title, content) {
+function publicLanguage(request) {
+  return languageFromAcceptLanguage(request?.get?.('accept-language') || '');
+}
+
+function authPage(title, content, language) {
   return renderPage(title, `<div class="container-sm py-4 py-md-5" style="max-width: 32rem">
-    <div class="mb-4 text-center"><p class="eyebrow">Administration</p><h1 class="h2">${escapeHtml(title)}</h1></div>
+    <div class="mb-4 text-center"><p class="eyebrow">${escapeHtml(t(language, 'auth.administration'))}</p><h1 class="h2">${escapeHtml(title)}</h1></div>
     ${content}
-    <p class="mt-4 mb-0 text-center small"><a class="link-secondary" href="/privacy">Protection des données</a></p>
-  </div>`, { authenticated: false, pageClass: 'auth-page' });
+    <p class="mt-4 mb-0 text-center small"><a class="link-secondary" href="/privacy">${escapeHtml(t(language, 'auth.privacy'))}</a></p>
+  </div>`, { authenticated: false, pageClass: 'auth-page', language });
 }
 
 function notification(message, type = 'danger') {
@@ -26,13 +31,13 @@ function notification(message, type = 'danger') {
   return `<p class="alert alert-${type}" role="${type === 'danger' ? 'alert' : 'status'}">${escapeHtml(message)}</p>`;
 }
 
-function renderLogin({ message = '', type = 'danger', identifier = '' } = {}) {
-  return authPage('Connexion', `${notification(message, type)}
+function renderLogin({ message = '', type = 'danger', identifier = '', language = 'en' } = {}) {
+  return authPage(t(language, 'auth.login.title'), `${notification(message, type)}
     <form class="card card-body app-form" method="post" action="/login">
-      <div class="form-field"><label for="identifier">Adresse e-mail ou identifiant</label>
+      <div class="form-field"><label for="identifier">${escapeHtml(t(language, 'auth.login.identifier'))}</label>
         <input class="form-control" id="identifier" name="identifier" type="text" value="${escapeHtml(identifier)}" autocomplete="username" inputmode="email" spellcheck="false" required autofocus></div>
-      <button class="btn btn-primary" type="submit">Continuer</button>
-    </form>`);
+      <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'auth.login.continue'))}</button>
+    </form>`, language);
 }
 
 function formatRetryAfter(retryAfterSeconds) {
@@ -42,34 +47,36 @@ function formatRetryAfter(retryAfterSeconds) {
   return `${minutesPart}:${secondsPart}`;
 }
 
-function renderOtpEntry({ message = '', type = 'success', email = '', retryAfterSeconds = 0 } = {}) {
+function renderOtpEntry({ message = '', type = 'success', email = '', retryAfterSeconds = 0, language = 'en' } = {}) {
   const remainingSeconds = Math.max(0, Math.ceil(Number(retryAfterSeconds) || 0));
   const resendDisabled = remainingSeconds > 0;
-  const resendLabel = resendDisabled ? `Renvoyer un code dans ${formatRetryAfter(remainingSeconds)}` : 'Renvoyer un code';
-  return authPage('Code de connexion', `${notification(message, type)}
+  const resendLabel = resendDisabled
+    ? t(language, 'auth.otp.resend_in', { time: formatRetryAfter(remainingSeconds) })
+    : t(language, 'auth.otp.resend');
+  return authPage(t(language, 'auth.otp.title'), `${notification(message, type)}
     <form class="card card-body app-form" method="post" action="/login/otp/verify">
-      <p class="text-body-secondary mb-1">Saisissez le code à 6 chiffres reçu par e-mail.</p>
+      <p class="text-body-secondary mb-1">${escapeHtml(t(language, 'auth.otp.instructions'))}</p>
       ${email ? `<p class="small text-break mb-2"><strong>${escapeHtml(email)}</strong></p>` : ''}
-      <div class="form-field"><label for="code">Code de connexion</label>
+      <div class="form-field"><label for="code">${escapeHtml(t(language, 'auth.otp.label'))}</label>
         <input class="form-control form-control-lg text-center font-monospace" id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus></div>
-      <button class="btn btn-primary" type="submit">Se connecter</button>
+      <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'auth.login.submit'))}</button>
     </form>
     <form class="mt-3 text-center" method="post" action="/login/otp/resend" data-otp-resend-form data-retry-after-seconds="${remainingSeconds}">
       <button class="btn btn-link" type="submit" data-otp-resend-button${resendDisabled ? ' disabled' : ''}><span data-otp-resend-label>${resendLabel}</span></button>
       <span class="visually-hidden" role="status" aria-live="polite" data-otp-resend-status></span>
     </form>
-    <p class="mb-0 text-center"><a class="link-secondary" href="/login">Utiliser un autre identifiant</a></p>`);
+    <p class="mb-0 text-center"><a class="link-secondary" href="/login">${escapeHtml(t(language, 'auth.login.other_identifier'))}</a></p>`, language);
 }
 
-function renderPasswordEntry({ message = '', identifier = '' } = {}) {
-  return authPage('Mot de passe', `${notification(message)}
+function renderPasswordEntry({ message = '', identifier = '', language = 'en' } = {}) {
+  return authPage(t(language, 'auth.password.title'), `${notification(message)}
     <form class="card card-body app-form" method="post" action="/login/password">
       <p class="small text-body-secondary text-break mb-2">${escapeHtml(identifier)}</p>
-      <div class="form-field"><label for="password">Mot de passe</label>
+      <div class="form-field"><label for="password">${escapeHtml(t(language, 'auth.password.label'))}</label>
         <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required></div>
-      <button class="btn btn-primary" type="submit">Se connecter</button>
+      <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'auth.login.submit'))}</button>
     </form>
-    <p class="mt-3 mb-0 text-center"><a href="/login">Utiliser un autre identifiant</a></p>`);
+    <p class="mt-3 mb-0 text-center"><a href="/login">${escapeHtml(t(language, 'auth.login.other_identifier'))}</a></p>`, language);
 }
 
 function regenerateSession(request) { return new Promise((resolve, reject) => request.session.regenerate((error) => (error ? reject(error) : resolve()))); }
@@ -95,7 +102,7 @@ async function loadAuthenticatedUser(request, response, next) {
   if (!userId) return next();
   try {
     const result = await pool.query(
-      `SELECT id, public_id, name, email, username, account_type, role, view_pii, session_version FROM admin_users WHERE id = $1 AND active = TRUE`,
+      `SELECT id, public_id, name, email, username, account_type, role, view_pii, ui_language, session_version FROM admin_users WHERE id = $1 AND active = TRUE`,
       [userId],
     );
     const user = result.rows[0];
@@ -112,34 +119,37 @@ async function loadAuthenticatedUser(request, response, next) {
     next();
   } catch (error) {
     console.error('Unable to load authenticated administrator:', error);
-    if (wantsJson(request)) return response.status(503).json({ error: 'Impossible de vérifier votre session pour le moment.' });
-    const page = renderMessagePage('Session indisponible', 'Impossible de vérifier votre session pour le moment.', 503);
+    const language = publicLanguage(request);
+    if (wantsJson(request)) return response.status(503).json({ error: t(language, 'auth.session_unavailable.message') });
+    const page = renderMessagePage(t(language, 'auth.session_unavailable.title'), t(language, 'auth.session_unavailable.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 }
 
 router.get('/login', (request, response) => {
   if (request.currentUser) return response.redirect(303, '/');
-  response.send(renderLogin());
+  response.send(renderLogin({ language: publicLanguage(request) }));
 });
 
 async function renderOtpFromSession(request, response, { message = '', type = 'success', status = 200 } = {}) {
+  const language = publicLanguage(request);
   const email = normalizeEmail(request.session?.otpEmail);
   if (!email) return response.redirect(303, '/login');
   try {
     const availability = await getOtpRequestAvailability(email, request.ip);
-    response.status(status).send(renderOtpEntry({ email, message, type, retryAfterSeconds: availability.retryAfterSeconds }));
+    response.status(status).send(renderOtpEntry({ email, message, type, retryAfterSeconds: availability.retryAfterSeconds, language }));
   } catch (error) {
     console.error('Unable to load OTP resend availability:', error.code || error.message);
-    response.status(503).send(renderOtpEntry({ email, message: 'Impossible de vérifier le délai de renvoi pour le moment.', type: 'danger' }));
+    response.status(503).send(renderOtpEntry({ email, message: t(language, 'auth.otp.resend_check_failed'), type: 'danger', language }));
   }
 }
 
 router.get('/login/otp', async (request, response) => {
   if (request.currentUser) return response.redirect(303, '/');
-  const message = request.session?.otpNotice || '';
+  const language = publicLanguage(request);
+  const message = request.session?.otpNoticeKey ? t(language, request.session.otpNoticeKey) : '';
   const type = request.session?.otpNoticeType || 'success';
-  delete request.session.otpNotice;
+  delete request.session.otpNoticeKey;
   delete request.session.otpNoticeType;
   await saveSession(request);
   return renderOtpFromSession(request, response, { message, type });
@@ -150,7 +160,7 @@ async function startOtpFlow(request, response, email) {
     const result = await requestOtp(email, request.ip);
     request.session.otpChallengeId = result.challengeId;
     request.session.otpEmail = email;
-    request.session.otpNotice = OTP_REQUEST_NOTICE;
+    request.session.otpNoticeKey = OTP_REQUEST_NOTICE_KEY;
     request.session.otpNoticeType = 'info';
     await saveSession(request);
     response.redirect(303, '/login/otp');
@@ -158,13 +168,14 @@ async function startOtpFlow(request, response, email) {
     const rateLimited = error.code === 'RATE_LIMITED';
     if (rateLimited) {
       request.session.otpEmail = email;
-      request.session.otpNotice = 'Veuillez attendre avant de demander un nouveau code.';
+      request.session.otpNoticeKey = 'auth.otp.wait_before_resend';
       request.session.otpNoticeType = 'warning';
       await saveSession(request);
       return response.redirect(303, '/login/otp');
     }
     console.error('Unable to request administrator OTP:', error.code || error.message);
-    response.status(503).send(renderLogin({ identifier: email, message: 'Impossible de traiter la demande pour le moment.' }));
+    const language = publicLanguage(request);
+    response.status(503).send(renderLogin({ identifier: email, message: t(language, 'auth.request_failed'), language }));
   }
 }
 
@@ -177,7 +188,7 @@ router.post('/login', async (request, response) => {
   delete request.session.otpChallengeId;
   delete request.session.otpEmail;
   await saveSession(request);
-  response.send(renderPasswordEntry({ identifier }));
+  response.send(renderPasswordEntry({ identifier, language: publicLanguage(request) }));
 });
 
 router.post('/login/otp/resend', async (request, response) => {
@@ -186,19 +197,20 @@ router.post('/login/otp/resend', async (request, response) => {
   try {
     const result = await requestOtp(email, request.ip);
     request.session.otpChallengeId = result.challengeId;
-    request.session.otpNotice = OTP_REQUEST_NOTICE;
+    request.session.otpNoticeKey = OTP_REQUEST_NOTICE_KEY;
     request.session.otpNoticeType = 'info';
     await saveSession(request);
     response.redirect(303, '/login/otp');
   } catch (error) {
     const rateLimited = error.code === 'RATE_LIMITED';
     if (rateLimited) {
-      request.session.otpNotice = 'Veuillez attendre avant de demander un nouveau code.';
+      request.session.otpNoticeKey = 'auth.otp.wait_before_resend';
       request.session.otpNoticeType = 'warning';
       await saveSession(request);
       return response.redirect(303, '/login/otp');
     }
-    response.status(503).send(renderOtpEntry({ email, type: 'danger', message: 'Impossible d’envoyer un nouveau code pour le moment.' }));
+    const language = publicLanguage(request);
+    response.status(503).send(renderOtpEntry({ email, type: 'danger', message: t(language, 'auth.otp.resend_failed'), language }));
   }
 });
 
@@ -212,7 +224,7 @@ router.post('/login/otp/verify', async (request, response) => {
     await establishSession(request, user);
     response.redirect(303, '/');
   } catch (_error) {
-    return renderOtpFromSession(request, response, { status: 401, type: 'danger', message: 'Code incorrect ou expiré. Demandez un nouveau code si nécessaire.' });
+    return renderOtpFromSession(request, response, { status: 401, type: 'danger', message: t(publicLanguage(request), 'auth.otp.invalid') });
   }
 });
 
@@ -227,9 +239,11 @@ router.post('/login/password', async (request, response) => {
   } catch (error) {
     if (!['INVALID_CREDENTIALS', 'RATE_LIMITED'].includes(error.code)) {
       console.error('Unable to authenticate local administrator:', error.code || error.message);
-      return response.status(500).send(renderPasswordEntry({ message: 'Impossible de se connecter pour le moment.', identifier: username }));
+      const language = publicLanguage(request);
+      return response.status(500).send(renderPasswordEntry({ message: t(language, 'auth.signin_failed'), identifier: username, language }));
     }
-    response.status(401).send(renderPasswordEntry({ message: 'Identifiant ou mot de passe incorrect. Réessayez plus tard si nécessaire.', identifier: username }));
+    const language = publicLanguage(request);
+    response.status(401).send(renderPasswordEntry({ message: t(language, 'auth.credentials_invalid'), identifier: username, language }));
   }
 });
 
@@ -245,7 +259,10 @@ router.post('/logout', requireAuthentication, async (request, response) => {
     summary: 'Déconnexion réussie.',
   };
   request.session.destroy(async (error) => {
-    if (error) return response.status(500).send(renderLogin({ message: 'Impossible de se déconnecter pour le moment.' }));
+    if (error) {
+      const language = request.uiLanguage || publicLanguage(request);
+      return response.status(500).send(renderLogin({ message: t(language, 'auth.logout_failed'), language }));
+    }
     await recordAuditEventSafely(auditEvent);
     response.clearCookie('attendance_log_session');
     response.redirect(303, '/login');
@@ -254,7 +271,7 @@ router.post('/logout', requireAuthentication, async (request, response) => {
 
 function requireAuthentication(request, response, next) {
   if (request.currentUser) return next();
-  if (wantsJson(request)) return response.status(401).json({ error: 'Votre session a expiré.' });
+  if (wantsJson(request)) return response.status(401).json({ error: t(publicLanguage(request), 'auth.session_expired') });
   response.redirect(303, '/login');
 }
 
@@ -265,8 +282,9 @@ function requirePermission(permission) {
       category: 'security', action: 'authorization.denied', result: 'denied',
       summary: 'Accès refusé par la politique d’autorisation.', metadata: { reason: permission },
     });
-    if (wantsJson(request)) return response.status(403).json({ error: 'Vous n’avez pas accès à cette fonctionnalité.' });
-    const page = renderMessagePage('Accès refusé', 'Vous n’avez pas accès à cette fonctionnalité.', 403);
+    const language = request.uiLanguage || publicLanguage(request);
+    if (wantsJson(request)) return response.status(403).json({ error: t(language, 'auth.access_denied.message') });
+    const page = renderMessagePage(t(language, 'auth.access_denied.title'), t(language, 'auth.access_denied.message'), 403, language);
     response.status(page.status).send(page.html);
   };
 }

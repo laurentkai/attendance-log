@@ -130,7 +130,7 @@ async function replaceIdentity(client, participantId, anonymizedAt) {
       const result = await client.query(
         `UPDATE students
          SET first_name = $1, last_name = $2, email = $3, student_code = $4,
-             qr_token = $5, active = FALSE, anonymized_at = $6
+             qr_token = $5, active = FALSE, language = NULL, anonymized_at = $6
          WHERE id = $7 AND anonymized_at IS NULL
          RETURNING anonymized_at`,
         [replacement.firstName, replacement.lastName, replacement.email,

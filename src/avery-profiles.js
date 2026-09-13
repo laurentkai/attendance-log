@@ -8,8 +8,7 @@ const AVERY_PROFILES = Object.freeze({
   L7160: Object.freeze({
     reference: 'L7160',
     manufacturer: 'Avery',
-    category: 'Étiquettes adresse',
-    description: '63,5 × 38,1 mm — 21 par feuille',
+    kind: 'label',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 63.5,
@@ -26,8 +25,7 @@ const AVERY_PROFILES = Object.freeze({
   L7162: Object.freeze({
     reference: 'L7162',
     manufacturer: 'Avery',
-    category: 'Étiquettes adresse',
-    description: '99,06 × 33,87 mm — 16 par feuille',
+    kind: 'label',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 99.06,
@@ -44,8 +42,7 @@ const AVERY_PROFILES = Object.freeze({
   L7163: Object.freeze({
     reference: 'L7163',
     manufacturer: 'Avery',
-    category: 'Étiquettes adresse',
-    description: '99,06 × 38,1 mm — 14 par feuille',
+    kind: 'label',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 99.06,
@@ -62,8 +59,7 @@ const AVERY_PROFILES = Object.freeze({
   L7164: Object.freeze({
     reference: 'L7164',
     manufacturer: 'Avery',
-    category: 'Étiquettes grand format',
-    description: '63,5 × 71,967 mm — 12 par feuille',
+    kind: 'label',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 63.5,
@@ -80,8 +76,7 @@ const AVERY_PROFILES = Object.freeze({
   L7165: Object.freeze({
     reference: 'L7165',
     manufacturer: 'Avery',
-    category: 'Étiquettes grand format',
-    description: '99,06 × 67,73 mm — 8 par feuille',
+    kind: 'label',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 99.06,
@@ -98,8 +93,7 @@ const AVERY_PROFILES = Object.freeze({
   L4728: Object.freeze({
     reference: 'L4728',
     manufacturer: 'Avery',
-    category: 'Inserts pour badges',
-    description: '90 × 60 mm — 8 par feuille',
+    kind: 'badge',
     compatibleReferences: Object.freeze(['4822', '4823', '4825', '4831']),
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
@@ -117,8 +111,7 @@ const AVERY_PROFILES = Object.freeze({
   L4785: Object.freeze({
     reference: 'L4785',
     manufacturer: 'Avery',
-    category: 'Badges nominatifs autocollants textile',
-    description: '80 × 50 mm — 10 par feuille',
+    kind: 'badge',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 80,
@@ -135,8 +128,7 @@ const AVERY_PROFILES = Object.freeze({
   L7418: Object.freeze({
     reference: 'L7418',
     manufacturer: 'Avery',
-    category: 'Badges nominatifs',
-    description: '86 × 55 mm — 8 par feuille',
+    kind: 'badge',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 86,
@@ -153,8 +145,7 @@ const AVERY_PROFILES = Object.freeze({
   L7427: Object.freeze({
     reference: 'L7427',
     manufacturer: 'Avery',
-    category: 'Badges nominatifs textile',
-    description: '88 × 52 mm — 10 par feuille',
+    kind: 'badge',
     pageWidthMm: A4_WIDTH_MM,
     pageHeightMm: A4_HEIGHT_MM,
     labelWidthMm: 88,

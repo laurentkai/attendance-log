@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en" data-i18n-title="pwa.offline.title">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f4f7f9">
-    <title>Hors ligne · Attendance Log</title>
+    <title>Offline · Attendance Log</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
     <link rel="stylesheet" href="/vendor/bootstrap/css/bootstrap.min.css">
@@ -15,11 +15,12 @@
       <section class="text-center" aria-labelledby="offline-title">
         <img class="mb-3" src="/icons/attendance-log-192.png" width="72" height="72" alt="">
         <p class="eyebrow">Attendance Log</p>
-        <h1 class="h2 mb-3" id="offline-title">Application hors ligne</h1>
-        <p class="text-body-secondary">Une connexion réseau est nécessaire pour consulter les données et enregistrer des présences.</p>
-        <p class="text-body-secondary">Reconnectez-vous, puis réessayez. Aucune modification de présence n’a été enregistrée hors ligne.</p>
-        <a class="btn btn-primary" href="/">Réessayer</a>
+        <h1 class="h2 mb-3" id="offline-title" data-i18n="pwa.offline.heading">Application offline</h1>
+        <p class="text-body-secondary" data-i18n="pwa.offline.requirement">A network connection is required to view data and record attendance.</p>
+        <p class="text-body-secondary" data-i18n="pwa.offline.retry_help">Reconnect, then try again. No attendance change was recorded offline.</p>
+        <a class="btn btn-primary" href="/" data-i18n="pwa.offline.retry">Try again</a>
       </section>
     </main>
+    <script src="/js/i18n.js"></script>
   </body>
 </html>

@@ -1,5 +1,6 @@
 const express = require('express');
-const { formatLocalTime, normalizeClockTime } = require('./application-time');
+const { pool } = require('./db/client');
+const { formatLocalTime, formatPercent, normalizeClockTime } = require('./application-time');
 const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const {
   getClassesForFilters,
@@ -22,6 +23,14 @@ const {
 const { getTerm } = require('./terminology');
 const { isValidPublicId } = require('./public-id');
 const { createReportingPrivacyContext } = require('./reporting-privacy');
+const { formatPunctualityLabel } = require('./punctuality');
+const {
+  resolveClassReportLanguage,
+  resolveGlobalReportLanguage,
+  resolveParticipantReportLanguage,
+  resolveSessionReportLanguage,
+  t,
+} = require('./i18n');
 const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
@@ -38,14 +47,15 @@ function canViewPii(request) {
 function renderPrivacyNotice(request) {
   return canViewPii(request)
     ? ''
-    : '<p class="alert alert-info py-2" role="status">Les données personnelles sont masquées dans ce rapport.</p>';
+    : `<p class="alert alert-info py-2" role="status">${escapeHtml(t(request.uiLanguage, 'reporting.privacy_hidden'))}</p>`;
 }
 
-function renderPiiRequiredPage() {
+function renderPiiRequiredPage(language) {
   return renderMessagePage(
-    'Rapport individuel indisponible',
-    'Les rapports individuels nominatifs nécessitent l’autorisation de voir les données personnelles.',
+    t(language, 'reporting.pii_required.title'),
+    t(language, 'reporting.pii_required.message'),
     403,
+    language,
   );
 }
 
@@ -58,43 +68,39 @@ function isValidDate(value) {
 function formatRate(rate) {
   return rate === null
     ? '—'
-    : new Intl.NumberFormat('fr-BE', {
-      style: 'percent',
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    }).format(rate);
+    : formatPercent(rate, { minimumFractionDigits: 1 });
 }
 
-function getStatusLabel(status) {
-  return { present: 'Présent', absent: 'Absent', pending: 'En attente' }[status] || status;
+function getStatusLabel(status, language) {
+  try { return t(language, `status.${status}`); } catch (_error) { return status; }
 }
 
-function renderBusinessNotFoundPage(concept) {
-  return renderMessagePage(`${getTerm(concept)} introuvable`, 'L’élément demandé n’existe pas.', 404);
+function renderBusinessNotFoundPage(concept, language) {
+  return renderMessagePage(`${getTerm(language, concept)} — 404`, t(language, 'reporting.not_found'), 404, language);
 }
 
-function renderReportingNavigation(active) {
+function renderReportingNavigation(active, language) {
   const links = [
-    ['overview', '/reporting', 'Vue d’ensemble'],
-    ['courses', '/reporting/courses', getTerm('class', 'plural')],
-    ['sessions', '/reporting/sessions', getTerm('session', 'plural')],
-    ['students', '/reporting/students', getTerm('student', 'plural')],
+    ['overview', '/reporting', t(language, 'reporting.overview')],
+    ['courses', '/reporting/courses', getTerm(language, 'class', 'plural')],
+    ['sessions', '/reporting/sessions', getTerm(language, 'session', 'plural')],
+    ['students', '/reporting/students', getTerm(language, 'student', 'plural')],
   ];
-  return `<nav class="nav nav-pills context-tabs" aria-label="Rubriques du reporting">
+  return `<nav class="nav nav-pills context-tabs" aria-label="${escapeHtml(t(language, 'reporting.navigation'))}">
     ${links.map(([key, href, label]) => `<a class="nav-link${active === key ? ' active' : ''}" href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
   </nav>`;
 }
 
-function renderSummary(summary) {
-  return `<dl class="report-summary" aria-label="Synthèse">
-    <div><dt>${businessTerm('session', 'plural')} clôturées</dt><dd>${summary.closedSessionCount}</dd></div>
-    <div><dt>Nombre de ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</dt><dd>${summary.opportunities}</dd></div>
-    <div><dt>Présents</dt><dd>${summary.present}</dd></div>
-    <div><dt>Absents</dt><dd>${summary.absent}</dd></div>
-    <div><dt>Taux de ${businessTerm('attendance').toLocaleLowerCase('fr')}</dt><dd>${formatRate(summary.attendanceRate)}</dd></div>
-    ${summary.punctualityApplicable ? `<div><dt>À l’heure</dt><dd>${summary.onTime}</dd></div>
-    <div><dt>En retard</dt><dd>${summary.late}</dd></div>
-    <div><dt>Taux de ponctualité</dt><dd>${formatRate(summary.punctualityRate)}</dd></div>` : ''}
+function renderSummary(summary, language) {
+  return `<dl class="report-summary" aria-label="${escapeHtml(t(language, 'reporting.summary'))}">
+    <div><dt>${escapeHtml(t(language, 'reporting.closed_sessions', { sessions: businessTerm(language, 'session', 'plural') }))}</dt><dd>${summary.closedSessionCount}</dd></div>
+    <div><dt>${escapeHtml(t(language, 'reporting.attendance_count', { attendance: businessTerm(language, 'attendance', 'plural') }))}</dt><dd>${summary.opportunities}</dd></div>
+    <div><dt>${escapeHtml(t(language, 'reporting.present_count'))}</dt><dd>${summary.present}</dd></div>
+    <div><dt>${escapeHtml(t(language, 'reporting.absent_count'))}</dt><dd>${summary.absent}</dd></div>
+    <div><dt>${escapeHtml(t(language, 'reporting.attendance_rate', { attendance: businessTerm(language, 'attendance') }))}</dt><dd>${formatRate(summary.attendanceRate)}</dd></div>
+    ${summary.punctualityApplicable ? `<div><dt>${escapeHtml(t(language, 'reporting.on_time'))}</dt><dd>${summary.onTime}</dd></div>
+    <div><dt>${escapeHtml(t(language, 'reporting.late'))}</dt><dd>${summary.late}</dd></div>
+    <div><dt>${escapeHtml(t(language, 'reporting.punctuality_rate'))}</dt><dd>${formatRate(summary.punctualityRate)}</dd></div>` : ''}
   </dl>`;
 }
 
@@ -109,9 +115,9 @@ function renderReportHeader({ eyebrow = '', title, description = '', action = ''
   </header>`;
 }
 
-function renderDataTable({ label, headers, rows }) {
+function renderDataTable({ label, headers, rows, language }) {
   if (rows.length === 0) {
-    return '<p class="empty-state">Aucune donnée historique clôturée.</p>';
+    return `<p class="empty-state">${escapeHtml(t(language, 'reporting.no_history'))}</p>`;
   }
   return `<div class="table-responsive data-table-scroll" tabindex="0" role="region" aria-label="${escapeHtml(label)}">
     <table class="table table-sm table-hover align-middle mb-0 data-table">
@@ -121,18 +127,18 @@ function renderDataTable({ label, headers, rows }) {
   </div>`;
 }
 
-function getGlobalFilters(query) {
+function getGlobalFilters(query, language) {
   const classId = typeof query.class_id === 'string' ? query.class_id : '';
   const dateFrom = typeof query.date_from === 'string' ? query.date_from : '';
   const dateTo = typeof query.date_to === 'string' ? query.date_to : '';
   const error = classId && !isValidPublicId(classId)
-    ? 'La sélection contient une valeur invalide.'
+    ? t(language, 'reporting.invalid.selection')
     : dateFrom && !isValidDate(dateFrom)
-    ? 'La date de début n’est pas valide.'
+    ? t(language, 'reporting.invalid.start_date')
     : dateTo && !isValidDate(dateTo)
-    ? 'La date de fin n’est pas valide.'
+    ? t(language, 'reporting.invalid.end_date')
     : dateFrom && dateTo && dateFrom > dateTo
-    ? 'La date de début doit précéder la date de fin.'
+    ? t(language, 'reporting.invalid.date_order')
     : '';
 
   return {
@@ -145,128 +151,144 @@ function getGlobalFilters(query) {
 
 router.get('/', async (request, response) => {
   try {
+    const language = request.uiLanguage;
     const classes = await getClassesForFilters();
-    response.send(renderPage('Reporting', `
+    response.send(renderPage(t(language, 'shell.reporting'), `
       ${renderReportHeader({
-        title: 'Reporting',
-        description: `Consultez et exportez uniquement les ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')} des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.`,
+        title: t(language, 'shell.reporting'),
+        description: t(language, 'reporting.description', { attendance: getTerm(language, 'attendance', 'plural'), sessions: getTerm(language, 'session', 'plural') }),
       })}
-      ${renderReportingNavigation('overview')}
+      ${renderReportingNavigation('overview', language)}
       ${renderPrivacyNotice(request)}
       <section class="page-section" aria-labelledby="reporting-access-title">
-        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="reporting-access-title">Consulter les rapports</h2></div></div>
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="reporting-access-title">${escapeHtml(t(language, 'reporting.browse'))}</h2></div></div>
         <div class="list-group compact-list">
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/courses">
-            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('class').toLocaleLowerCase('fr')}</p><p class="compact-meta">Synthèse par ${businessTerm('session').toLocaleLowerCase('fr')} et par ${businessTerm('student').toLocaleLowerCase('fr')}</p></div>
+            <div class="compact-identity"><p class="compact-title">${escapeHtml(t(language, 'reporting.by_class', { class: businessTerm(language, 'class') }))}</p><p class="compact-meta">${escapeHtml(t(language, 'reporting.by_class_help', { session: businessTerm(language, 'session'), student: businessTerm(language, 'student') }))}</p></div>
           </a>
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/sessions">
-            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('session').toLocaleLowerCase('fr')}</p><p class="compact-meta">Toutes les ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées et leurs taux</p></div>
+            <div class="compact-identity"><p class="compact-title">${escapeHtml(t(language, 'reporting.by_session', { session: businessTerm(language, 'session') }))}</p><p class="compact-meta">${escapeHtml(t(language, 'reporting.by_session_help', { sessions: businessTerm(language, 'session', 'plural') }))}</p></div>
           </a>
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/students">
-            <div class="compact-identity"><p class="compact-title">Reporting par ${businessTerm('student').toLocaleLowerCase('fr')}</p><p class="compact-meta">${canViewPii(request) ? `Historique individuel des ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées` : `Synthèse pseudonymisée par ${businessTerm('class').toLocaleLowerCase('fr')}`}</p></div>
+            <div class="compact-identity"><p class="compact-title">${escapeHtml(t(language, 'reporting.by_student', { student: businessTerm(language, 'student') }))}</p><p class="compact-meta">${escapeHtml(t(language, canViewPii(request) ? 'reporting.by_student_identified_help' : 'reporting.by_student_private_help', canViewPii(request) ? { sessions: businessTerm(language, 'session', 'plural') } : { class: businessTerm(language, 'class') }))}</p></div>
           </a>
         </div>
       </section>
       <section class="page-section" aria-labelledby="global-export-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="global-export-title">Export global des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h2>
-            <p class="section-description">Les dates sont inclusives. Les ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} ouvertes ou planifiées restent exclues.</p>
+            <h2 id="global-export-title">${escapeHtml(t(language, 'reporting.global_export', { attendance: businessTerm(language, 'attendance', 'plural') }))}</h2>
+            <p class="section-description">${escapeHtml(t(language, 'reporting.global_export_help', { sessions: businessTerm(language, 'session', 'plural') }))}</p>
           </div>
         </div>
         <form class="card card-body app-form report-filter-form" method="get" action="/reporting/export">
           <div class="form-field">
-            <label for="report-class">${businessTerm('class')}</label>
+            <label for="report-class">${businessTerm(language, 'class')}</label>
             <select class="form-select" id="report-class" name="class_id">
-              <option value="">Sans filtre</option>
+              <option value="">${escapeHtml(t(language, 'reporting.no_filter'))}</option>
               ${classes.map((course) => `<option value="${course.public_id}">${escapeHtml(course.name)}</option>`).join('')}
             </select>
           </div>
           <div class="form-field">
-            <label for="report-date-from">Du</label>
+            <label for="report-date-from">${escapeHtml(t(language, 'reporting.from'))}</label>
             <input class="form-control" id="report-date-from" name="date_from" type="date">
           </div>
           <div class="form-field">
-            <label for="report-date-to">Au</label>
+            <label for="report-date-to">${escapeHtml(t(language, 'reporting.to'))}</label>
             <input class="form-control" id="report-date-to" name="date_to" type="date">
           </div>
-          <button class="btn btn-primary" type="submit">Exporter les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</button>
+          <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'reporting.export_attendance', { attendance: businessTerm(language, 'attendance', 'plural') }))}</button>
         </form>
-      </section>`));
+      </section>`, { language }));
   } catch (error) {
     console.error('Unable to load reporting:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger le reporting pour le moment.');
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.unavailable'), t(request.uiLanguage, 'reporting.error.load'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/courses', async (request, response) => {
+  const language = request.uiLanguage;
   try {
     const courses = await getCourseSummaries();
     const content = courses.length === 0
-      ? `<p class="empty-state">Aucune donnée disponible pour les ${businessTerm('class', 'plural').toLocaleLowerCase('fr')}.</p>`
+      ? `<p class="empty-state">${escapeHtml(t(language, 'reporting.no_class_data', { classes: businessTerm(language, 'class', 'plural') }))}</p>`
       : `<section data-filterable-list>
           <div class="search">
-            <label for="report-course-search">Rechercher une ${businessTerm('class').toLocaleLowerCase('fr')}</label>
-            <div class="search-controls"><input class="form-control" id="report-course-search" name="course_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom…" data-list-search aria-controls="report-course-list"></div>
+            <label for="report-course-search">${escapeHtml(t(language, 'reporting.search_class', { class: businessTerm(language, 'class') }))}</label>
+            <div class="search-controls"><input class="form-control" id="report-course-search" name="course_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'reporting.search_name_placeholder'))}" data-list-search aria-controls="report-course-list"></div>
           </div>
-          <p class="empty-state" data-list-no-results hidden>Aucun résultat.</p>
+          <p class="empty-state" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="report-course-list" data-list-results>${courses.map((course) => `
-            <article class="list-group-item compact-row compact-row-status report-row" data-list-row data-search="${escapeHtml(course.name.toLocaleLowerCase('fr'))}">
-              <div class="compact-identity"><p class="compact-title">${escapeHtml(course.name)}</p><p class="compact-meta">${businessTerm('session', 'plural')} clôturées : ${course.closedSessionCount} · ${businessTerm('attendance', 'plural')} : ${course.opportunities}</p></div>
-              <div class="compact-status"><strong class="report-rate">${formatRate(course.attendanceRate)}</strong><span class="compact-meta">${course.present} présents · ${course.absent} absents</span></div>
-              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/courses/${course.public_id}">Voir le rapport</a></div>
+            <article class="list-group-item compact-row compact-row-status report-row" data-list-row data-search="${escapeHtml(course.name.toLocaleLowerCase())}">
+              <div class="compact-identity"><p class="compact-title">${escapeHtml(course.name)}</p><p class="compact-meta">${escapeHtml(t(language, 'reporting.summary_closed', { sessions: businessTerm(language, 'session', 'plural'), count: course.closedSessionCount, attendance: businessTerm(language, 'attendance', 'plural'), opportunities: course.opportunities }))}</p></div>
+              <div class="compact-status"><strong class="report-rate">${formatRate(course.attendanceRate)}</strong><span class="compact-meta">${escapeHtml(t(language, 'reporting.count_present_absent', { present: course.present, absent: course.absent }))}</span></div>
+              <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/courses/${course.public_id}">${escapeHtml(t(language, 'reporting.view_report'))}</a></div>
             </article>`).join('')}</div>
         </section>`;
-    response.send(renderPage(`Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`, `
-      ${renderReportHeader({ title: `Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`, description: `Synthèse des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées pour chaque ${getTerm('class').toLocaleLowerCase('fr')}.` })}
-      ${renderReportingNavigation('courses')}
+    response.send(renderPage(t(language, 'reporting.by_class', { class: getTerm(language, 'class') }), `
+      ${renderReportHeader({ title: t(language, 'reporting.by_class', { class: getTerm(language, 'class') }), description: t(language, 'reporting.class_description', { sessions: getTerm(language, 'session', 'plural'), class: getTerm(language, 'class') }) })}
+      ${renderReportingNavigation('courses', language)}
       ${renderPrivacyNotice(request)}
-      ${content}`));
+      ${content}`, { language }));
   } catch (error) {
     console.error('Unable to load course reporting:', error);
-    const page = renderMessagePage('Reporting indisponible', `Impossible de charger le reporting par ${getTerm('class').toLocaleLowerCase('fr')}.`);
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.unavailable'), t(request.uiLanguage, 'reporting.error.load_by', { subject: getTerm(language, 'class') }), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/courses/:id/export', async (request, response) => {
   if (!isValidPublicId(request.params.id)) {
-    const page = renderBusinessNotFoundPage('class');
+    const page = renderBusinessNotFoundPage('class', request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
   try {
-    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const languageResult = await pool.query('SELECT language FROM classes WHERE public_id = $1', [request.params.id]);
+    if (languageResult.rowCount === 0) {
+      const page = renderBusinessNotFoundPage('class', request.uiLanguage);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    const outputLanguage = resolveClassReportLanguage({
+      classLanguage: languageResult.rows[0].language,
+      defaultLanguage: request.internationalization.defaultLanguage,
+    });
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request), outputLanguage, request.terminology);
     const report = await getCourseReport(request.params.id, privacyContext);
     if (!report) {
-      const page = renderBusinessNotFoundPage('class');
+      const page = renderBusinessNotFoundPage('class', request.uiLanguage);
       response.status(page.status).send(page.html);
       return;
     }
     await sendWorkbook(
       response,
-      buildCourseWorkbook(report),
-      `presences-cours-${safeFilenamePart(report.course.name, 'cours')}.xlsx`,
+      buildCourseWorkbook(report, {
+        language: outputLanguage,
+        terminology: request.terminology,
+      }),
+      `${t(outputLanguage, 'reporting.filename.course')}-${safeFilenamePart(report.course.name, 'course')}.xlsx`,
     );
   } catch (error) {
     console.error('Unable to export course reporting:', error);
-    const page = renderMessagePage('Export impossible', 'Impossible de générer cet export Excel.');
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.export_title'), t(request.uiLanguage, 'reporting.error.export'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/courses/:id', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderBusinessNotFoundPage('class');
+    const page = renderBusinessNotFoundPage('class', request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
   try {
-    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request), request.uiLanguage, request.terminology);
     const report = await getCourseReport(request.params.id, privacyContext);
     if (!report) {
-      const page = renderBusinessNotFoundPage('class');
+      const page = renderBusinessNotFoundPage('class', request.uiLanguage);
       response.status(page.status).send(page.html);
       return;
     }
@@ -286,192 +308,221 @@ router.get('/courses/:id', async (request, response) => {
       <td class="numeric">${student.closedSessionCount}</td><td class="numeric">${student.present}</td><td class="numeric">${student.absent}</td><td class="numeric">${formatRate(student.attendanceRate)}</td>
     </tr>`);
 
-    response.send(renderPage(`Rapport de ${report.course.name}`, `
+    response.send(renderPage(t(request.uiLanguage, 'reporting.report_of', { name: report.course.name }), `
       ${renderReportHeader({
-        eyebrow: `Reporting par ${getTerm('class').toLocaleLowerCase('fr')}`,
+        eyebrow: t(request.uiLanguage, 'reporting.by_class', { class: getTerm(language, 'class') }),
         title: report.course.name,
-        description: `Données officielles issues uniquement des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.`,
-        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.public_id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/courses">Retour à la liste</a></div>`,
+        description: t(request.uiLanguage, 'reporting.official_only', { sessions: getTerm(language, 'session', 'plural') }),
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/courses/${report.course.public_id}/export">${escapeHtml(t(request.uiLanguage, 'reporting.export_excel'))}</a><a class="btn btn-light" href="/reporting/courses">${escapeHtml(t(request.uiLanguage, 'reporting.back_list'))}</a></div>`,
       })}
-      ${renderReportingNavigation('courses')}
+      ${renderReportingNavigation('courses', request.uiLanguage)}
       ${renderPrivacyNotice(request)}
-      ${renderSummary(report.summary)}
-      <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-session-breakdown">Par ${businessTerm('session').toLocaleLowerCase('fr')}</h2></div></div>
-        ${renderDataTable({ label: `Détail par ${getTerm('session').toLocaleLowerCase('fr')}`, headers: ['Date', getTerm('session'), getTerm('instructor'), 'Début', 'Attendus', 'Présents', 'Absents', 'Taux', 'À l’heure', 'Retards', 'Ponctualité'], rows: sessionRows })}
+      ${renderSummary(report.summary, request.uiLanguage)}
+      <section class="page-section" aria-labelledby="course-session-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-session-breakdown">${escapeHtml(t(request.uiLanguage, 'reporting.by', { subject: businessTerm(language, 'session') }))}</h2></div></div>
+        ${renderDataTable({ label: t(request.uiLanguage, 'reporting.detail_by', { subject: getTerm(language, 'session') }), headers: [t(request.uiLanguage, 'common.date'), getTerm(language, 'session'), getTerm(language, 'instructor'), t(request.uiLanguage, 'reporting.start'), t(request.uiLanguage, 'reporting.expected'), t(request.uiLanguage, 'reporting.present_count'), t(request.uiLanguage, 'reporting.absent_count'), t(request.uiLanguage, 'reporting.rate'), t(request.uiLanguage, 'reporting.on_time'), t(request.uiLanguage, 'reporting.delays'), t(request.uiLanguage, 'reporting.punctuality')], rows: sessionRows, language: request.uiLanguage })}
       </section>
-      <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-student-breakdown">Par ${businessTerm('student').toLocaleLowerCase('fr')}</h2></div></div>
-        ${renderDataTable({ label: `Détail par ${getTerm('student').toLocaleLowerCase('fr')}`, headers: [getTerm('student'), ...(report.canViewPii ? ['Code'] : []), getTerm('session', 'plural'), getTerm('attendance', 'plural'), 'Absences', 'Taux'], rows: studentRows })}
-      </section>`));
+      <section class="page-section" aria-labelledby="course-student-breakdown"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="course-student-breakdown">${escapeHtml(t(request.uiLanguage, 'reporting.by', { subject: businessTerm(language, 'student') }))}</h2></div></div>
+        ${renderDataTable({ label: t(request.uiLanguage, 'reporting.detail_by', { subject: getTerm(language, 'student') }), headers: [getTerm(language, 'student'), ...(report.canViewPii ? [t(request.uiLanguage, 'report.column.code')] : []), getTerm(language, 'session', 'plural'), getTerm(language, 'attendance', 'plural'), t(request.uiLanguage, 'reporting.absences'), t(request.uiLanguage, 'reporting.rate')], rows: studentRows, language: request.uiLanguage })}
+      </section>`, { language: request.uiLanguage }));
   } catch (error) {
     console.error('Unable to load course report:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger ce rapport pour le moment.');
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.unavailable'), t(request.uiLanguage, 'reporting.error.report'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/sessions', async (request, response) => {
+  const language = request.uiLanguage;
   try {
     const sessions = await getSessionSummaries();
     const content = sessions.length === 0
-      ? `<p class="empty-state">Aucune ${businessTerm('session').toLocaleLowerCase('fr')} clôturée à reporter.</p>`
+      ? `<p class="empty-state">${escapeHtml(t(language, 'reporting.no_closed_sessions', { session: businessTerm(language, 'session') }))}</p>`
       : `<section data-filterable-list>
-          <div class="search"><label for="report-session-search">Rechercher une ${businessTerm('session').toLocaleLowerCase('fr')}</label><div class="search-controls"><input class="form-control" id="report-session-search" name="session_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Titre, ${businessTerm('class').toLocaleLowerCase('fr')} ou ${businessTerm('instructor').toLocaleLowerCase('fr')}…" data-list-search aria-controls="report-session-list"></div></div>
-          <p class="empty-state" data-list-no-results hidden>Aucun résultat.</p>
+          <div class="search"><label for="report-session-search">${escapeHtml(t(language, 'reporting.search_session', { session: businessTerm(language, 'session') }))}</label><div class="search-controls"><input class="form-control" id="report-session-search" name="session_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'reporting.search_session_placeholder', { class: businessTerm(language, 'class'), instructor: businessTerm(language, 'instructor') }))}" data-list-search aria-controls="report-session-list"></div></div>
+          <p class="empty-state" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="report-session-list" data-list-results>${sessions.map((session) => `
-            <article class="list-group-item compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase('fr'))}">
+            <article class="list-group-item compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase())}">
               <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p><p class="compact-title">${escapeHtml(session.title)}</p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
-              <div class="compact-status"><span class="badge status-badge status-closed">État : clôturé</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${session.present} / ${session.opportunities} présents${session.punctualityApplicable ? ` · ${session.onTime} à l’heure · ${session.late} en retard` : ''}</span></div>
-              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.public_id}">Voir la session</a><a class="btn btn-primary" href="/reporting/sessions/${session.public_id}/export">Exporter en Excel</a></div>
+              <div class="compact-status"><span class="badge status-badge status-closed">${escapeHtml(t(language, 'reporting.state_closed'))}</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${escapeHtml(t(language, 'reporting.session_counts', { present: session.present, total: session.opportunities }))}${session.punctualityApplicable ? ` · ${escapeHtml(t(language, 'reporting.punctual_counts', { onTime: session.onTime, late: session.late }))}` : ''}</span></div>
+              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.public_id}">${escapeHtml(t(language, 'reporting.view_session', { session: getTerm(language, 'session') }))}</a><a class="btn btn-primary" href="/reporting/sessions/${session.public_id}/export">${escapeHtml(t(language, 'reporting.export_excel'))}</a></div>
             </article>`).join('')}</div>
         </section>`;
-    response.send(renderPage(`Reporting par ${getTerm('session').toLocaleLowerCase('fr')}`, `
-      ${renderReportHeader({ title: `Reporting par ${getTerm('session').toLocaleLowerCase('fr')}`, description: `Résultats officiels des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.` })}
-      ${renderReportingNavigation('sessions')}
+    response.send(renderPage(t(language, 'reporting.by_session', { session: getTerm(language, 'session') }), `
+      ${renderReportHeader({ title: t(language, 'reporting.by_session', { session: getTerm(language, 'session') }), description: t(language, 'reporting.sessions_description', { sessions: getTerm(language, 'session', 'plural') }) })}
+      ${renderReportingNavigation('sessions', language)}
       ${renderPrivacyNotice(request)}
-      ${content}`));
+      ${content}`, { language }));
   } catch (error) {
     console.error('Unable to load session reporting:', error);
-    const page = renderMessagePage('Reporting indisponible', `Impossible de charger le reporting par ${getTerm('session').toLocaleLowerCase('fr')}.`);
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.unavailable'), t(request.uiLanguage, 'reporting.error.load_by', { subject: getTerm(language, 'session') }), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/sessions/:id/export', async (request, response) => {
   if (!isValidPublicId(request.params.id)) {
-    const page = renderBusinessNotFoundPage('session');
+    const page = renderBusinessNotFoundPage('session', request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
   try {
-    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const languageResult = await pool.query(
+      `SELECT cs.language, c.language AS class_language
+       FROM course_sessions cs INNER JOIN classes c ON c.id = cs.class_id
+       WHERE cs.public_id = $1`,
+      [request.params.id],
+    );
+    if (languageResult.rowCount === 0) {
+      const page = renderBusinessNotFoundPage('session', request.uiLanguage);
+      response.status(page.status).send(page.html);
+      return;
+    }
+    const outputLanguage = resolveSessionReportLanguage({
+      sessionLanguage: languageResult.rows[0].language,
+      classLanguage: languageResult.rows[0].class_language,
+      defaultLanguage: request.internationalization.defaultLanguage,
+    });
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request), outputLanguage, request.terminology);
     const report = await getSessionReport(request.params.id, privacyContext);
     if (!report) {
-      const page = renderBusinessNotFoundPage('session');
+      const page = renderBusinessNotFoundPage('session', request.uiLanguage);
       response.status(page.status).send(page.html);
       return;
     }
     if (report.session.state !== 'closed') {
-      const page = renderMessagePage('Export indisponible', `${getTerm('session')} clôturée requise pour un export officiel.`, 409);
+      const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.export_unavailable'), t(request.uiLanguage, 'reporting.closed_required', { session: getTerm(request.uiLanguage, 'session') }), 409, request.uiLanguage);
       response.status(page.status).send(page.html);
       return;
     }
     const date = formatDateForInput(report.session.date);
     await sendWorkbook(
       response,
-      buildSessionWorkbook(report),
-      `presences-seance-${safeFilenamePart(date, 'date')}-${safeFilenamePart(report.session.title, 'seance')}.xlsx`,
+      buildSessionWorkbook(report, {
+        language: outputLanguage,
+        terminology: request.terminology,
+      }),
+      `${t(outputLanguage, 'reporting.filename.session')}-${safeFilenamePart(date, 'date')}-${safeFilenamePart(report.session.title, 'session')}.xlsx`,
     );
   } catch (error) {
     console.error('Unable to export session reporting:', error);
-    const page = renderMessagePage('Export impossible', 'Impossible de générer cet export Excel.');
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.export_title'), t(request.uiLanguage, 'reporting.error.export'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/students', async (request, response) => {
+  const language = request.uiLanguage;
   try {
     const identified = canViewPii(request);
-    const privacyContext = await createReportingPrivacyContext(identified);
+    const privacyContext = await createReportingPrivacyContext(identified, request.uiLanguage, request.terminology);
     const students = await getStudentSummaries(privacyContext);
     const content = students.length === 0
-      ? `<p class="empty-state">Aucune donnée historique clôturée pour les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}.</p>`
+      ? `<p class="empty-state">${escapeHtml(t(language, 'reporting.no_student_history', { students: businessTerm(language, 'student', 'plural') }))}</p>`
       : `<section data-filterable-list>
-          <div class="search"><label for="report-student-search">Rechercher un ${businessTerm('student').toLocaleLowerCase('fr')}</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${identified ? 'Nom ou code…' : 'Pseudonyme ou activité…'}" data-list-search aria-controls="report-student-list"></div></div>
-          <p class="empty-state" data-list-no-results hidden>Aucun résultat.</p>
+          <div class="search"><label for="report-student-search">${escapeHtml(t(language, 'reporting.search_student', { student: businessTerm(language, 'student') }))}</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, identified ? 'reporting.search_identified' : 'reporting.search_private', identified ? {} : { class: getTerm(language, 'class') }))}" data-list-search aria-controls="report-student-list"></div></div>
+          <p class="empty-state" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="report-student-list" data-list-results>${students.map((student) => `
-            <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml((identified ? `${student.first_name} ${student.last_name} ${student.student_code}` : `${student.participant_label} ${student.class_name}`).toLocaleLowerCase('fr'))}">
-              <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(identified ? `${student.first_name} ${student.last_name}` : student.participant_label)}</p><p class="compact-meta">${identified ? `<span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ` : `${escapeHtml(student.class_name)} · `}${student.closedSessionCount} ${businessTerm('session', student.closedSessionCount === 1 ? 'singular' : 'plural').toLocaleLowerCase('fr')} clôturée${student.closedSessionCount > 1 ? 's' : ''}</p></div>
-              <div class="compact-status"><strong class="report-rate">${formatRate(student.attendanceRate)}</strong><span class="compact-meta">${student.present} présents · ${student.absent} absents</span></div>
-              ${identified ? `<div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.public_id}">Voir le rapport</a></div>` : ''}
+            <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml((identified ? `${student.first_name} ${student.last_name} ${student.student_code}` : `${student.participant_label} ${student.class_name}`).toLocaleLowerCase())}">
+              <div class="compact-identity student-identity"><p class="compact-title">${escapeHtml(identified ? `${student.first_name} ${student.last_name}` : student.participant_label)}</p><p class="compact-meta">${identified ? `<span class="student-code" translate="no">${escapeHtml(student.student_code)}</span> · ` : `${escapeHtml(student.class_name)} · `}${escapeHtml(t(language, 'reporting.student_sessions', { count: student.closedSessionCount, sessions: businessTerm(language, 'session', student.closedSessionCount === 1 ? 'singular' : 'plural') }))}</p></div>
+              <div class="compact-status"><strong class="report-rate">${formatRate(student.attendanceRate)}</strong><span class="compact-meta">${escapeHtml(t(language, 'reporting.count_present_absent', { present: student.present, absent: student.absent }))}</span></div>
+              ${identified ? `<div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/students/${student.public_id}">${escapeHtml(t(language, 'reporting.view_report'))}</a></div>` : ''}
             </article>`).join('')}</div>
         </section>`;
-    response.send(renderPage(`Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, `
-      ${renderReportHeader({ title: `Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`, description: identified ? `Historique individuel des ${getTerm('session', 'plural').toLocaleLowerCase('fr')} clôturées.` : `Synthèse pseudonymisée par ${getTerm('class').toLocaleLowerCase('fr')}.` })}
-      ${renderReportingNavigation('students')}
+    response.send(renderPage(t(language, 'reporting.by_student', { student: getTerm(language, 'student') }), `
+      ${renderReportHeader({ title: t(language, 'reporting.by_student', { student: getTerm(language, 'student') }), description: identified ? t(language, 'reporting.students_identified_description', { sessions: getTerm(language, 'session', 'plural') }) : t(language, 'reporting.students_private_description', { class: getTerm(language, 'class') }) })}
+      ${renderReportingNavigation('students', language)}
       ${renderPrivacyNotice(request)}
-      ${content}`));
+      ${content}`, { language }));
   } catch (error) {
     console.error('Unable to load student reporting:', error);
-    const page = renderMessagePage('Reporting indisponible', `Impossible de charger le reporting par ${getTerm('student').toLocaleLowerCase('fr')}.`);
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.unavailable'), t(request.uiLanguage, 'reporting.error.load_by', { subject: getTerm(language, 'student') }), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/students/:id/export', async (request, response) => {
   if (!canViewPii(request)) {
-    const page = renderPiiRequiredPage();
+    const page = renderPiiRequiredPage(request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
   if (!isValidPublicId(request.params.id)) {
-    const page = renderBusinessNotFoundPage('student');
+    const page = renderBusinessNotFoundPage('student', request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
   try {
     const report = await getStudentReport(request.params.id);
     if (!report) {
-      const page = renderBusinessNotFoundPage('student');
+      const page = renderBusinessNotFoundPage('student', request.uiLanguage);
       response.status(page.status).send(page.html);
       return;
     }
+    const outputLanguage = resolveParticipantReportLanguage({
+      participantLanguage: report.student.language,
+      defaultLanguage: request.internationalization.defaultLanguage,
+    });
     await sendWorkbook(
       response,
-      buildStudentWorkbook(report),
-      `presences-${safeFilenamePart(`${report.student.first_name}-${report.student.last_name}`, 'eleve')}.xlsx`,
+      buildStudentWorkbook(report, {
+        language: outputLanguage,
+        terminology: request.terminology,
+      }),
+      `${t(outputLanguage, 'reporting.filename.participant')}-${safeFilenamePart(`${report.student.first_name}-${report.student.last_name}`, 'participant')}.xlsx`,
     );
   } catch (error) {
     console.error('Unable to export student reporting:', error);
-    const page = renderMessagePage('Export impossible', 'Impossible de générer cet export Excel.');
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.export_title'), t(request.uiLanguage, 'reporting.error.export'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/students/:id', async (request, response) => {
+  const language = request.uiLanguage;
   if (!canViewPii(request)) {
-    const page = renderPiiRequiredPage();
+    const page = renderPiiRequiredPage(request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
   if (!isValidPublicId(request.params.id)) {
-    const page = renderBusinessNotFoundPage('student');
+    const page = renderBusinessNotFoundPage('student', request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
   try {
     const report = await getStudentReport(request.params.id);
     if (!report) {
-      const page = renderBusinessNotFoundPage('student');
+      const page = renderBusinessNotFoundPage('student', request.uiLanguage);
       response.status(page.status).send(page.html);
       return;
     }
     const studentName = `${report.student.first_name} ${report.student.last_name}`;
     const rows = report.details.map((row) => `<tr>
-      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_public_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td>${row.start_time ? escapeHtml(normalizeClockTime(row.start_time)) : '—'}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status))}</span></td><td>${row.status === 'present' ? escapeHtml(formatLocalTime(row.checked_in_at) || 'Inconnue') : '—'}</td><td class="numeric">${row.punctuality.available ? row.punctuality.delayMinutes : '—'}</td><td>${escapeHtml(row.punctuality.label)}</td>
+      <td>${escapeHtml(formatDateForDisplay(row.date))}</td><td>${escapeHtml(row.class_name)}</td><td><a href="/sessions/${row.session_public_id}">${escapeHtml(row.title)}</a></td><td>${escapeHtml(row.instructor)}</td><td>${row.start_time ? escapeHtml(normalizeClockTime(row.start_time)) : '—'}</td><td><span class="badge status-badge status-${row.status}">${escapeHtml(getStatusLabel(row.status, request.uiLanguage))}</span></td><td>${row.status === 'present' ? escapeHtml(formatLocalTime(row.checked_in_at) || t(request.uiLanguage, 'reporting.unknown_arrival')) : '—'}</td><td class="numeric">${row.punctuality.available ? row.punctuality.delayMinutes : '—'}</td><td>${escapeHtml(formatPunctualityLabel(row.punctuality, request.uiLanguage))}</td>
     </tr>`);
-    response.send(renderPage(`Rapport de ${studentName}`, `
+    response.send(renderPage(t(request.uiLanguage, 'reporting.report_of', { name: studentName }), `
       ${renderReportHeader({
-        eyebrow: `Reporting par ${getTerm('student').toLocaleLowerCase('fr')}`,
+        eyebrow: t(request.uiLanguage, 'reporting.by_student', { student: getTerm(language, 'student') }),
         title: studentName,
-        description: `Code d’identification · ${report.student.student_code}`,
-        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/students/${report.student.public_id}/export">Exporter en Excel</a><a class="btn btn-light" href="/reporting/students">Retour à la liste</a></div>`,
+        description: t(request.uiLanguage, 'reporting.identification_code', { code: report.student.student_code }),
+        action: `<div class="context-actions d-flex flex-wrap gap-2"><a class="btn btn-primary" href="/reporting/students/${report.student.public_id}/export">${escapeHtml(t(request.uiLanguage, 'reporting.export_excel'))}</a><a class="btn btn-light" href="/reporting/students">${escapeHtml(t(request.uiLanguage, 'reporting.back_list'))}</a></div>`,
       })}
-      ${renderReportingNavigation('students')}
-      ${renderSummary(report.summary)}
-      <section class="page-section" aria-labelledby="student-history-title"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="student-history-title">Historique des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h2></div></div>
-        ${renderDataTable({ label: `Historique de ${studentName}`, headers: ['Date', getTerm('class'), getTerm('session'), getTerm('instructor'), 'Début', 'Statut', 'Arrivée', 'Écart (min)', 'Ponctualité'], rows })}
-      </section>`));
+      ${renderReportingNavigation('students', request.uiLanguage)}
+      ${renderSummary(report.summary, request.uiLanguage)}
+      <section class="page-section" aria-labelledby="student-history-title"><div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="student-history-title">${escapeHtml(t(request.uiLanguage, 'reporting.attendance_history', { attendance: businessTerm(language, 'attendance', 'plural') }))}</h2></div></div>
+        ${renderDataTable({ label: t(request.uiLanguage, 'reporting.history_for', { name: studentName }), headers: [t(request.uiLanguage, 'common.date'), getTerm(language, 'class'), getTerm(language, 'session'), getTerm(language, 'instructor'), t(request.uiLanguage, 'reporting.start'), t(request.uiLanguage, 'common.status'), t(request.uiLanguage, 'reporting.arrival'), t(request.uiLanguage, 'reporting.delta_minutes'), t(request.uiLanguage, 'reporting.punctuality')], rows, language: request.uiLanguage })}
+      </section>`, { language: request.uiLanguage }));
   } catch (error) {
     console.error('Unable to load student report:', error);
-    const page = renderMessagePage('Reporting indisponible', 'Impossible de charger ce rapport pour le moment.');
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.unavailable'), t(request.uiLanguage, 'reporting.error.report'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/export', async (request, response) => {
-  const filters = getGlobalFilters(request.query);
+  const filters = getGlobalFilters(request.query, request.uiLanguage);
   if (filters.error) {
-    const page = renderMessagePage('Filtres invalides', filters.error, 400);
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.invalid_filters'), filters.error, 400, request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
@@ -479,20 +530,26 @@ router.get('/export', async (request, response) => {
     if (filters.classId) {
       const classes = await getClassesForFilters();
       if (!classes.some((course) => course.public_id === filters.classId)) {
-        const page = renderBusinessNotFoundPage('class');
+        const page = renderBusinessNotFoundPage('class', request.uiLanguage);
         response.status(page.status).send(page.html);
         return;
       }
     }
-    const privacyContext = await createReportingPrivacyContext(canViewPii(request));
+    const outputLanguage = resolveGlobalReportLanguage({
+      defaultLanguage: request.internationalization.defaultLanguage,
+    });
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request), outputLanguage, request.terminology);
     const report = await getGlobalReport(filters, privacyContext);
-    const parts = ['presences'];
-    if (filters.dateFrom) parts.push(`depuis-${filters.dateFrom}`);
-    if (filters.dateTo) parts.push(`jusqu-au-${filters.dateTo}`);
-    await sendWorkbook(response, buildGlobalWorkbook(report), `${parts.join('-')}.xlsx`);
+    const parts = [t(outputLanguage, 'reporting.filename.global')];
+    if (filters.dateFrom) parts.push(t(outputLanguage, 'reporting.filename.from', { date: filters.dateFrom }));
+    if (filters.dateTo) parts.push(t(outputLanguage, 'reporting.filename.until', { date: filters.dateTo }));
+    await sendWorkbook(response, buildGlobalWorkbook(report, {
+      language: outputLanguage,
+      terminology: request.terminology,
+    }), `${parts.join('-')}.xlsx`);
   } catch (error) {
     console.error('Unable to export global reporting:', error);
-    const page = renderMessagePage('Export impossible', 'Impossible de générer cet export Excel.');
+    const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.export_title'), t(request.uiLanguage, 'reporting.error.export'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });

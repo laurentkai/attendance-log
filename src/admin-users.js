@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const { recordAuditEvent } = require('./audit');
 const { pool, withTransaction } = require('./db/client');
 const { roles } = require('./permissions');
+const { DEFAULT_LANGUAGE, normalizeLanguageOverride, t } = require('./i18n');
 
 const PASSWORD_MIN_LENGTH = 12;
 const BCRYPT_COST = 12;
@@ -19,28 +20,28 @@ function validateName(name) {
   return typeof name === 'string' && name.trim().length >= 2 && name.trim().length <= 120;
 }
 
-function validatePassword(password, { required = true } = {}) {
+function validatePassword(password, { required = true, language = DEFAULT_LANGUAGE } = {}) {
   if (!password && !required) {
     return '';
   }
   if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
-    return `Le mot de passe doit contenir au moins ${PASSWORD_MIN_LENGTH} caractères.`;
+    return t(language, 'users.validation.password_short', { length: PASSWORD_MIN_LENGTH });
   }
   if (Buffer.byteLength(password, 'utf8') > 72) {
-    return 'Le mot de passe est trop long.';
+    return t(language, 'users.validation.password_long');
   }
   return '';
 }
 
-function validateAdminUserInput({ name, email, role }) {
+function validateAdminUserInput({ name, email, role }, language = DEFAULT_LANGUAGE) {
   if (!validateName(name)) {
-    return 'Le nom doit contenir entre 2 et 120 caractères.';
+    return t(language, 'users.validation.name');
   }
   if (!validateEmail(normalizeEmail(email))) {
-    return 'L’adresse e-mail est invalide.';
+    return t(language, 'users.validation.email');
   }
   if (!roleValues.has(role)) {
-    return 'Le rôle sélectionné est invalide.';
+    return t(language, 'users.validation.role');
   }
   return '';
 }
@@ -61,32 +62,33 @@ async function verifyPassword(password, passwordHash) {
   return bcrypt.compare(password, passwordHash);
 }
 
-async function createAdminUser({ name, email, role = roles.manager, viewPii = true }, client = pool) {
+async function createAdminUser({ name, email, role = roles.manager, viewPii = true, uiLanguage = null }, client = pool, language = DEFAULT_LANGUAGE) {
   const normalized = {
     name: typeof name === 'string' ? name.trim() : '',
     email: normalizeEmail(email),
     role,
     viewPii: viewPii !== false,
+    uiLanguage: normalizeLanguageOverride(uiLanguage),
   };
-  const validationError = validateAdminUserInput(normalized);
-  if (validationError) {
-    const error = new Error(validationError);
+  const validationError = validateAdminUserInput(normalized, language);
+  if (validationError || normalized.uiLanguage === undefined) {
+    const error = new Error(validationError || t(language, 'users.error.invalid_ui_language'));
     error.code = 'VALIDATION_ERROR';
     throw error;
   }
 
   try {
     const result = await client.query(
-      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type, view_pii)
-       VALUES ($1, $2, NULL, $3, TRUE, 'otp', $4)
-      RETURNING id, public_id, name, email, role, active, account_type, view_pii, session_version,
+      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type, view_pii, ui_language)
+       VALUES ($1, $2, NULL, $3, TRUE, 'otp', $4, $5)
+      RETURNING id, public_id, name, email, role, active, account_type, view_pii, ui_language, session_version,
                  created_at, updated_at, last_login_at`,
-      [normalized.name, normalized.email, normalized.role, normalized.viewPii],
+      [normalized.name, normalized.email, normalized.role, normalized.viewPii, normalized.uiLanguage],
     );
     return result.rows[0];
   } catch (error) {
     if (error.code === '23505') {
-      const duplicateError = new Error('Un compte utilise déjà cette adresse e-mail.');
+      const duplicateError = new Error(t(language, 'users.validation.email_exists'));
       duplicateError.code = 'EMAIL_EXISTS';
       throw duplicateError;
     }

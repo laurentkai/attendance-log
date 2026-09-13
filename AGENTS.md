@@ -15,9 +15,72 @@ Attendance Log is a compact attendance application for a navigation school.
 - Data: PostgreSQL is the only persistent application datastore; use parameterized SQL, not an ORM.
 - Schema: ordered plain-SQL migrations in `src/db/migrations`, applied by the existing migration runner and tracked in `schema_migrations`.
 - Deployment: Docker Compose on an AWS Lightsail VPS. This is not Lightsail Container Service.
-- Language: French for user-facing UI; English for code, comments, identifiers, commit messages, and technical documentation.
+- Languages: application/system text initially supports exactly English (`en`) and French (`fr`); English is the canonical fallback and the default for a new installation. Code, comments, identifiers, commit messages, and technical documentation remain in English.
 
 Preserve server-rendered routing and the current multi-page architecture. Do not turn the application into a SPA merely for UI work.
+
+## Internationalization, localization, and time
+
+### Independent configuration contexts
+
+Language, locale, and timezone are separate concerns and must never be permanently derived from one setting:
+
+- **Language** controls translated application/system wording, initially only `en` and `fr`.
+- **Locale** controls regional formatting conventions, for example `en-GB`, `en-US`, `fr-BE`, or `fr-FR`.
+- **Timezone** converts absolute instants for human display, for example `Europe/Brussels`, `Europe/Luxembourg`, `Europe/Paris`, or `America/New_York`.
+
+A locale may suggest a timezone in a future UI, but the timezone remains independently configurable. In V1, installation language, locale, and timezone are global settings; there is no per-user locale or timezone override. Do not invent a new locale or timezone default without an explicit migration decision. Integrate the established `APP_TIMEZONE` behavior deliberately rather than silently replacing it.
+
+The architecture must permit later language additions without redesign, but do not implement or advertise languages beyond `en` and `fr` until explicitly scoped.
+
+### User-interface and business-content language
+
+Each administrator/application user may have an independent UI-language preference that affects only that user's interface. It must not alter installation, class, session, participant, report, communication, or another user's language. Before a preference is saved, inspect `Accept-Language`, select the first supported language, and fall back to `en`; after an explicit selection, the stored preference is authoritative and browser detection must not overwrite it.
+
+Generated business content resolves the most specific explicitly configured override dynamically, without copying inherited values into child records:
+
+```text
+participant.language ?? session.language ?? class.language ?? global.language
+```
+
+Use only scopes relevant to the operation:
+
+- class-level content: Class → Global;
+- session-level content: Session → Class → Global;
+- participant communication/report with session and class context: Participant → Session → Class → Global;
+- participant communication/report with class but no session context: Participant → Class → Global;
+- participant-only content: Participant → Global;
+- session attendance summaries: Session → Class → Global.
+
+Reports use the language of their business subject, never the UI language of the administrator who generated them. Class reports resolve Class → Global; session reports resolve Session → Class → Global; participant reports use the applicable participant/context chain; global reports without a single class/session use the global business language. Communications follow the same business context: individual QR e-mail uses Participant → relevant Class → Global, session summaries use Session → Class → Global, and future participant/session messages use Participant → Session → Class → Global. A sender's or recipient administrator's UI language never controls business output.
+
+### Translation boundaries and fallback
+
+User-entered business content is never automatically translated. Class names, session titles, participant names, free text, descriptions, and comparable stored content remain exactly as entered in every UI language and output. Do not create parallel translated business fields unless a future feature explicitly designs them.
+
+Configurable application terminology is localized configuration, not ordinary business content. Maintain one explicit, complete terminology set per supported language for the established participant, class/activity, session, attendance, instructor, and membership concepts. Interactive UI resolves terminology using the viewer's UI language; generated reports, e-mail, XLSX, and PDF resolve terminology using the effective business-output language. English is the only terminology fallback. Never copy terminology into business records or use terminology strings as stable identifiers.
+
+Translate only system-controlled text: navigation, actions, labels, statuses, validation and error messages, notices, Settings, Reporting, Audit Log presentation, Privacy Center, public Privacy Notice, confirmation dialogs, e-mail prose, XLSX headers, PDF/badge labels, error pages, and PWA/offline text. The public Privacy Notice must eventually be available in both supported languages with equivalent legal and business meaning; language never changes legal basis, rights, retention, or anonymization behavior. Internal LIA and processing-register localization is not required merely because the runtime UI becomes multilingual.
+
+Missing translations resolve deterministically from requested language to canonical English. A missing canonical English translation is a development/test defect. Do not expose raw keys when a safe English fallback exists, and never silently fall back to French.
+
+Future implementation must use centralized catalogs with stable language-neutral keys, one shared translation service/helper, explicit language context, server-side support, and browser-side support where client JavaScript renders system text. Test canonical English completeness and reuse one effective-language decision across HTML, e-mail, XLSX, PDF, JSON/API, and other channels. Avoid scattered `language === 'fr' ? ... : ...` branches, module-local duplicate dictionaries, translation at database-storage time, hidden process-locale dependencies, and browser-language selection for server-generated business documents.
+
+### Dates, times, and machine values
+
+Absolute timestamps are timezone-independent instants and use PostgreSQL `TIMESTAMPTZ` where appropriate. Canonical machine serialization is UTC ISO-8601, such as `2026-09-11T19:05:40Z`; never persist localized timestamp strings. Localize only at presentation/output boundaries.
+
+Session dates and configured start times remain local business calendar/clock values, not stored UTC instants. When punctuality requires an instant, combine the session-local date and start time using the configured installation timezone through the existing application-time architecture. Do not regress the established punctuality behavior or rely on the container timezone.
+
+Human presentation across UI, reports, XLSX, PDF, e-mail, and public/system documents uses language for wording, the installation locale for regional formatting, and the installation timezone for local conversion. Combinations such as language `en`, locale `fr-BE`, and timezone `Europe/Brussels` are valid.
+
+Never localize stable machine-readable values: UUIDs, QR tokens, API/public identifiers, database enums/states, Audit action/category identifiers, permission identifiers, migration values, and ISO timestamps in machine payloads. Translate only their human-readable labels. Audit identifiers and internal field names remain language-neutral; translate them at rendering/export time so historical events can appear in the chosen output language without rewriting stored rows. Historically captured participant or business text remains data and is not machine-translated.
+
+### Security and output parity
+
+Language selection never changes authentication or authorization, and translated UI or routes must not create a second permission path. Never put PII in translation keys/catalogs or interpolate user-entered content without preserving the application's HTML/output escaping discipline.
+
+Resolve language precedence centrally and reuse it across renderers. For the same business subject, HTML, exports, e-mail, and PDF must agree unless an explicitly more-specific participant override applies. Do not independently reimplement precedence in each output channel.
 
 ## Engineering and scope discipline
 
@@ -64,7 +127,7 @@ The interface must be clean, restrained, professional, compact, data-first, acce
 - Avoid oversized dashboard cards, decorative clutter, unnecessary icons, excessive whitespace, and cards nested inside cards.
 - Establish clear title, metadata, status, primary-action, secondary-action, and destructive-action hierarchy.
 - Same UI concept means the same canonical component/DOM structure, base classes, behavior, spacing, and hierarchy wherever reasonably possible.
-- User-facing business labels for participants, activities, sessions, attendance, instructors, and memberships must use the centralized terminology service. Keep internal table, route, model, and variable names unchanged; do not hardcode parallel labels or build an i18n framework.
+- User-facing domain labels for participants, activities, sessions, attendance, instructors, and memberships must use the centralized localized-terminology service. Keep internal table, route, model, and variable names unchanged; do not hardcode parallel labels or duplicate customizable terms in translation catalogs.
 - Express genuine contextual differences through modifiers or additional child content, not page-specific parallel implementations.
 - When changing a shared concept, audit every equivalent occurrence: student rows, session rows, headers, notifications, forms, settings navigation, tables, searches, statuses, and action groups.
 - Visual resemblance alone is not harmonization. Verify reuse in source markup and rendered behavior.

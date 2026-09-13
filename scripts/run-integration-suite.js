@@ -5,8 +5,10 @@ const path = require('node:path');
 const repositoryRoot = path.resolve(__dirname, '..');
 const databaseName = `attendance_log_test_${process.pid}_${randomBytes(5).toString('hex')}`;
 const restoreDatabaseName = `${databaseName}_restore`;
+const upgradeDatabaseName = `${databaseName}_upgrade`;
 if (!/^attendance_log_test_[a-z0-9_]+$/.test(databaseName)) throw new Error('Unsafe integration database name');
 if (!/^attendance_log_test_[a-z0-9_]+$/.test(restoreDatabaseName)) throw new Error('Unsafe restore integration database name');
+if (!/^attendance_log_test_[a-z0-9_]+$/.test(upgradeDatabaseName)) throw new Error('Unsafe upgrade integration database name');
 
 function run(args, { capture = false } = {}) {
   const result = spawnSync('docker', args, {
@@ -31,6 +33,7 @@ try {
     'compose', 'run', '--rm', '--no-deps',
     '-e', `TEST_DATABASE_NAME=${databaseName}`,
     '-e', `TEST_RESTORE_DATABASE_NAME=${restoreDatabaseName}`,
+    '-e', `TEST_UPGRADE_DATABASE_NAME=${upgradeDatabaseName}`,
     '-e', 'APP_TIMEZONE=Europe/Brussels',
     '-v', `${path.join(repositoryRoot, 'src')}:/app/src:ro`,
     '-v', `${path.join(repositoryRoot, 'integration')}:/app/integration:ro`,
@@ -39,7 +42,7 @@ try {
   ]);
 } finally {
   if (databaseCreated) {
-    for (const cleanupName of [restoreDatabaseName, databaseName]) {
+    for (const cleanupName of [upgradeDatabaseName, restoreDatabaseName, databaseName]) {
       run(['compose', 'exec', '-T', '-e', `TEST_DATABASE_NAME=${cleanupName}`, 'postgres', 'sh', '-c',
         'dropdb -U "$POSTGRES_USER" --if-exists --force "$TEST_DATABASE_NAME"']);
       const remaining = run(['compose', 'exec', '-T', '-e', `TEST_DATABASE_NAME=${cleanupName}`, 'postgres', 'sh', '-c',

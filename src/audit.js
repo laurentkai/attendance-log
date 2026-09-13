@@ -18,6 +18,7 @@ const DATA_FIELDS = new Set([
   'summary_attach_xlsx', 'summary_attach_xlsx_override',
   'summary_admin_recipient_count', 'summary_external_recipient_count',
   'view_pii',
+  'ui_language', 'language', 'default_language', 'locale', 'timezone',
   'retention_months',
   'anonymized_at',
 ]);

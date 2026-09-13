@@ -76,21 +76,21 @@ async function getPseudonymKey() {
   return ciphertext ? decryptPseudonymKey(ciphertext) : createPseudonymKey();
 }
 
-function formatPseudonym(digest) {
-  return `${getTerm('student')} ${digest.slice(0, 12).toUpperCase().match(/.{1,4}/g).join('-')}`;
+function formatPseudonym(digest, language, terminology) {
+  return `${getTerm(language, 'student', 'singular', terminology)} ${digest.slice(0, 12).toUpperCase().match(/.{1,4}/g).join('-')}`;
 }
 
-function pseudonymFor(key, activityPublicId, studentPublicId) {
+function pseudonymFor(key, activityPublicId, studentPublicId, language = 'en', terminology) {
   if (!isValidPublicId(activityPublicId) || !isValidPublicId(studentPublicId)) {
     throw new ReportingPrivacyError('PSEUDONYM_INPUT_INVALID');
   }
   const digest = crypto.createHmac('sha256', key)
     .update(`${PSEUDONYM_INPUT_PURPOSE}:${activityPublicId}:${studentPublicId}`)
     .digest('hex');
-  return formatPseudonym(digest);
+  return formatPseudonym(digest, language, terminology);
 }
 
-async function createReportingPrivacyContext(canViewPii) {
+async function createReportingPrivacyContext(canViewPii, language = 'en', terminology) {
   if (canViewPii === true) {
     return Object.freeze({ canViewPii: true });
   }
@@ -98,7 +98,7 @@ async function createReportingPrivacyContext(canViewPii) {
   return Object.freeze({
     canViewPii: false,
     pseudonymize(activityPublicId, studentPublicId) {
-      return pseudonymFor(key, activityPublicId, studentPublicId);
+      return pseudonymFor(key, activityPublicId, studentPublicId, language, terminology);
     },
   });
 }

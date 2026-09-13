@@ -1,6 +1,8 @@
 const PDFDocument = require('pdfkit');
 const { createStudentQrPng } = require('./student-qr');
-const { PERSONAL_QR_WARNING } = require('./student-qr-content');
+const { getPersonalQrWarning, PERSONAL_QR_WARNING } = require('./student-qr-content');
+const { t } = require('./i18n');
+const { getTerm } = require('./terminology');
 const { getLabelBoxMm, getLabelsPerSheet } = require('./avery-profiles');
 const {
   MINIMUM_QR_MM,
@@ -240,9 +242,10 @@ function elementBox(x, y, width, height, extra = {}) {
 
 function createDefaultPrintDesign(profile, {
   participant = { first_name: 'Paul', last_name: 'BALDEWYNS' },
-  activityName = 'Cours de navigation 2026-2027',
+  activityName = t('en', 'print.design.sample.activity'),
   includeWarning = canIncludeQrWarning(profile),
-  title = 'Carte étudiant 2027',
+  title = t('en', 'print.design.sample.title', { student: getTerm('en', 'student') }),
+  warningText = PERSONAL_QR_WARNING,
 } = {}) {
   const document = new PDFDocument({ autoFirstPage: false });
   const boxMm = { x: 0, y: 0, width: profile.labelWidthMm, height: profile.labelHeightMm };
@@ -342,7 +345,7 @@ function createDefaultPrintDesign(profile, {
     const contentBottom = box.y + box.height - metrics.verticalPadding;
     document.font('Helvetica').fontSize(6);
     const warningHeight = includeWarning
-      ? Math.min(metrics.warningHeight, document.heightOfString(PERSONAL_QR_WARNING, {
+      ? Math.min(metrics.warningHeight, document.heightOfString(warningText, {
         lineGap: 0.2, width: metrics.contentWidth,
       }))
       : 0;
@@ -467,7 +470,7 @@ async function renderDesignedParticipantLabel(document, box, participant, option
   }
   if (options.includeWarning && elements.disclaimer.enabled) {
     document.fillColor('#7c2d12');
-    renderDesignedText(document, PERSONAL_QR_WARNING, box, elements.disclaimer, { lineGap: 0.2 });
+    renderDesignedText(document, options.warningText, box, elements.disclaimer, { lineGap: 0.2 });
   }
 }
 
@@ -476,12 +479,12 @@ async function renderParticipantLabel(
   profile,
   position,
   participant,
-  { activityName = '', logo = null, includeWarning = false, title = '', design = null } = {},
+  { activityName = '', logo = null, includeWarning = false, title = '', design = null, warningText = PERSONAL_QR_WARNING } = {},
 ) {
   const boxMm = getLabelBoxMm(profile, position);
   const box = toPointBox(boxMm);
   const effectiveDesign = design || createDefaultPrintDesign(profile, {
-    activityName, includeWarning, title,
+    activityName, includeWarning, title, warningText,
   });
 
   document.save();
@@ -490,7 +493,7 @@ async function renderParticipantLabel(
     document,
     box,
     participant,
-    { activityName, logo, includeWarning, title },
+    { activityName, logo, includeWarning, title, warningText },
     effectiveDesign,
   );
   document.restore();
@@ -505,6 +508,8 @@ async function createParticipantQrSheetPdf({
   includeWarning = false,
   title = '',
   design = null,
+  defaultLanguage = 'en',
+  terminology,
 }) {
   const capacity = getLabelsPerSheet(profile);
   if (!Number.isInteger(firstPosition) || firstPosition < 1 || firstPosition > capacity) {
@@ -516,11 +521,15 @@ async function createParticipantQrSheetPdf({
   if (includeWarning && !canIncludeQrWarning(profile)) {
     throw new RangeError('The personal QR warning does not fit this Avery profile');
   }
+  const warningTexts = participants.map((participant) => getPersonalQrWarning(participant.effectiveLanguage || defaultLanguage));
+  const layoutWarningText = warningTexts.reduce((longest, value) => value.length > longest.length ? value : longest, '');
   const validatedDesign = design
     ? validatePrintDesign(profile, design)
-    : createDefaultPrintDesign(profile, { activityName, includeWarning, title });
+    : createDefaultPrintDesign(profile, { activityName, includeWarning, title, warningText: layoutWarningText });
 
-  const document = createPdfDocument(profile, `QR participants — Avery ${profile.reference}`);
+  const document = createPdfDocument(profile, t(defaultLanguage, 'qr.print.pdf_title', {
+    participants: getTerm(defaultLanguage, 'student', 'plural', terminology), reference: profile.reference,
+  }));
   const complete = collectPdf(document);
   let participantIndex = 0;
   let pageIndex = 0;
@@ -531,6 +540,7 @@ async function createParticipantQrSheetPdf({
     for (let position = startPosition; position < capacity && participantIndex < participants.length; position += 1) {
       await renderParticipantLabel(document, profile, position, participants[participantIndex], {
         activityName, includeWarning, title, logo, design: validatedDesign,
+        warningText: getPersonalQrWarning(participants[participantIndex].effectiveLanguage || defaultLanguage),
       });
       participantIndex += 1;
     }
@@ -556,8 +566,8 @@ function renderCornerMarks(document, box) {
   document.stroke();
 }
 
-async function createCalibrationSheetPdf(profile) {
-  const document = createPdfDocument(profile, `Feuille de test — Avery ${profile.reference}`);
+async function createCalibrationSheetPdf(profile, language = 'en') {
+  const document = createPdfDocument(profile, t(language, 'print.calibration.title', { reference: profile.reference }));
   const complete = collectPdf(document);
   document.addPage();
 
@@ -566,7 +576,7 @@ async function createCalibrationSheetPdf(profile) {
     .fontSize(6)
     .fillColor('#526276')
     .text(
-      `Avery ${profile.reference} · Imprimer à 100 % / Taille réelle · Désactiver « Ajuster à la page »`,
+      t(language, 'print.calibration.instructions', { reference: profile.reference }),
       mmToPoints(3),
       mmToPoints(1.2),
       { align: 'center', width: mmToPoints(profile.pageWidthMm - 6), lineBreak: false },

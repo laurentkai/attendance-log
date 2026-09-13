@@ -18,16 +18,18 @@ function profileSupportsDisclaimer(profile) {
 }
 
 class PrintDesignValidationError extends Error {
-  constructor(message) {
-    super(message);
+  constructor(translationKey, translationParams = {}) {
+    super(translationKey);
     this.name = 'PrintDesignValidationError';
     this.code = 'PRINT_DESIGN_INVALID';
+    this.translationKey = translationKey;
+    this.translationParams = translationParams;
   }
 }
 
 function finiteNumber(value, label) {
   const number = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(number)) throw new PrintDesignValidationError(`${label} est invalide.`);
+  if (!Number.isFinite(number)) throw new PrintDesignValidationError('print.design.validation.number', { field: label });
   return Math.round(number * 1000) / 1000;
 }
 
@@ -37,14 +39,14 @@ function ownKeysAre(value, allowed) {
 
 function validateElement(name, raw, profile) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new PrintDesignValidationError(`L’élément ${name} est invalide.`);
+    throw new PrintDesignValidationError('print.design.validation.element', { element: name });
   }
   const allowed = new Set(['x', 'y', 'width', 'height', 'enabled']);
   if (TEXT_ELEMENTS.has(name)) allowed.add('fontSize');
   if (ALIGNABLE_ELEMENTS.has(name)) allowed.add('align');
   if (name === 'code') allowed.add('rotation');
   if (!ownKeysAre(raw, allowed)) {
-    throw new PrintDesignValidationError(`L’élément ${name} contient une propriété non autorisée.`);
+    throw new PrintDesignValidationError('print.design.validation.property', { element: name });
   }
 
   const element = {
@@ -62,29 +64,29 @@ function validateElement(name, raw, profile) {
   if (element.x < 0 || element.y < 0 || element.width < minimumWidth || element.height < minimumHeight
       || element.x + element.width > profile.labelWidthMm + 0.001
       || element.y + element.height > profile.labelHeightMm + 0.001) {
-    throw new PrintDesignValidationError(`L’élément ${name} dépasse les limites imprimables.`);
+    throw new PrintDesignValidationError('print.design.validation.bounds', { element: name });
   }
   if (name === 'qr' && Math.abs(element.width - element.height) > 0.001) {
-    throw new PrintDesignValidationError('Le QR doit rester carré.');
+    throw new PrintDesignValidationError('print.design.validation.qr_square');
   }
   if (TEXT_ELEMENTS.has(name)) {
     const minimum = name === 'disclaimer' ? 5 : 6;
     const maximum = ['title', 'name'].includes(name) ? 24 : 14;
     element.fontSize = finiteNumber(raw.fontSize, `${name}.fontSize`);
     if (element.fontSize < minimum || element.fontSize > maximum) {
-      throw new PrintDesignValidationError(`La taille de texte de ${name} est invalide.`);
+      throw new PrintDesignValidationError('print.design.validation.font_size', { element: name });
     }
   }
   if (ALIGNABLE_ELEMENTS.has(name)) {
     if (!ALLOWED_ALIGNMENTS.has(raw.align)) {
-      throw new PrintDesignValidationError(`L’alignement de ${name} est invalide.`);
+      throw new PrintDesignValidationError('print.design.validation.alignment', { element: name });
     }
     element.align = raw.align;
   }
   if (name === 'code') {
     const rotation = finiteNumber(raw.rotation, 'code.rotation');
     if (!ALLOWED_ROTATIONS.has(rotation)) {
-      throw new PrintDesignValidationError('La rotation du code est invalide.');
+      throw new PrintDesignValidationError('print.design.validation.rotation');
     }
     element.rotation = rotation;
   }
@@ -98,22 +100,22 @@ function validatePrintDesign(profile, raw) {
       || !raw.elements || typeof raw.elements !== 'object' || Array.isArray(raw.elements)
       || !ownKeysAre(raw.elements, new Set(ELEMENT_NAMES))
       || ELEMENT_NAMES.some((name) => !Object.hasOwn(raw.elements, name))) {
-    throw new PrintDesignValidationError('Le modèle d’impression est invalide.');
+    throw new PrintDesignValidationError('print.design.validation.layout');
   }
   if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > MAX_LAYOUT_BYTES) {
-    throw new PrintDesignValidationError('Le modèle d’impression est trop volumineux.');
+    throw new PrintDesignValidationError('print.design.validation.size');
   }
   const elements = Object.fromEntries(
     ELEMENT_NAMES.map((name) => [name, Object.freeze(validateElement(name, raw.elements[name], profile))]),
   );
-  if (!elements.qr.enabled) throw new PrintDesignValidationError('Le QR doit rester visible.');
+  if (!elements.qr.enabled) throw new PrintDesignValidationError('print.design.validation.qr_visible');
   if (elements.disclaimer.enabled && !profileSupportsDisclaimer(profile)) {
-    throw new PrintDesignValidationError('L’avertissement ne tient pas lisiblement sur ce format.');
+    throw new PrintDesignValidationError('print.design.validation.disclaimer');
   }
   const overlaps = (left, right) => left.x < right.x + right.width && left.x + left.width > right.x
     && left.y < right.y + right.height && left.y + left.height > right.y;
   if (ELEMENT_NAMES.some((name) => name !== 'qr' && elements[name].enabled && overlaps(elements.qr, elements[name]))) {
-    throw new PrintDesignValidationError('Aucun élément ne peut recouvrir le QR.');
+    throw new PrintDesignValidationError('print.design.validation.qr_overlap');
   }
   return Object.freeze({ version: DESIGN_VERSION, elements: Object.freeze(elements) });
 }

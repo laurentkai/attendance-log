@@ -1,3 +1,4 @@
+window.AttendanceLogI18n.ready.then(() => {
 document.querySelectorAll('[data-confirm]').forEach((form) => {
   form.addEventListener('submit', (event) => {
     if (!window.confirm(form.dataset.confirm)) {
@@ -11,7 +12,7 @@ document.querySelectorAll('form[data-submit-once]').forEach((form) => {
     const submitButton = form.querySelector('button[type="submit"]');
     if (!submitButton) return;
     submitButton.disabled = true;
-    submitButton.textContent = 'Envoi…';
+    submitButton.textContent = window.AttendanceLogI18n.t('action.sending');
   });
 });
 
@@ -43,7 +44,7 @@ document.querySelectorAll('[data-filterable-list]').forEach((filterableList) => 
   if (!searchInput || rows.length === 0) return;
 
   searchInput.addEventListener('input', () => {
-    const query = searchInput.value.trim().toLocaleLowerCase('fr');
+    const query = searchInput.value.trim().toLocaleLowerCase(document.documentElement.lang || 'en');
     let visibleCount = 0;
 
     rows.forEach((row) => {
@@ -56,3 +57,4 @@ document.querySelectorAll('[data-filterable-list]').forEach((filterableList) => 
     if (noResults) noResults.hidden = visibleCount > 0;
   });
 });
+}).catch(() => {});

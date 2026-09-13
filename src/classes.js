@@ -10,6 +10,7 @@ const {
 } = require('./branding');
 const { pool, withTransaction } = require('./db/client');
 const { getTerm } = require('./terminology');
+const { normalizeLanguageOverride, t } = require('./i18n');
 const { isValidPublicId } = require('./public-id');
 const { TOLERANCE_VALUES, isValidTolerance } = require('./punctuality');
 const {
@@ -21,11 +22,11 @@ const {
   summaryConfigurationChanged,
   summaryConfigurationSnapshot,
 } = require('./session-summary-config');
-const { businessTerm, escapeHtml, renderPage } = require('./ui');
+const { businessTerm, escapeHtml, renderLanguageOptions, renderPage } = require('./ui');
 
 const router = express.Router();
 
-function renderMessagePage(title, message, status = 500) {
+function renderMessagePage(title, message, status = 500, language) {
   return {
     status,
     html: renderPage(title, `
@@ -34,12 +35,15 @@ function renderMessagePage(title, message, status = 500) {
           <h1>${escapeHtml(title)}</h1>
         </div>
       </header>
-      <p class="alert alert-danger">${escapeHtml(message)}</p>`),
+      <p class="alert alert-danger">${escapeHtml(message)}</p>`, { language }),
   };
 }
 
-function renderClassNotFoundPage() {
-  return renderMessagePage('Fiche introuvable', 'L’élément demandé n’existe pas.', 404);
+function renderClassNotFoundPage(language) {
+  return renderMessagePage(
+    t(language, 'classes.error.not_found.title', { class: getTerm(language, 'class') }),
+    t(language, 'classes.error.not_found.message'), 404, language,
+  );
 }
 
 function getFormValues(body = {}) {
@@ -64,6 +68,7 @@ function getFormValues(body = {}) {
       ? body.description.trim()
       : '',
     punctuality_tolerance_minutes: Number.parseInt(body.punctuality_tolerance_minutes || '5', 10),
+    language: normalizeLanguageOverride(body.language),
     ...summaryConfiguration,
     summaryConfigurationError,
   };
@@ -79,39 +84,41 @@ function renderClassForm({
   logoNotice = '',
   error = '',
   adminUsers = [],
+  language,
 }) {
+  const classTerms = { class: getTerm(language, 'class') };
   const errorMessage = error
     ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
 
   const logoMessages = {
-    saved: ['success', 'Le logo de cette activité a été enregistré.'],
-    removed: ['success', 'Le logo propre à cette activité a été supprimé. Le logo de l’installation sera utilisé.'],
-    invalid: ['danger', 'Choisissez une image PNG ou JPEG valide de 2 Mo maximum.'],
-    failed: ['danger', 'Impossible d’enregistrer le logo pour le moment.'],
+    saved: ['success', t(language, 'classes.logo.notice.saved', classTerms)],
+    removed: ['success', t(language, 'classes.logo.notice.removed', classTerms)],
+    invalid: ['danger', t(language, 'classes.logo.notice.invalid')],
+    failed: ['danger', t(language, 'classes.logo.notice.failed')],
   };
   const logoFeedback = logoMessages[logoNotice];
   const logoSection = classId ? `<section class="page-section mt-4" aria-labelledby="activity-logo-title">
     <div class="section-header">
       <div>
-        <h2 id="activity-logo-title">Logo de l’${businessTerm('class').toLocaleLowerCase('fr')}</h2>
-        <p class="section-description">Ce logo remplace celui de l’installation pour les badges et e-mails QR liés à cette activité.</p>
+        <h2 id="activity-logo-title">${escapeHtml(t(language, 'classes.logo.title', { class: getTerm(language, 'class') }))}</h2>
+        <p class="section-description">${escapeHtml(t(language, 'classes.logo.help', classTerms))}</p>
       </div>
     </div>
     ${logoFeedback ? `<p class="alert alert-${logoFeedback[0]}" role="${logoFeedback[0] === 'success' ? 'status' : 'alert'}">${escapeHtml(logoFeedback[1])}</p>` : ''}
     <div class="card card-body app-form">
       ${hasLogo ? `<div class="branding-logo-preview">
-        <img src="/classes/${escapeHtml(classId)}/logo" width="240" height="96" alt="Logo actuel de cette activité">
-      </div>` : '<p class="empty-state mb-0">Aucun logo propre n’est configuré. Le logo de l’installation est utilisé par défaut.</p>'}
+        <img src="/classes/${escapeHtml(classId)}/logo" width="240" height="96" alt="${escapeHtml(t(language, 'classes.logo.current_alt', classTerms))}">
+      </div>` : `<p class="empty-state mb-0">${escapeHtml(t(language, 'classes.logo.none', classTerms))}</p>`}
       <form class="app-form" method="post" action="/classes/${escapeHtml(classId)}/logo" enctype="multipart/form-data">
         <div class="form-field">
-          <label for="activity-logo">${hasLogo ? 'Remplacer le logo' : 'Choisir un logo'}</label>
+          <label for="activity-logo">${escapeHtml(t(language, hasLogo ? 'classes.logo.replace' : 'classes.logo.choose'))}</label>
           <input class="form-control" id="activity-logo" name="logo" type="file" accept="image/png,image/jpeg" required>
         </div>
-        <div class="form-actions"><button class="btn btn-primary" type="submit">${hasLogo ? 'Remplacer' : 'Enregistrer'}</button></div>
+        <div class="form-actions"><button class="btn btn-primary" type="submit">${escapeHtml(t(language, hasLogo ? 'classes.logo.replace' : 'action.save'))}</button></div>
       </form>
-      ${hasLogo ? `<form method="post" action="/classes/${escapeHtml(classId)}/logo/remove" data-confirm="Supprimer le logo propre à cette activité ?">
-        <button class="btn btn-outline-danger" type="submit">Supprimer le logo</button>
+      ${hasLogo ? `<form method="post" action="/classes/${escapeHtml(classId)}/logo/remove" data-confirm="${escapeHtml(t(language, 'classes.logo.confirm_remove', classTerms))}">
+        <button class="btn btn-outline-danger" type="submit">${escapeHtml(t(language, 'classes.logo.remove'))}</button>
       </form>` : ''}
     </div>
   </section>` : '';
@@ -125,31 +132,38 @@ function renderClassForm({
     ${errorMessage}
     <form class="card card-body app-form" method="post" action="${escapeHtml(action)}">
       <div class="form-field">
-        <label for="name">Nom <span aria-hidden="true">*</span></label>
+        <label for="name">${escapeHtml(t(language, 'common.name'))} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="name" name="name" type="text" value="${escapeHtml(values.name || '')}" autocomplete="off" required>
       </div>
 
       <div class="form-field">
-        <label for="description">Description</label>
+        <label for="description">${escapeHtml(t(language, 'common.description'))}</label>
         <textarea class="form-control" id="description" name="description" rows="5" autocomplete="off">${escapeHtml(values.description || '')}</textarea>
       </div>
 
       <div class="form-field">
-        <label for="punctuality-tolerance">Tolérance de ponctualité</label>
-        <select class="form-select" id="punctuality-tolerance" name="punctuality_tolerance_minutes" required>
-          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_minutes) === minutes ? ' selected' : ''}>+${minutes} minutes</option>`).join('')}
+        <label for="language">${escapeHtml(t(language, 'classes.form.generated_language'))}</label>
+        <select class="form-select" id="language" name="language">
+          ${renderLanguageOptions(values.language, { language, emptyLabel: t(language, 'classes.form.inherit_installation') })}
         </select>
-        <p class="form-text mb-0">Cette valeur s’applique aux sessions qui héritent du réglage de l’activité.</p>
       </div>
 
-      ${renderSummaryConfigurationFields({ adminUsers, values, scope: 'class' })}
+      <div class="form-field">
+        <label for="punctuality-tolerance">${escapeHtml(t(language, 'classes.form.tolerance'))}</label>
+        <select class="form-select" id="punctuality-tolerance" name="punctuality_tolerance_minutes" required>
+          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_minutes) === minutes ? ' selected' : ''}>${escapeHtml(t(language, 'punctuality.tolerance_option', { minutes }))}</option>`).join('')}
+        </select>
+        <p class="form-text mb-0">${escapeHtml(t(language, 'classes.form.tolerance_help', { class: getTerm(language, 'class'), sessions: getTerm(language, 'session', 'plural') }))}</p>
+      </div>
+
+      ${renderSummaryConfigurationFields({ adminUsers, values, scope: 'class', language })}
 
       <div class="form-actions d-flex flex-wrap gap-2">
         <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
-        <a class="btn btn-outline-secondary" href="/classes">Annuler</a>
+        <a class="btn btn-outline-secondary" href="/classes">${escapeHtml(t(language, 'action.cancel'))}</a>
       </div>
     </form>
-    ${logoSection}`);
+    ${logoSection}`, { language });
 }
 
 function getStudentIds(body = {}) {
@@ -161,96 +175,105 @@ function getStudentIds(body = {}) {
 }
 
 router.get('/', async (request, response) => {
+  const language = request.uiLanguage;
   try {
     const result = await pool.query(
       'SELECT public_id, name, description FROM classes ORDER BY LOWER(name), id',
     );
     const notices = {
-      created: 'La fiche a été créée.',
-      updated: 'La fiche a été mise à jour.',
-      deleted: 'La fiche a été supprimée.',
+      created: t(language, 'classes.notice.created', { class: getTerm(language, 'class') }),
+      updated: t(language, 'classes.notice.updated', { class: getTerm(language, 'class') }),
+      deleted: t(language, 'classes.notice.deleted', { class: getTerm(language, 'class') }),
     };
     const notice = notices[request.query.notice]
       ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const classList = result.rows.length === 0
-      ? `<p class="empty-state">Aucune ${businessTerm('class').toLocaleLowerCase('fr')} n’est enregistrée pour le moment.</p>`
+      ? `<p class="empty-state">${escapeHtml(t(language, 'classes.list.empty', { class: getTerm(language, 'class') }))}</p>`
       : `<div class="list-group compact-list">${result.rows.map((classRecord) => `
           <article class="list-group-item compact-row class-management-row">
             <div class="compact-identity class-identity">
               <p class="compact-title">${escapeHtml(classRecord.name)}</p>
               <p class="compact-meta class-description">${classRecord.description
                 ? escapeHtml(classRecord.description)
-                : '<span class="muted">Aucune description</span>'}</p>
+                : `<span class="muted">${escapeHtml(t(language, 'common.no_description'))}</span>`}</p>
             </div>
             <div class="row-action-stack">
-              <div class="compact-actions compact-actions--split" aria-label="Gérer ${escapeHtml(classRecord.name)}">
-                <a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}">${businessTerm('student', 'plural')}</a>
-                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.public_id}">${businessTerm('session', 'plural')}</a>
+              <div class="compact-actions compact-actions--split" aria-label="${escapeHtml(t(language, 'classes.list.manage_aria', { name: classRecord.name }))}">
+                <a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}">${businessTerm(language, 'student', 'plural')}</a>
+                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.public_id}">${businessTerm(language, 'session', 'plural')}</a>
               </div>
-              <div class="compact-actions" aria-label="Administration de ${escapeHtml(classRecord.name)}">
-                <a class="btn btn-light" href="/classes/${classRecord.public_id}/edit">Modifier</a>
-                <form method="post" action="/classes/${classRecord.public_id}/delete" data-confirm="Supprimer cette fiche ?">
-                  <button class="btn btn-outline-danger" type="submit">Supprimer</button>
+              <div class="compact-actions" aria-label="${escapeHtml(t(language, 'classes.list.admin_aria', { name: classRecord.name }))}">
+                <a class="btn btn-light" href="/classes/${classRecord.public_id}/edit">${escapeHtml(t(language, 'action.edit'))}</a>
+                <form method="post" action="/classes/${classRecord.public_id}/delete" data-confirm="${escapeHtml(t(language, 'classes.confirm.delete', { class: getTerm(language, 'class') }))}">
+                  <button class="btn btn-outline-danger" type="submit">${escapeHtml(t(language, 'action.delete'))}</button>
                 </form>
               </div>
             </div>
           </article>`).join('')}</div>`;
 
-    response.send(renderPage(getTerm('class', 'plural'), `
+    response.send(renderPage(getTerm(language, 'class', 'plural'), `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
-          <h1>${businessTerm('class', 'plural')}</h1>
-          <p class="page-description">Accédez directement aux ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} ou aux ${businessTerm('session', 'plural').toLocaleLowerCase('fr')}.</p>
+          <h1>${businessTerm(language, 'class', 'plural')}</h1>
+          <p class="page-description">${escapeHtml(t(language, 'classes.list.description', { students: getTerm(language, 'student', 'plural'), sessions: getTerm(language, 'session', 'plural') }))}</p>
         </div>
-        <a class="btn btn-primary" href="/classes/new">Ajouter</a>
+        <a class="btn btn-primary" href="/classes/new">${escapeHtml(t(language, 'action.add'))}</a>
       </header>
       ${notice}
-      ${classList}`));
+      ${classList}`, { language }));
   } catch (error) {
     console.error('Unable to list classes:', error);
     const page = renderMessagePage(
-      'Liste indisponible',
-      'Impossible de charger la liste pour le moment.',
+      t(language, 'classes.error.list.title'),
+      t(language, 'classes.error.list.message'),
+      503,
+      language,
     );
     response.status(page.status).send(page.html);
   }
 });
 
-router.get('/new', async (_request, response) => {
+router.get('/new', async (request, response) => {
+  const language = request.uiLanguage;
   try {
     response.send(renderClassForm({
-      title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
+      title: t(language, 'classes.form.add_title', { class: getTerm(language, 'class') }),
       action: '/classes',
-      submitLabel: 'Créer',
+      submitLabel: t(language, 'classes.form.create'),
       values: {
         name: '', description: '', punctuality_tolerance_minutes: 5,
         adminRecipientIds: [], externalRecipients: [], attachXlsx: false,
       },
       adminUsers: await loadSummaryAdminOptions(),
+      language,
     }));
   } catch (error) {
     console.error('Unable to load class form:', error.code || error.message);
-    const page = renderMessagePage('Formulaire indisponible', 'Impossible de charger le formulaire pour le moment.');
+    const page = renderMessagePage(t(language, 'classes.error.form.title'), t(language, 'classes.error.form.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/', async (request, response) => {
+  const language = request.uiLanguage;
   const values = getFormValues(request.body);
 
-  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes) || values.summaryConfigurationError) {
+  if (!values.name || values.language === undefined || !isValidTolerance(values.punctuality_tolerance_minutes) || values.summaryConfigurationError) {
     response.status(400).send(renderClassForm({
-      title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
+      title: t(language, 'classes.form.add_title', { class: getTerm(language, 'class') }),
       action: '/classes',
-      submitLabel: 'Créer',
+      submitLabel: t(language, 'classes.form.create'),
       values,
       error: !values.name
-        ? 'Le nom est obligatoire.'
+        ? t(language, 'classes.error.invalid_name')
+        : values.language === undefined
+          ? t(language, 'classes.error.invalid_language')
         : values.summaryConfigurationError
-          ? 'Vérifiez les destinataires du résumé automatique.'
-          : 'Sélectionnez une tolérance de ponctualité valide.',
+          ? t(language, 'classes.error.invalid_summary')
+          : t(language, 'classes.error.invalid_tolerance'),
       adminUsers: await loadSummaryAdminOptions().catch(() => []),
+      language,
     }));
     return;
   }
@@ -258,9 +281,9 @@ router.post('/', async (request, response) => {
   try {
     await withTransaction(pool, async (client) => {
       const result = await client.query(
-        `INSERT INTO classes (name, description, punctuality_tolerance_minutes)
-         VALUES ($1, $2, $3) RETURNING id, public_id`,
-        [values.name, values.description || null, values.punctuality_tolerance_minutes],
+        `INSERT INTO classes (name, description, punctuality_tolerance_minutes, language)
+         VALUES ($1, $2, $3, $4) RETURNING id, public_id`,
+        [values.name, values.description || null, values.punctuality_tolerance_minutes, values.language],
       );
       await saveClassSummaryConfiguration(client, result.rows[0].id, values);
       await recordAuditEvent({
@@ -270,6 +293,7 @@ router.post('/', async (request, response) => {
           name: values.name,
           description: values.description || null,
           punctuality_tolerance_minutes: values.punctuality_tolerance_minutes,
+          language: values.language,
           ...summaryConfigurationSnapshot(values, 'class'),
         },
       });
@@ -278,28 +302,31 @@ router.post('/', async (request, response) => {
   } catch (error) {
     if (error.code === 'SUMMARY_RECIPIENTS_INVALID') {
       response.status(400).send(renderClassForm({
-        title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
-        action: '/classes', submitLabel: 'Créer', values,
+        title: t(language, 'classes.form.add_title', { class: getTerm(language, 'class') }),
+        action: '/classes', submitLabel: t(language, 'classes.form.create'), values,
         adminUsers: await loadSummaryAdminOptions().catch(() => []),
-        error: 'Vérifiez les destinataires du résumé automatique.',
+        error: t(language, 'classes.error.invalid_summary'),
+        language,
       }));
       return;
     }
     console.error('Unable to create class:', error);
     response.status(500).send(renderClassForm({
-      title: `Ajouter une ${getTerm('class').toLocaleLowerCase('fr')}`,
+      title: t(language, 'classes.form.add_title', { class: getTerm(language, 'class') }),
       action: '/classes',
-      submitLabel: 'Créer',
+      submitLabel: t(language, 'classes.form.create'),
       values,
       adminUsers: await loadSummaryAdminOptions().catch(() => []),
-      error: 'Impossible de créer la fiche pour le moment.',
+      error: t(language, 'classes.error.create', { class: getTerm(language, 'class') }),
+      language,
     }));
   }
 });
 
 router.get('/:id', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
+    const page = renderClassNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -346,66 +373,66 @@ router.get('/:id', async (request, response) => {
     ]);
 
     if (classResult.rowCount === 0) {
-      const page = renderMessagePage('Fiche introuvable', 'Aucun enregistrement ne correspond à cette demande.', 404);
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
 
     const classRecord = classResult.rows[0];
     const notices = {
-      students_added: 'Les personnes sélectionnées ont été ajoutées.',
-      no_students_added: 'Aucun ajout n’a été effectué.',
-      student_removed: 'La personne a été retirée.',
-      membership_deactivated: `L’${getTerm('membership').toLocaleLowerCase('fr')} a été désactivée.`,
-      membership_reactivated: `L’${getTerm('membership').toLocaleLowerCase('fr')} a été réactivée.`,
+      students_added: t(language, 'classes.roster.notice.students_added', { students: getTerm(language, 'student', 'plural') }),
+      no_students_added: t(language, 'classes.roster.notice.no_students_added', { student: getTerm(language, 'student') }),
+      student_removed: t(language, 'classes.roster.notice.student_removed', { student: getTerm(language, 'student') }),
+      membership_deactivated: t(language, 'classes.roster.notice.membership_deactivated', { membership: getTerm(language, 'membership') }),
+      membership_reactivated: t(language, 'classes.roster.notice.membership_reactivated', { membership: getTerm(language, 'membership') }),
     };
     const notice = notices[request.query.notice]
       ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
       : '';
     const assignedStudents = assignedResult.rows.length === 0
-      ? `<p class="empty-state">Aucune ${businessTerm('membership').toLocaleLowerCase('fr')} n’est enregistrée ici.</p>`
+      ? `<p class="empty-state">${escapeHtml(t(language, 'classes.roster.empty', { membership: getTerm(language, 'membership') }))}</p>`
       : `<section data-filterable-list>
           <div class="search">
-            <label for="class-roster-search">Rechercher dans les ${businessTerm('membership', 'plural').toLocaleLowerCase('fr')}</label>
+            <label for="class-roster-search">${escapeHtml(t(language, 'classes.roster.search_assigned', { memberships: getTerm(language, 'membership', 'plural') }))}</label>
             <div class="search-controls">
-              <input class="form-control" id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…" aria-controls="class-roster-list" data-list-search>
+              <input class="form-control" id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'students.directory.search_placeholder'))}" aria-controls="class-roster-list" data-list-search>
             </div>
           </div>
-          <p class="empty-state" role="status" data-list-no-results hidden>Aucun résultat.</p>
+          <p class="empty-state" role="status" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="class-roster-list" data-list-results>${assignedResult.rows.map((student) => `
-          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase())}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
               <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
-              <span class="badge status-badge status-${student.membership_active ? 'active' : 'inactive'}">${businessTerm('membership')} : ${student.membership_active ? 'active' : 'inactive'}</span>
+              <span class="badge status-badge status-${student.membership_active ? 'active' : 'inactive'}">${escapeHtml(t(language, 'classes.roster.membership_status', { membership: getTerm(language, 'membership'), status: t(language, `status.${student.membership_active ? 'active' : 'inactive'}`) }))}</span>
             </div>
-            <div class="compact-actions" aria-label="Actions pour ${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}">
-              <a class="btn btn-light" href="/students/${student.public_id}/edit">Modifier la fiche</a>
+            <div class="compact-actions" aria-label="${escapeHtml(t(language, 'students.directory.actions_for', { name: `${student.first_name} ${student.last_name}` }))}">
+              <a class="btn btn-light" href="/students/${student.public_id}/edit">${escapeHtml(t(language, 'classes.roster.edit_record'))}</a>
               <form method="post" action="/classes/${classRecord.public_id}/students/${student.public_id}/${student.membership_active ? 'deactivate' : 'reactivate'}">
-                <button class="btn btn-outline-secondary" type="submit">${student.membership_active ? 'Désactiver' : 'Réactiver'}</button>
+                <button class="btn btn-outline-secondary" type="submit">${escapeHtml(t(language, student.membership_active ? 'action.deactivate' : 'action.reactivate'))}</button>
               </form>
-              ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.public_id}/students/${student.public_id}/remove" data-confirm="Retirer ce ${businessTerm('student').toLocaleLowerCase('fr')} de cette ${businessTerm('class').toLocaleLowerCase('fr')} ?">
-                <button class="btn btn-outline-danger" type="submit">Retirer</button>
+              ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.public_id}/students/${student.public_id}/remove" data-confirm="${escapeHtml(t(language, 'classes.roster.confirm_remove', { student: getTerm(language, 'student'), class: getTerm(language, 'class') }))}">
+                <button class="btn btn-outline-danger" type="submit">${escapeHtml(t(language, 'action.remove'))}</button>
               </form>`}
             </div>
           </article>`).join('')}</div>
         </section>`;
     const availableStudents = !canSearch
-      ? `<p class="empty-state">Saisissez au moins 2 caractères pour rechercher un ${businessTerm('student').toLocaleLowerCase('fr')} actif.</p>`
+      ? `<p class="empty-state">${escapeHtml(t(language, 'classes.roster.search_hint', { student: getTerm(language, 'student') }))}</p>`
       : availableResult.rows.length === 0
-      ? '<p class="empty-state">Aucun résultat disponible.</p>'
+      ? `<p class="empty-state">${escapeHtml(t(language, 'classes.roster.no_available'))}</p>`
       : `<form class="card card-body app-form" method="post" action="/classes/${classRecord.public_id}/students">
           <fieldset>
-            <legend>${businessTerm('student', 'plural')} à ajouter</legend>
+            <legend>${escapeHtml(t(language, 'classes.roster.add_legend', { students: getTerm(language, 'student', 'plural') }))}</legend>
             <div class="checkbox-list">${availableResult.rows.map((student) => `
               <label class="checkbox-option">
                 <input class="form-check-input" name="student_ids" type="checkbox" value="${student.public_id}">
                 <span>${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}<small>${escapeHtml(student.email)}</small></span>
               </label>`).join('')}</div>
           </fieldset>
-          <button class="btn btn-primary" type="submit">Ajouter la sélection</button>
+          <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'classes.roster.add_selection'))}</button>
         </form>`;
 
     response.send(renderPage(classRecord.name, `
@@ -414,54 +441,55 @@ router.get('/:id', async (request, response) => {
           <h1>${escapeHtml(classRecord.name)}</h1>
           <p class="page-description class-description">${classRecord.description
             ? escapeHtml(classRecord.description)
-            : '<span class="muted">Aucune description</span>'}</p>
+            : `<span class="muted">${escapeHtml(t(language, 'common.no_description'))}</span>`}</p>
         </div>
-        <a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}/edit">Modifier la fiche</a>
+        <a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}/edit">${escapeHtml(t(language, 'classes.roster.edit_record'))}</a>
       </header>
-      <nav class="nav nav-pills context-tabs" aria-label="Gestion de « ${escapeHtml(classRecord.name)} »">
-        <a class="nav-link active" href="/classes/${classRecord.public_id}" aria-current="page">${businessTerm('student', 'plural')}</a>
-        <a class="nav-link" href="/sessions?class_id=${classRecord.public_id}">${businessTerm('session', 'plural')}</a>
+      <nav class="nav nav-pills context-tabs" aria-label="${escapeHtml(t(language, 'classes.roster.context_aria', { name: classRecord.name }))}">
+        <a class="nav-link active" href="/classes/${classRecord.public_id}" aria-current="page">${businessTerm(language, 'student', 'plural')}</a>
+        <a class="nav-link" href="/sessions?class_id=${classRecord.public_id}">${businessTerm(language, 'session', 'plural')}</a>
       </nav>
       ${notice}
       ${classRecord.membership_locked
-        ? `<p class="alert alert-warning" role="status">Cette ${businessTerm('class').toLocaleLowerCase('fr')} a déjà commencé. Les ${businessTerm('membership', 'plural').toLocaleLowerCase('fr')} sont conservées pour protéger l’historique. Désactivez une ${businessTerm('membership').toLocaleLowerCase('fr')} pour les prochaines ${businessTerm('session', 'plural').toLocaleLowerCase('fr')}.</p>`
+        ? `<p class="alert alert-warning" role="status">${escapeHtml(t(language, 'classes.roster.history_warning', { class: getTerm(language, 'class'), memberships: getTerm(language, 'membership', 'plural'), membership: getTerm(language, 'membership'), sessions: getTerm(language, 'session', 'plural') }))}</p>`
         : ''}
       <section class="page-section">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2>${businessTerm('membership', 'plural')}</h2>
-            <p class="section-description">L’état affiché concerne uniquement cette ${businessTerm('class').toLocaleLowerCase('fr')}.</p>
+            <h2>${businessTerm(language, 'membership', 'plural')}</h2>
+            <p class="section-description">${escapeHtml(t(language, 'classes.roster.status_help', { class: getTerm(language, 'class') }))}</p>
           </div>
-          <a class="btn btn-outline-secondary" href="/students/import?class_id=${classRecord.public_id}">Importer</a>
+          <a class="btn btn-outline-secondary" href="/students/import?class_id=${classRecord.public_id}">${escapeHtml(t(language, 'action.import'))}</a>
         </div>
         ${assignedStudents}
       </section>
       <section class="page-section">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2>Ajouter des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</h2>
+            <h2>${escapeHtml(t(language, 'classes.roster.add_title', { students: getTerm(language, 'student', 'plural') }))}</h2>
           </div>
         </div>
         <form class="search" method="get" action="/classes/${classRecord.public_id}" role="search">
-          <label for="membership-search">Rechercher un ${businessTerm('student').toLocaleLowerCase('fr')} actif</label>
+          <label for="membership-search">${escapeHtml(t(language, 'classes.roster.search_active', { student: getTerm(language, 'student') }))}</label>
           <div class="search-controls">
-            <input class="form-control" id="membership-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Nom, e-mail ou code…">
-            <button class="btn btn-primary" type="submit">Rechercher</button>
-            ${searchQuery ? `<a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}">Effacer</a>` : ''}
+            <input class="form-control" id="membership-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'students.directory.search_placeholder'))}">
+            <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'action.search'))}</button>
+            ${searchQuery ? `<a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}">${escapeHtml(t(language, 'action.clear'))}</a>` : ''}
           </div>
         </form>
         ${availableStudents}
-      </section>`));
+      </section>`, { language }));
   } catch (error) {
     console.error('Unable to load class memberships:', error);
-    const page = renderMessagePage('Fiche indisponible', 'Impossible de charger l’élément demandé pour le moment.');
+    const page = renderMessagePage(t(language, 'classes.error.item_unavailable.title'), t(language, 'classes.error.item_unavailable.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id/students', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderClassNotFoundPage();
+    const page = renderClassNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -499,7 +527,7 @@ router.post('/:id/students', async (request, response) => {
       return { status: result.rowCount > 0 ? 'added' : 'empty' };
     });
     if (outcome.status === 'not_found') {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -510,14 +538,15 @@ router.post('/:id/students', async (request, response) => {
     response.redirect(303, `/classes/${request.params.id}?notice=students_added`);
   } catch (error) {
     console.error('Unable to add class memberships:', error);
-    const page = renderMessagePage('Ajout impossible', 'Impossible d’ajouter la sélection pour le moment.');
+    const page = renderMessagePage(t(language, 'classes.error.add.title', { students: getTerm(language, 'student', 'plural') }), t(language, 'classes.error.add.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id/students/:studentId/remove', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id) || !isValidPublicId(request.params.studentId)) {
-    const page = renderMessagePage('Affectation introuvable', 'Cette affectation n’existe pas.', 404);
+    const page = renderMessagePage(t(language, 'classes.error.membership_not_found.title'), t(language, 'classes.error.membership_missing'), 404, language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -549,35 +578,37 @@ router.post('/:id/students/:studentId/remove', async (request, response) => {
       return { status: result.rowCount > 0 ? 'removed' : 'membership_not_found' };
     });
     if (outcome.status === 'class_not_found') {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
     if (outcome.status === 'started') {
       const page = renderMessagePage(
-        'Retrait impossible',
-        `Cette ${getTerm('class').toLocaleLowerCase('fr')} a déjà commencé. Désactivez la ${getTerm('membership').toLocaleLowerCase('fr')} pour préserver l’historique.`,
+        t(language, 'classes.error.remove.title', { student: getTerm(language, 'student') }),
+        t(language, 'classes.error.started_remove', { class: getTerm(language, 'class'), membership: getTerm(language, 'membership') }),
         409,
+        language,
       );
       response.status(page.status).send(page.html);
       return;
     }
     if (outcome.status === 'membership_not_found') {
-      const page = renderMessagePage('Affectation introuvable', 'Cette affectation active n’existe pas.', 404);
+      const page = renderMessagePage(t(language, 'classes.error.membership_not_found.title'), t(language, 'classes.error.membership_active_missing'), 404, language);
       response.status(page.status).send(page.html);
       return;
     }
     response.redirect(303, `/classes/${request.params.id}?notice=student_removed`);
   } catch (error) {
     console.error('Unable to remove class membership:', error);
-    const page = renderMessagePage('Retrait impossible', 'Impossible de retirer cette personne pour le moment.');
+    const page = renderMessagePage(t(language, 'classes.error.remove.title', { student: getTerm(language, 'student') }), t(language, 'classes.error.remove.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 async function updateMembershipActivity(request, response, active) {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id) || !isValidPublicId(request.params.studentId)) {
-    const page = renderMessagePage('Affectation introuvable', 'Cette affectation n’existe pas.', 404);
+    const page = renderMessagePage(t(language, 'classes.error.membership_not_found.title'), t(language, 'classes.error.membership_missing'), 404, language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -614,19 +645,19 @@ async function updateMembershipActivity(request, response, active) {
       return { status: result.rowCount > 0 ? 'updated' : 'membership_not_found' };
     });
     if (outcome.status === 'class_not_found') {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
     if (outcome.status === 'membership_not_found') {
-      const page = renderMessagePage('Affectation introuvable', 'Cette affectation active ne peut pas être modifiée.', 404);
+      const page = renderMessagePage(t(language, 'classes.error.membership_not_found.title'), t(language, 'classes.error.membership_not_found.message'), 404, language);
       response.status(page.status).send(page.html);
       return;
     }
     response.redirect(303, `/classes/${request.params.id}?notice=${active ? 'membership_reactivated' : 'membership_deactivated'}`);
   } catch (error) {
     console.error('Unable to update class membership activity:', error);
-    const page = renderMessagePage('Modification impossible', 'Impossible de modifier cette affectation pour le moment.');
+    const page = renderMessagePage(t(language, 'classes.error.membership_update.title'), t(language, 'classes.error.membership_update.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 }
@@ -640,22 +671,23 @@ router.post('/:id/students/:studentId/reactivate', (request, response) => (
 ));
 
 router.get('/:id/edit', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderClassNotFoundPage();
+    const page = renderClassNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
 
   try {
     const result = await pool.query(
-      `SELECT id, public_id, name, description, punctuality_tolerance_minutes,
+      `SELECT id, public_id, name, description, punctuality_tolerance_minutes, language,
               (logo_data IS NOT NULL) AS has_logo
        FROM classes WHERE public_id = $1`,
       [request.params.id],
     );
 
     if (result.rowCount === 0) {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -665,20 +697,23 @@ router.get('/:id/edit', async (request, response) => {
       loadSummaryAdminOptions(),
     ]);
     response.send(renderClassForm({
-      title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
+      title: t(language, 'classes.form.edit_title', { class: getTerm(language, 'class') }),
       action: `/classes/${result.rows[0].public_id}`,
-      submitLabel: 'Enregistrer',
+      submitLabel: t(language, 'action.save'),
       values: { ...result.rows[0], ...summaryConfiguration },
       classId: result.rows[0].public_id,
       hasLogo: result.rows[0].has_logo,
       logoNotice: typeof request.query.logo_notice === 'string' ? request.query.logo_notice : '',
       adminUsers,
+      language,
     }));
   } catch (error) {
     console.error('Unable to load class:', error);
     const page = renderMessagePage(
-      'Fiche indisponible',
-      'Impossible de charger l’élément demandé pour le moment.',
+      t(language, 'classes.error.item_unavailable.title'),
+      t(language, 'classes.error.item_unavailable.message'),
+      503,
+      language,
     );
     response.status(page.status).send(page.html);
   }
@@ -702,8 +737,9 @@ router.get('/:id/logo', async (request, response) => {
 });
 
 router.post('/:id/logo', (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderClassNotFoundPage();
+    const page = renderClassNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -728,7 +764,7 @@ router.post('/:id/logo', (request, response) => {
         return true;
       });
       if (!saved) {
-        const page = renderClassNotFoundPage();
+        const page = renderClassNotFoundPage(language);
         response.status(page.status).send(page.html);
         return;
       }
@@ -745,8 +781,9 @@ router.post('/:id/logo', (request, response) => {
 });
 
 router.post('/:id/logo/remove', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderClassNotFoundPage();
+    const page = renderClassNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -764,7 +801,7 @@ router.post('/:id/logo/remove', async (request, response) => {
       return true;
     });
     if (!removed) {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -776,8 +813,9 @@ router.post('/:id/logo/remove', async (request, response) => {
 });
 
 router.post('/:id', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderClassNotFoundPage();
+    const page = renderClassNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -787,31 +825,34 @@ router.post('/:id', async (request, response) => {
   try {
     currentLogo = await getClassLogo(request.params.id);
     if (currentLogo === undefined) {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
   } catch (error) {
     console.error('Unable to load activity branding before update:', error.code || 'DATABASE_ERROR');
-    const page = renderMessagePage('Fiche indisponible', 'Impossible de charger l’élément demandé pour le moment.');
+    const page = renderMessagePage(t(language, 'classes.error.item_unavailable.title'), t(language, 'classes.error.item_unavailable.message'), 503, language);
     response.status(page.status).send(page.html);
     return;
   }
 
-  if (!values.name || !isValidTolerance(values.punctuality_tolerance_minutes) || values.summaryConfigurationError) {
+  if (!values.name || values.language === undefined || !isValidTolerance(values.punctuality_tolerance_minutes) || values.summaryConfigurationError) {
     response.status(400).send(renderClassForm({
-      title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
+      title: t(language, 'classes.form.edit_title', { class: getTerm(language, 'class') }),
       action: `/classes/${request.params.id}`,
-      submitLabel: 'Enregistrer',
+      submitLabel: t(language, 'action.save'),
       values,
       classId: request.params.id,
       hasLogo: Boolean(currentLogo),
       error: !values.name
-        ? 'Le nom est obligatoire.'
+        ? t(language, 'classes.error.invalid_name')
+        : values.language === undefined
+          ? t(language, 'classes.error.invalid_language')
         : values.summaryConfigurationError
-          ? 'Vérifiez les destinataires du résumé automatique.'
-          : 'Sélectionnez une tolérance de ponctualité valide.',
+          ? t(language, 'classes.error.invalid_summary')
+          : t(language, 'classes.error.invalid_tolerance'),
       adminUsers: await loadSummaryAdminOptions().catch(() => []),
+      language,
     }));
     return;
   }
@@ -819,7 +860,7 @@ router.post('/:id', async (request, response) => {
   try {
     const result = await withTransaction(pool, async (client) => {
       const current = await client.query(
-        `SELECT id, public_id, name, description, punctuality_tolerance_minutes
+        `SELECT id, public_id, name, description, punctuality_tolerance_minutes, language
          FROM classes WHERE public_id = $1 FOR UPDATE`,
         [request.params.id],
       );
@@ -827,9 +868,9 @@ router.post('/:id', async (request, response) => {
       const previousSummary = await loadClassSummaryConfiguration(current.rows[0].id, client);
       const updated = await client.query(
         `UPDATE classes
-         SET name = $1, description = $2, punctuality_tolerance_minutes = $3
-         WHERE public_id = $4 RETURNING id`,
-        [values.name, values.description || null, values.punctuality_tolerance_minutes, request.params.id],
+         SET name = $1, description = $2, punctuality_tolerance_minutes = $3, language = $4
+         WHERE public_id = $5 RETURNING id`,
+        [values.name, values.description || null, values.punctuality_tolerance_minutes, values.language, request.params.id],
       );
       await saveClassSummaryConfiguration(client, current.rows[0].id, values);
       await recordAuditEvent({
@@ -839,11 +880,13 @@ router.post('/:id', async (request, response) => {
           name: current.rows[0].name,
           description: current.rows[0].description,
           punctuality_tolerance_minutes: current.rows[0].punctuality_tolerance_minutes,
+          language: current.rows[0].language,
         },
         afterData: {
           name: values.name,
           description: values.description || null,
           punctuality_tolerance_minutes: values.punctuality_tolerance_minutes,
+          language: values.language,
         },
       });
       const beforeSummary = summaryConfigurationSnapshot(previousSummary, 'class');
@@ -860,7 +903,7 @@ router.post('/:id', async (request, response) => {
     });
 
     if (result.rowCount === 0) {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -869,31 +912,34 @@ router.post('/:id', async (request, response) => {
   } catch (error) {
     if (error.code === 'SUMMARY_RECIPIENTS_INVALID') {
       response.status(400).send(renderClassForm({
-        title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
-        action: `/classes/${request.params.id}`, submitLabel: 'Enregistrer', values,
+        title: t(language, 'classes.form.edit_title', { class: getTerm(language, 'class') }),
+        action: `/classes/${request.params.id}`, submitLabel: t(language, 'action.save'), values,
         classId: request.params.id, hasLogo: Boolean(currentLogo),
         adminUsers: await loadSummaryAdminOptions().catch(() => []),
-        error: 'Vérifiez les destinataires du résumé automatique.',
+        error: t(language, 'classes.error.invalid_summary'),
+        language,
       }));
       return;
     }
     console.error('Unable to update class:', error);
     response.status(500).send(renderClassForm({
-      title: `Modifier l’${getTerm('class').toLocaleLowerCase('fr')}`,
+      title: t(language, 'classes.form.edit_title', { class: getTerm(language, 'class') }),
       action: `/classes/${request.params.id}`,
-      submitLabel: 'Enregistrer',
+      submitLabel: t(language, 'action.save'),
       values,
       classId: request.params.id,
       hasLogo: Boolean(currentLogo),
       adminUsers: await loadSummaryAdminOptions().catch(() => []),
-      error: 'Impossible d’enregistrer les modifications pour le moment.',
+      error: t(language, 'classes.error.update'),
+      language,
     }));
   }
 });
 
 router.post('/:id/delete', async (request, response) => {
+  const language = request.uiLanguage;
   if (!isValidPublicId(request.params.id)) {
-    const page = renderClassNotFoundPage();
+    const page = renderClassNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -913,7 +959,7 @@ router.post('/:id/delete', async (request, response) => {
     });
 
     if (result.rowCount === 0) {
-      const page = renderClassNotFoundPage();
+      const page = renderClassNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -922,9 +968,10 @@ router.post('/:id/delete', async (request, response) => {
   } catch (error) {
     if (error.code === '23503') {
       const page = renderMessagePage(
-        'Suppression impossible',
-        `Cette fiche est liée à une ${getTerm('session').toLocaleLowerCase('fr')} et ne peut pas être supprimée.`,
+        t(language, 'classes.error.delete.title', { class: getTerm(language, 'class') }),
+        t(language, 'classes.error.delete_started', { session: getTerm(language, 'session') }),
         409,
+        language,
       );
       response.status(page.status).send(page.html);
       return;
@@ -932,8 +979,10 @@ router.post('/:id/delete', async (request, response) => {
 
     console.error('Unable to delete class:', error);
     const page = renderMessagePage(
-      'Suppression impossible',
-      'Impossible de supprimer la fiche pour le moment.',
+      t(language, 'classes.error.delete.title', { class: getTerm(language, 'class') }),
+      t(language, 'classes.error.delete.message', { class: getTerm(language, 'class') }),
+      503,
+      language,
     );
     response.status(page.status).send(page.html);
   }

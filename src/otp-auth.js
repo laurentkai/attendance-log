@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { recordAuditEvent } = require('./audit');
 const { pool, withTransaction } = require('./db/client');
 const { normalizeEmail } = require('./admin-users');
+const { DEFAULT_LANGUAGE, isSupportedLanguage, t } = require('./i18n');
 const { sendMail } = require('./mail');
 
 const OTP_LIFETIME_MS = 10 * 60 * 1000;
@@ -47,15 +48,16 @@ function generateOtp() {
   return crypto.randomInt(0, 1000000).toString().padStart(6, '0');
 }
 
-function renderOtpMessage(code) {
+function renderOtpMessage(code, language = DEFAULT_LANGUAGE) {
+  const resolvedLanguage = isSupportedLanguage(language) ? language : DEFAULT_LANGUAGE;
   return {
-    subject: 'Attendance Log — code de connexion',
-    text: `Votre code de connexion Attendance Log est : ${code}\n\nCe code expire dans 10 minutes. Si vous n’êtes pas à l’origine de cette demande, ignorez cet e-mail.`,
+    subject: t(resolvedLanguage, 'auth.email.otp.subject'),
+    text: `${t(resolvedLanguage, 'auth.email.otp.code_intro')} ${code}\n\n${t(resolvedLanguage, 'auth.email.otp.expiry')}`,
     html: `<div style="font-family:Arial,sans-serif;color:#17212b;line-height:1.5;max-width:560px;margin:0 auto">
-      <h1 style="font-size:20px;margin:0 0 16px">Connexion à Attendance Log</h1>
-      <p style="margin:0 0 12px">Votre code de connexion est :</p>
+      <h1 style="font-size:20px;margin:0 0 16px">${t(resolvedLanguage, 'auth.email.otp.heading')}</h1>
+      <p style="margin:0 0 12px">${t(resolvedLanguage, 'auth.email.otp.code_intro')}</p>
       <p style="font-size:30px;font-weight:700;letter-spacing:8px;margin:0 0 16px">${code}</p>
-      <p style="margin:0;color:#52606d">Ce code expire dans 10 minutes. Si vous n’êtes pas à l’origine de cette demande, ignorez cet e-mail.</p>
+      <p style="margin:0;color:#52606d">${t(resolvedLanguage, 'auth.email.otp.expiry')}</p>
     </div>`,
   };
 }
@@ -113,9 +115,9 @@ function timingAfterRequest(createdAt) {
   };
 }
 
-async function deliverOtpChallenge({ challengeId, recipient, code, deliver }) {
+async function deliverOtpChallenge({ challengeId, recipient, code, deliveryLanguage, deliver }) {
   try {
-    const message = renderOtpMessage(code);
+    const message = renderOtpMessage(code, deliveryLanguage);
     await deliver({ to: recipient, ...message });
     const result = await pool.query(
       `UPDATE admin_otp_challenges
@@ -177,7 +179,7 @@ async function requestOtp(emailValue, ipValue, { deliver = sendMail, code = gene
     }
 
     const userResult = await client.query(
-      `SELECT id, name, email, active
+      `SELECT id, name, email, active, ui_language
        FROM admin_users
        WHERE account_type = 'otp' AND LOWER(email) = LOWER($1)`,
       [email],
@@ -202,7 +204,13 @@ async function requestOtp(emailValue, ipValue, { deliver = sendMail, code = gene
   });
 
   const delivery = transactionResult.user?.active
-    ? deferOtpDelivery({ challengeId, recipient: transactionResult.user.email, code, deliver })
+    ? deferOtpDelivery({
+      challengeId,
+      recipient: transactionResult.user.email,
+      code,
+      deliveryLanguage: transactionResult.user.ui_language || DEFAULT_LANGUAGE,
+      deliver,
+    })
     : Promise.resolve({ delivered: false });
   return { challengeId, delivery, ...transactionResult.requestTiming };
 }
@@ -282,6 +290,7 @@ module.exports = {
   generateOtp,
   getOtpRequestAvailability,
   hashOtp,
+  renderOtpMessage,
   requestOtp,
   verifyOtp,
 };

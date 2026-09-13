@@ -3,6 +3,7 @@ require('dotenv').config({ quiet: true });
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pool } = require('./client');
+const { DEFAULT_APPLICATION_TIMEZONE, isValidTimeZone } = require('../application-time');
 
 const migrationsDirectory = path.join(__dirname, 'migrations');
 
@@ -24,6 +25,13 @@ async function runMigrations() {
 
     const appliedResult = await client.query('SELECT name FROM schema_migrations');
     const appliedMigrations = new Set(appliedResult.rows.map((row) => row.name));
+    const freshInstall = appliedMigrations.size === 0;
+    const bootstrapTimezone = (process.env.APP_TIMEZONE
+      || process.env.BACKUP_TIMEZONE
+      || DEFAULT_APPLICATION_TIMEZONE).trim();
+    if (!isValidTimeZone(bootstrapTimezone)) {
+      throw new Error('APP_TIMEZONE must be a valid IANA timezone');
+    }
 
     for (const fileName of migrationFiles) {
       if (appliedMigrations.has(fileName)) {
@@ -34,6 +42,11 @@ async function runMigrations() {
 
       try {
         await client.query('BEGIN');
+        await client.query(
+          `SELECT set_config('attendance_log.fresh_install', $1, TRUE),
+                  set_config('attendance_log.bootstrap_timezone', $2, TRUE)`,
+          [String(freshInstall), bootstrapTimezone],
+        );
         await client.query(sql);
         await client.query(
           'INSERT INTO schema_migrations (name) VALUES ($1)',

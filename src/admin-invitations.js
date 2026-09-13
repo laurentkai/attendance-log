@@ -1,13 +1,14 @@
 const { pool } = require('./db/client');
+const { DEFAULT_LANGUAGE, isSupportedLanguage, t } = require('./i18n');
 const { sendMail } = require('./mail');
 const { roles } = require('./permissions');
 const { escapeHtml } = require('./ui');
 
 const INVITATION_COOLDOWN_SECONDS = 60;
 const roleLabels = Object.freeze({
-  [roles.administrator]: 'Administrateur',
-  [roles.manager]: 'Gestionnaire',
-  [roles.attendanceOperator]: 'Opérateur de présence',
+  [roles.administrator]: true,
+  [roles.manager]: true,
+  [roles.attendanceOperator]: true,
 });
 
 class AdminInvitationError extends Error {
@@ -48,41 +49,41 @@ function createAdminInvitationEmail(user, loginUrl = getApplicationLoginUrl()) {
   if (!user || user.account_type !== 'otp' || !user.active || !user.email) {
     throw new AdminInvitationError('USER_NOT_ELIGIBLE');
   }
-  const roleLabel = roleLabels[user.role];
+  const language = isSupportedLanguage(user.ui_language) ? user.ui_language : DEFAULT_LANGUAGE;
+  const roleLabel = t(language, `role.${user.role}`);
   if (!roleLabel) throw new AdminInvitationError('USER_NOT_ELIGIBLE');
 
   const name = String(user.name || '').trim();
-  const escapedName = escapeHtml(name);
   const escapedRole = escapeHtml(roleLabel);
   const escapedLoginUrl = escapeHtml(loginUrl);
   return {
     to: user.email,
-    subject: 'Invitation à Attendance Log',
+    subject: t(language, 'auth.email.invitation.subject'),
     text: [
-      `Bonjour ${name},`,
+      t(language, 'auth.email.invitation.greeting', { name }),
       '',
-      'Un compte Attendance Log vient de vous être attribué.',
-      `Rôle : ${roleLabel}`,
+      t(language, 'auth.email.invitation.assigned'),
+      t(language, 'auth.email.invitation.role', { role: roleLabel }),
       '',
-      `Connexion : ${loginUrl}`,
+      t(language, 'auth.email.invitation.login', { url: loginUrl }),
       '',
-      'Attendance Log utilise une connexion sans mot de passe : saisissez votre adresse e-mail, recevez un code à usage unique, puis saisissez ce code pour vous authentifier.',
+      t(language, 'auth.email.invitation.passwordless'),
     ].join('\n'),
     html: `<!doctype html>
-<html lang="fr">
+<html lang="${language}">
   <body style="margin:0;padding:0;background:#f8fafc;color:#172033;font-family:Arial,sans-serif;">
     <div style="max-width:560px;margin:0 auto;padding:24px 16px;">
       <div style="padding:24px;border:1px solid #dbe2ea;border-radius:8px;background:#ffffff;">
         <p style="margin:0 0 16px;font-size:20px;font-weight:700;line-height:1.3;">Attendance Log</p>
-        <p style="margin:0 0 16px;font-size:16px;line-height:1.5;">Bonjour ${escapedName},</p>
-        <p style="margin:0 0 12px;font-size:16px;line-height:1.5;">Un compte Attendance Log vient de vous être attribué.</p>
-        <p style="margin:0 0 20px;font-size:16px;line-height:1.5;"><strong>Rôle :</strong> ${escapedRole}</p>
-        <p style="margin:0 0 20px;"><a href="${escapedLoginUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#087f8c;color:#ffffff;font-size:16px;font-weight:700;text-decoration:none;">Se connecter à Attendance Log</a></p>
-        <p style="margin:0 0 8px;font-size:15px;line-height:1.5;">La connexion se fait sans mot de passe :</p>
+        <p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${escapeHtml(t(language, 'auth.email.invitation.greeting', { name }))}</p>
+        <p style="margin:0 0 12px;font-size:16px;line-height:1.5;">${escapeHtml(t(language, 'auth.email.invitation.assigned'))}</p>
+        <p style="margin:0 0 20px;font-size:16px;line-height:1.5;"><strong>${escapeHtml(t(language, 'auth.email.invitation.role_label'))}</strong> ${escapedRole}</p>
+        <p style="margin:0 0 20px;"><a href="${escapedLoginUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#087f8c;color:#ffffff;font-size:16px;font-weight:700;text-decoration:none;">${escapeHtml(t(language, 'auth.email.invitation.signin'))}</a></p>
+        <p style="margin:0 0 8px;font-size:15px;line-height:1.5;">${escapeHtml(t(language, 'auth.email.invitation.steps_intro'))}</p>
         <ol style="margin:0;padding-left:22px;color:#52606d;font-size:15px;line-height:1.6;">
-          <li>Saisissez votre adresse e-mail.</li>
-          <li>Recevez un code à usage unique.</li>
-          <li>Saisissez ce code pour vous authentifier.</li>
+          <li>${escapeHtml(t(language, 'auth.email.invitation.step_email'))}</li>
+          <li>${escapeHtml(t(language, 'auth.email.invitation.step_receive'))}</li>
+          <li>${escapeHtml(t(language, 'auth.email.invitation.step_enter'))}</li>
         </ol>
       </div>
     </div>
@@ -103,7 +104,7 @@ async function claimInvitationAttempt(userId) {
          invitation_last_attempt_at IS NULL
          OR invitation_last_attempt_at <= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 second')
        )
-     RETURNING id, name, email, role, active, account_type`,
+     RETURNING id, name, email, role, active, account_type, ui_language`,
     [userId, INVITATION_COOLDOWN_SECONDS],
   );
   if (result.rowCount === 1) return result.rows[0];

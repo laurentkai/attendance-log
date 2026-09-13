@@ -1,3 +1,5 @@
+const { DEFAULT_LANGUAGE, t } = require('./i18n');
+
 const TOLERANCE_VALUES = Object.freeze([5, 10, 15]);
 
 function isValidTolerance(value) {
@@ -10,14 +12,13 @@ function calculatePunctuality({ status, checkedInAt, scheduledStartAt, tolerance
       available: false,
       delayMinutes: null,
       status: null,
-      label: '—',
     };
   }
 
   const checkedIn = checkedInAt instanceof Date ? checkedInAt : new Date(checkedInAt);
   const scheduledStart = scheduledStartAt instanceof Date ? scheduledStartAt : new Date(scheduledStartAt);
   if (Number.isNaN(checkedIn.getTime()) || Number.isNaN(scheduledStart.getTime())) {
-    return { available: false, delayMinutes: null, status: null, label: '—' };
+    return { available: false, delayMinutes: null, status: null };
   }
 
   const delayMinutes = Math.floor((checkedIn.getTime() - scheduledStart.getTime()) / 60000);
@@ -26,8 +27,14 @@ function calculatePunctuality({ status, checkedInAt, scheduledStartAt, tolerance
     available: true,
     delayMinutes,
     status: late ? 'late' : 'on_time',
-    label: late ? `+${delayMinutes} min` : 'À l’heure',
   };
+}
+
+function formatPunctualityLabel(punctuality, language = DEFAULT_LANGUAGE) {
+  if (!punctuality?.available) return '—';
+  return punctuality.status === 'late'
+    ? t(language, 'punctuality.delay', { minutes: punctuality.delayMinutes })
+    : t(language, 'status.on_time');
 }
 
 function summarizePunctuality(rows) {
@@ -47,6 +54,7 @@ function summarizePunctuality(rows) {
 module.exports = {
   TOLERANCE_VALUES,
   calculatePunctuality,
+  formatPunctualityLabel,
   isValidTolerance,
   summarizePunctuality,
 };

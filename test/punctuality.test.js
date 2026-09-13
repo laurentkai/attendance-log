@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { calculatePunctuality } = require('../src/punctuality');
+const { calculatePunctuality, formatPunctualityLabel } = require('../src/punctuality');
 
 const START = '2026-09-11T18:00:00.000Z';
 
@@ -26,10 +26,10 @@ test('each tolerance includes its boundary and rejects the first minute beyond i
   for (const toleranceMinutes of [5, 10, 15]) {
     const boundary = calculatePunctuality({ status: 'present', checkedInAt: at(toleranceMinutes), scheduledStartAt: START, toleranceMinutes });
     const late = calculatePunctuality({ status: 'present', checkedInAt: at(toleranceMinutes + 1), scheduledStartAt: START, toleranceMinutes });
-    assert.deepEqual({ delay: boundary.delayMinutes, status: boundary.status, label: boundary.label }, {
-      delay: toleranceMinutes, status: 'on_time', label: 'À l’heure',
+    assert.deepEqual({ delay: boundary.delayMinutes, status: boundary.status, label: formatPunctualityLabel(boundary, 'en') }, {
+      delay: toleranceMinutes, status: 'on_time', label: 'On time',
     });
-    assert.deepEqual({ delay: late.delayMinutes, status: late.status, label: late.label }, {
+    assert.deepEqual({ delay: late.delayMinutes, status: late.status, label: formatPunctualityLabel(late, 'en') }, {
       delay: toleranceMinutes + 1, status: 'late', label: `+${toleranceMinutes + 1} min`,
     });
   }

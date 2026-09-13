@@ -4,17 +4,28 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const signature = require('cookie-signature');
 const { Client } = require('pg');
 
 assert.match(process.env.TEST_DATABASE_NAME || '', /^attendance_log_test_[a-z0-9_]+$/);
 assert.match(process.env.TEST_RESTORE_DATABASE_NAME || '', /^attendance_log_test_[a-z0-9_]+$/);
+assert.match(process.env.TEST_UPGRADE_DATABASE_NAME || '', /^attendance_log_test_[a-z0-9_]+$/);
 assert.match(process.env.DATABASE_URL || '', new RegExp(`/${process.env.TEST_DATABASE_NAME}$`));
 
 const { recordAuditEvent } = require('../src/audit');
+const { app } = require('../src/server');
 const { pool } = require('../src/db/client');
 const { calculatePunctuality } = require('../src/punctuality');
+const {
+  resolveClassLanguage,
+  resolveParticipantLanguage,
+  resolveSessionLanguage,
+} = require('../src/i18n');
 const { getSessionSummaries, getStudentReport } = require('../src/reporting-data');
 const { getParticipantRetentionDetail } = require('../src/data-retention');
+const { resetOperationalData } = require('../src/operational-reset');
+const { resetTerminology } = require('../src/terminology');
 const { buildParticipantDataWorkbook, loadParticipantDataExport } = require('../src/participant-data-export');
 const {
   ANONYMIZED_TARGET_LABEL,
@@ -64,6 +75,422 @@ function runPostgresCommand(command, args, environment) {
   assert.equal(result.error, undefined, `${command} starts successfully`);
   assert.equal(result.status, 0, `${command} succeeds: ${(result.stderr || '').trim()}`);
 }
+
+async function applyHistoricalMigrations(client, throughName) {
+  await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    name TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  const migrationDirectory = path.join(__dirname, '..', 'src', 'db', 'migrations');
+  const files = fs.readdirSync(migrationDirectory)
+    .filter((name) => name.endsWith('.sql') && name <= throughName)
+    .sort();
+  for (const file of files) {
+    await client.query('BEGIN');
+    try {
+      await client.query(fs.readFileSync(path.join(migrationDirectory, file), 'utf8'));
+      await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+test('fresh install seeds complete independent English and French terminology', async () => {
+  const result = await pool.query(
+    `SELECT language, student_singular, student_plural, class_singular, class_plural,
+            session_singular, session_plural, attendance_singular, attendance_plural,
+            instructor_singular, instructor_plural, membership_singular, membership_plural
+     FROM application_terminology ORDER BY language`,
+  );
+  assert.equal(result.rowCount, 2);
+  assert.deepEqual(result.rows.map((row) => row.language), ['en', 'fr']);
+  assert.equal(result.rows[0].student_singular, 'Student');
+  assert.equal(result.rows[0].class_plural, 'Classes');
+  assert.equal(result.rows[1].student_singular, 'Participant');
+  assert.equal(result.rows[1].class_plural, 'Activités');
+  for (const row of result.rows) {
+    for (const [field, value] of Object.entries(row)) {
+      if (field !== 'language') assert.ok(value, `${row.language}.${field}`);
+    }
+  }
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO application_terminology
+         (language, student_singular, student_plural, class_singular, class_plural,
+          session_singular, session_plural, attendance_singular, attendance_plural,
+          instructor_singular, instructor_plural, membership_singular, membership_plural)
+       VALUES ('de', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X')`,
+    ),
+    (error) => error.code === '23514',
+  );
+});
+
+test('international settings persist and real rows resolve explicit language inheritance', async () => {
+  const client = await pool.connect();
+  try {
+    const initial = await client.query(
+      'SELECT default_language, locale, timezone FROM international_settings WHERE id = 1',
+    );
+    assert.deepEqual(initial.rows[0], {
+      default_language: 'en',
+      locale: 'fr-BE',
+      timezone: 'Europe/Brussels',
+    });
+    await client.query(
+      `UPDATE international_settings
+       SET default_language = 'en', locale = 'en-US', timezone = 'America/New_York'
+       WHERE id = 1`,
+    );
+    const course = await client.query(
+      "INSERT INTO classes (name, language) VALUES ('I18N integration', 'fr') RETURNING id, language",
+    );
+    const session = await client.query(
+      `INSERT INTO course_sessions (class_id, date, title, instructor, language)
+       VALUES ($1, DATE '2026-09-11', 'Language inheritance', 'Test', NULL)
+       RETURNING id, language`,
+      [course.rows[0].id],
+    );
+    const student = await client.query(
+      `INSERT INTO students (email, first_name, last_name, student_code, language)
+       VALUES ('i18n-persistence@example.invalid', 'I18N', 'Student', $1, 'en')
+       RETURNING id, language`,
+      [nextStudentCode()],
+    );
+    const user = await client.query(
+      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type, ui_language)
+       VALUES ('I18N user', 'i18n-user@example.invalid', NULL, 'manager', TRUE, 'otp', 'fr')
+       RETURNING id, ui_language`,
+    );
+    assert.equal(user.rows[0].ui_language, 'fr');
+    assert.equal(resolveClassLanguage({ classLanguage: course.rows[0].language, defaultLanguage: 'en' }), 'fr');
+    assert.equal(resolveSessionLanguage({ sessionLanguage: session.rows[0].language, classLanguage: course.rows[0].language, defaultLanguage: 'en' }), 'fr');
+    assert.equal(resolveParticipantLanguage({ participantLanguage: student.rows[0].language, sessionLanguage: session.rows[0].language, classLanguage: course.rows[0].language, defaultLanguage: 'en' }), 'en');
+    await assert.rejects(
+      client.query("UPDATE international_settings SET default_language = 'de' WHERE id = 1"),
+      (error) => error.code === '23514',
+    );
+    await assert.rejects(client.query("UPDATE classes SET language = 'de' WHERE id = $1", [course.rows[0].id]), (error) => error.code === '23514');
+    await assert.rejects(client.query("UPDATE course_sessions SET language = 'de' WHERE id = $1", [session.rows[0].id]), (error) => error.code === '23514');
+    await assert.rejects(client.query("UPDATE students SET language = 'de' WHERE id = $1", [student.rows[0].id]), (error) => error.code === '23514');
+    await assert.rejects(client.query("UPDATE admin_users SET ui_language = 'de' WHERE id = $1", [user.rows[0].id]), (error) => error.code === '23514');
+    const preserved = await client.query(
+      'SELECT default_language, locale, timezone FROM international_settings WHERE id = 1',
+    );
+    assert.deepEqual(preserved.rows[0], {
+      default_language: 'en', locale: 'en-US', timezone: 'America/New_York',
+    });
+    await client.query(
+      `UPDATE international_settings
+       SET default_language = 'en', locale = 'fr-BE', timezone = 'Europe/Brussels'
+       WHERE id = 1`,
+    );
+  } finally {
+    await client.query("DELETE FROM admin_users WHERE email = 'i18n-user@example.invalid'").catch(() => {});
+    await client.query("DELETE FROM students WHERE email = 'i18n-persistence@example.invalid'").catch(() => {});
+    await client.query("DELETE FROM classes WHERE name = 'I18N integration'").catch(() => {});
+    await client.query(
+      `UPDATE international_settings
+       SET default_language = 'en', locale = 'fr-BE', timezone = 'Europe/Brussels'
+       WHERE id = 1`,
+    ).catch(() => {});
+    client.release();
+  }
+});
+
+test('authenticated Dashboard renders empty and populated states in EN and FR', async () => {
+  const client = await pool.connect();
+  const sid = `dashboard-${randomUUID()}`;
+  let userId;
+  let classId;
+  let studentId;
+  let server;
+  try {
+    const existingOpenSessions = await client.query("SELECT COUNT(*)::integer AS count FROM course_sessions WHERE state = 'open'");
+    assert.equal(existingOpenSessions.rows[0].count, 0, 'dashboard fixture starts without unrelated open sessions');
+    await client.query("UPDATE international_settings SET locale = 'en-GB', timezone = 'Europe/Brussels' WHERE id = 1");
+    await client.query("UPDATE application_terminology SET student_plural = 'Learners', class_plural = 'Courses', session_plural = 'Meetings' WHERE language = 'en'");
+    await client.query("UPDATE application_terminology SET student_plural = 'Navigateurs', class_plural = 'Formations', session_plural = 'Ateliers' WHERE language = 'fr'");
+    const user = await client.query(
+      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type, ui_language)
+       VALUES ('Dashboard test administrator', 'dashboard-test@example.invalid', NULL, 'administrator', TRUE, 'otp', 'en')
+       RETURNING id, session_version`,
+    );
+    userId = user.rows[0].id;
+    await client.query(
+      `INSERT INTO user_sessions (sid, sess, expire)
+       VALUES ($1, $2::json, $3)`,
+      [sid, JSON.stringify({
+        cookie: { originalMaxAge: 3600000, expires: new Date(Date.now() + 3600000).toISOString(), httpOnly: true, path: '/', sameSite: 'lax' },
+        adminUserId: String(userId), role: 'administrator',
+        sessionVersion: String(user.rows[0].session_version), authenticatedAt: Date.now(),
+      }), new Date(Date.now() + 3600000)],
+    );
+    const course = await client.query("INSERT INTO classes (name) VALUES ('Cours de navigation') RETURNING id");
+    classId = course.rows[0].id;
+    await client.query(
+      `INSERT INTO course_sessions (class_id, date, title, instructor, state, started_at, closed_at)
+       VALUES ($1, DATE '2026-09-10', 'Closed business session', 'Morgan', 'closed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [classId],
+    );
+
+    server = await new Promise((resolve, reject) => {
+      const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
+      listener.once('error', reject);
+    });
+    const port = server.address().port;
+    const cookie = `attendance_log_session=${encodeURIComponent(`s:${signature.sign(sid, process.env.SESSION_SECRET)}`)}`;
+    const authenticatedGet = async (path, acceptLanguage) => fetch(`http://127.0.0.1:${port}${path}`, {
+      headers: { Accept: 'text/html', 'Accept-Language': acceptLanguage, Cookie: cookie, Connection: 'close' },
+      redirect: 'manual',
+    });
+    const terminologyBody = new URLSearchParams({
+      en_student_singular: 'Learner', en_student_plural: 'Learners',
+      en_class_singular: 'Course', en_class_plural: 'Courses',
+      en_session_singular: 'Meeting', en_session_plural: 'Meetings',
+      en_attendance_singular: 'Attendance', en_attendance_plural: 'Attendance',
+      en_instructor_singular: 'Instructor', en_instructor_plural: 'Instructors',
+      en_membership_singular: 'Registration', en_membership_plural: 'Registrations',
+      fr_student_singular: 'Navigateur', fr_student_plural: 'Navigateurs',
+      fr_class_singular: 'Formation', fr_class_plural: 'Formations',
+      fr_session_singular: 'Atelier', fr_session_plural: 'Ateliers',
+      fr_attendance_singular: 'Pointage', fr_attendance_plural: 'Pointages',
+      fr_instructor_singular: 'Moniteur', fr_instructor_plural: 'Moniteurs',
+      fr_membership_singular: 'Affectation', fr_membership_plural: 'Affectations',
+    });
+    const savedTerminology = await fetch(`http://127.0.0.1:${port}/settings/terminology`, {
+      method: 'POST',
+      headers: {
+        Accept: 'text/html', 'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: cookie, Connection: 'close',
+      },
+      body: terminologyBody,
+      redirect: 'manual',
+    });
+    assert.equal(savedTerminology.status, 303);
+    assert.equal(savedTerminology.headers.get('location'), '/settings/terminology?notice=saved');
+    const storedTerminology = await client.query(
+      'SELECT language, student_singular, class_singular FROM application_terminology ORDER BY language',
+    );
+    assert.deepEqual(storedTerminology.rows, [
+      { language: 'en', student_singular: 'Learner', class_singular: 'Course' },
+      { language: 'fr', student_singular: 'Navigateur', class_singular: 'Formation' },
+    ]);
+    const terminologyAudits = await client.query(
+      "SELECT before_data->>'language' AS language FROM admin_audit_log WHERE action = 'terminology.update' ORDER BY language",
+    );
+    assert.deepEqual(terminologyAudits.rows, [{ language: 'en' }, { language: 'fr' }]);
+    const dashboard = (acceptLanguage) => authenticatedGet('/', acceptLanguage);
+
+    const emptyEnglishResponse = await dashboard('fr-BE,fr;q=0.9');
+    const emptyEnglish = await emptyEnglishResponse.text();
+    assert.equal(emptyEnglishResponse.status, 200);
+    assert.match(emptyEnglish, /<html lang="en">/);
+    assert.match(emptyEnglish, /<h1>Dashboard<\/h1>/);
+    assert.match(emptyEnglish, />Learners<\/a>/);
+    assert.match(emptyEnglish, />Courses<\/a>/);
+    assert.match(emptyEnglish, />Meetings<\/a>/);
+    assert.doesNotMatch(emptyEnglish, />Navigateurs<\/a>|>Formations<\/a>|>Ateliers<\/a>/);
+    assert.match(emptyEnglish, /Nothing is open right now/);
+    assert.doesNotMatch(emptyEnglish, /<h1>Dashboard unavailable<\/h1>|Closed business session/);
+
+    const student = await client.query(
+      `INSERT INTO students (email, first_name, last_name, student_code, active)
+       VALUES ('dashboard-student@example.invalid', 'Paul', 'BALDEWYNS', 'DASHB23', TRUE)
+       RETURNING id`,
+    );
+    studentId = student.rows[0].id;
+    await client.query('INSERT INTO student_classes (student_id, class_id, active) VALUES ($1, $2, TRUE)', [studentId, classId]);
+    const openSession = await client.query(
+      `INSERT INTO course_sessions (class_id, date, title, instructor, state, started_at)
+       VALUES ($1, DATE '2026-09-11', 'Cours de navigation 2026', 'Morgan', 'open', CURRENT_TIMESTAMP)
+       RETURNING id, public_id`,
+      [classId],
+    );
+    await client.query(
+      `INSERT INTO attendance_records (session_id, student_id, status, checked_in_at)
+       VALUES ($1, $2, 'present', TIMESTAMPTZ '2026-09-11 18:55:00+00')`,
+      [openSession.rows[0].id, studentId],
+    );
+
+    const populatedEnglishResponse = await dashboard('fr-BE,fr;q=0.9');
+    const populatedEnglish = await populatedEnglishResponse.text();
+    assert.equal(populatedEnglishResponse.status, 200);
+    assert.match(populatedEnglish, /<html lang="en">/);
+    assert.match(populatedEnglish, /Cours de navigation 2026/);
+    assert.match(populatedEnglish, /11 September 2026/);
+    assert.match(populatedEnglish, /1 \/ 1 present/);
+    assert.match(populatedEnglish, /Status: open/);
+    assert.doesNotMatch(populatedEnglish, /<h1>Tableau de bord<\/h1>|Accès rapides|État : ouvert|Closed business session/);
+    for (const path of ['/students', '/classes', '/sessions', `/sessions/${openSession.rows[0].public_id}`, '/reporting', '/settings/terminology']) {
+      const routeResponse = await authenticatedGet(path, 'fr-BE,fr;q=0.9');
+      const routeHtml = await routeResponse.text();
+      assert.equal(routeResponse.status, 200, `English smoke ${path}`);
+      assert.match(routeHtml, /<html lang="en">/, path);
+      assert.match(routeHtml, /data-term-class="Course"/, path);
+      assert.doesNotMatch(routeHtml, /undefined|\[object Object\]/i, path);
+      assert.match(routeHtml, />Learners<\/a>/, path);
+      assert.match(routeHtml, />Courses<\/a>/, path);
+      assert.match(routeHtml, />Meetings<\/a>/, path);
+    }
+
+    await client.query("UPDATE admin_users SET ui_language = 'fr' WHERE id = $1", [userId]);
+
+    const populatedFrenchResponse = await dashboard('en-GB,en;q=0.9');
+    const populatedFrench = await populatedFrenchResponse.text();
+    assert.equal(populatedFrenchResponse.status, 200);
+    assert.match(populatedFrench, /<html lang="fr">/);
+    assert.match(populatedFrench, /<h1>Tableau de bord<\/h1>/);
+    assert.match(populatedFrench, />Navigateurs<\/a>/);
+    assert.match(populatedFrench, />Formations<\/a>/);
+    assert.match(populatedFrench, />Ateliers<\/a>/);
+    assert.doesNotMatch(populatedFrench, />Learners<\/a>|>Courses<\/a>|>Meetings<\/a>/);
+    assert.match(populatedFrench, /Cours de navigation 2026/);
+    assert.match(populatedFrench, /11 September 2026/);
+    assert.match(populatedFrench, /1 \/ 1 présents/);
+    assert.match(populatedFrench, /État : ouvert/);
+    assert.doesNotMatch(populatedFrench, /<h1>Tableau de bord indisponible<\/h1>|<h1>Dashboard<\/h1>|Quick access|Status: open|Closed business session/);
+    for (const path of ['/students', '/classes', '/sessions', `/sessions/${openSession.rows[0].public_id}`, '/reporting', '/settings/terminology']) {
+      const routeResponse = await authenticatedGet(path, 'en-GB,en;q=0.9');
+      const routeHtml = await routeResponse.text();
+      assert.equal(routeResponse.status, 200, `French smoke ${path}`);
+      assert.match(routeHtml, /<html lang="fr">/, path);
+      assert.match(routeHtml, /data-term-class="Formation"/, path);
+      assert.doesNotMatch(routeHtml, /undefined|\[object Object\]/i, path);
+      assert.match(routeHtml, />Navigateurs<\/a>/, path);
+      assert.match(routeHtml, />Formations<\/a>/, path);
+      assert.match(routeHtml, />Ateliers<\/a>/, path);
+    }
+
+    const resetTerminologyResponse = await fetch(`http://127.0.0.1:${port}/settings/terminology/reset`, {
+      method: 'POST',
+      headers: { Accept: 'text/html', Cookie: cookie, Connection: 'close' },
+      redirect: 'manual',
+    });
+    assert.equal(resetTerminologyResponse.status, 303);
+    assert.equal(resetTerminologyResponse.headers.get('location'), '/settings/terminology?notice=reset');
+    const resetRows = await client.query(
+      'SELECT language, student_singular, class_singular FROM application_terminology ORDER BY language',
+    );
+    assert.deepEqual(resetRows.rows, [
+      { language: 'en', student_singular: 'Student', class_singular: 'Class' },
+      { language: 'fr', student_singular: 'Participant', class_singular: 'Activité' },
+    ]);
+    const resetAudits = await client.query(
+      "SELECT before_data->>'language' AS language FROM admin_audit_log WHERE action = 'terminology.reset' ORDER BY language",
+    );
+    assert.deepEqual(resetAudits.rows, [{ language: 'en' }, { language: 'fr' }]);
+  } finally {
+    if (server) await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await client.query('DELETE FROM user_sessions WHERE sid = $1', [sid]);
+    if (classId) {
+      await client.query('DELETE FROM attendance_records WHERE session_id IN (SELECT id FROM course_sessions WHERE class_id = $1)', [classId]);
+      await client.query('DELETE FROM course_sessions WHERE class_id = $1', [classId]);
+      await client.query('DELETE FROM classes WHERE id = $1', [classId]);
+    }
+    if (studentId) await client.query('DELETE FROM students WHERE id = $1', [studentId]);
+    if (userId) await client.query('DELETE FROM admin_users WHERE id = $1', [userId]);
+    await client.query("UPDATE international_settings SET locale = 'fr-BE', timezone = 'Europe/Brussels' WHERE id = 1");
+    await resetTerminology('en', client);
+    await resetTerminology('fr', client);
+    client.release();
+  }
+});
+
+test('migration preserves French behavior and APP_TIMEZONE for an existing installation', async () => {
+  const upgradeDatabaseName = process.env.TEST_UPGRADE_DATABASE_NAME;
+  const administrationClient = new Client({ connectionString: databaseUrlFor('postgres') });
+  let administrationConnected = false;
+  let upgradeClient;
+  try {
+    await administrationClient.connect();
+    administrationConnected = true;
+    await administrationClient.query(`DROP DATABASE IF EXISTS "${upgradeDatabaseName}" WITH (FORCE)`);
+    await administrationClient.query(`CREATE DATABASE "${upgradeDatabaseName}"`);
+    upgradeClient = new Client({ connectionString: databaseUrlFor(upgradeDatabaseName) });
+    await upgradeClient.connect();
+    await applyHistoricalMigrations(upgradeClient, '024_student_anonymization.sql');
+    const customizedFrench = {
+      student_singular: 'Navigateur', student_plural: 'Navigateurs',
+      class_singular: 'Formation', class_plural: 'Formations',
+      session_singular: 'Atelier', session_plural: 'Ateliers',
+      attendance_singular: 'Pointage', attendance_plural: 'Pointages',
+      instructor_singular: 'Moniteur', instructor_plural: 'Moniteurs',
+      membership_singular: 'Affectation', membership_plural: 'Affectations',
+    };
+    await upgradeClient.query(
+      `UPDATE application_terminology SET
+         student_singular = $1, student_plural = $2, class_singular = $3, class_plural = $4,
+         session_singular = $5, session_plural = $6, attendance_singular = $7, attendance_plural = $8,
+         instructor_singular = $9, instructor_plural = $10, membership_singular = $11, membership_plural = $12
+       WHERE id = 1`,
+      Object.values(customizedFrench),
+    );
+    await upgradeClient.end();
+    upgradeClient = null;
+    runPostgresCommand(process.execPath, ['src/db/migrate.js'], {
+      ...process.env,
+      APP_TIMEZONE: 'America/New_York',
+      DATABASE_URL: databaseUrlFor(upgradeDatabaseName),
+    });
+    upgradeClient = new Client({ connectionString: databaseUrlFor(upgradeDatabaseName) });
+    await upgradeClient.connect();
+    const settings = await upgradeClient.query(
+      'SELECT default_language, locale, timezone FROM international_settings WHERE id = 1',
+    );
+    assert.deepEqual(settings.rows[0], {
+      default_language: 'fr', locale: 'fr-BE', timezone: 'America/New_York',
+    });
+    const columns = await upgradeClient.query(
+      `SELECT table_name, column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND column_name IN ('ui_language', 'language')
+       ORDER BY table_name, column_name`,
+    );
+    assert.deepEqual(columns.rows.map((row) => `${row.table_name}.${row.column_name}`), [
+      'admin_users.ui_language', 'application_terminology.language', 'classes.language',
+      'course_sessions.language', 'students.language',
+    ]);
+    const terminology = await upgradeClient.query(
+      `SELECT language, student_singular, student_plural, class_singular, class_plural,
+              session_singular, session_plural, attendance_singular, attendance_plural,
+              instructor_singular, instructor_plural, membership_singular, membership_plural
+       FROM application_terminology ORDER BY language`,
+    );
+    assert.deepEqual(terminology.rows, [
+      {
+        language: 'en', student_singular: 'Student', student_plural: 'Students',
+        class_singular: 'Class', class_plural: 'Classes', session_singular: 'Session',
+        session_plural: 'Sessions', attendance_singular: 'Attendance', attendance_plural: 'Attendance',
+        instructor_singular: 'Instructor', instructor_plural: 'Instructors',
+        membership_singular: 'Registration', membership_plural: 'Registrations',
+      },
+      { language: 'fr', ...customizedFrench },
+    ]);
+    await upgradeClient.query("UPDATE application_terminology SET student_singular = 'Learner' WHERE language = 'en'");
+    await upgradeClient.end();
+    upgradeClient = null;
+    runPostgresCommand(process.execPath, ['src/db/migrate.js'], {
+      ...process.env,
+      APP_TIMEZONE: 'America/New_York',
+      DATABASE_URL: databaseUrlFor(upgradeDatabaseName),
+    });
+    upgradeClient = new Client({ connectionString: databaseUrlFor(upgradeDatabaseName) });
+    await upgradeClient.connect();
+    const repeated = await upgradeClient.query(
+      "SELECT student_singular FROM application_terminology WHERE language = 'en'",
+    );
+    assert.equal(repeated.rows[0].student_singular, 'Learner');
+  } finally {
+    if (upgradeClient) await upgradeClient.end();
+    if (administrationConnected) {
+      await administrationClient.query(`DROP DATABASE IF EXISTS "${upgradeDatabaseName}" WITH (FORCE)`);
+      await administrationClient.end();
+    }
+  }
+});
 
 async function findValuesAcrossPublicTables(client, values) {
   const tables = await client.query(
@@ -198,7 +625,7 @@ test('SQL session punctuality aggregates match fixed JS boundary semantics', asy
     assert.equal(exportData.attendance.length, 1);
     assert.equal(exportData.audit.length, 1);
     assert.equal(Object.hasOwn(exportData.identity, 'id'), false);
-    const workbook = buildParticipantDataWorkbook(exportData);
+    const workbook = buildParticipantDataWorkbook(exportData, { language: 'fr' });
     assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ['Identité', 'Activités', 'Présences', 'Audit']);
   } finally {
     client.release();
@@ -350,7 +777,7 @@ test('eligible participant anonymization is atomic, redacts PII, invalidates QR,
     assert.deepEqual(result.counts, preview.counts);
 
     const anonymized = await client.query(
-      `SELECT first_name, last_name, email, student_code, qr_token, active, anonymized_at
+      `SELECT first_name, last_name, email, student_code, qr_token, active, language, anonymized_at
        FROM students WHERE id = $1`,
       [fixture.id],
     );
@@ -362,6 +789,7 @@ test('eligible participant anonymization is atomic, redacts PII, invalidates QR,
     assert.notEqual(row.student_code, former.studentCode);
     assert.notEqual(row.qr_token, fixture.qr_token);
     assert.equal(row.active, false);
+    assert.equal(row.language, null);
     assert.equal(row.anonymized_at.toISOString(), '2026-09-12T12:00:00.000Z');
     await assert.rejects(
       client.query('UPDATE students SET active = TRUE WHERE id = $1', [fixture.id]),
@@ -434,12 +862,12 @@ test('eligible participant anonymization is atomic, redacts PII, invalidates QR,
     for (const value of formerValues) assert.equal(exportText.toLocaleLowerCase().includes(value.toLocaleLowerCase()), false);
     assert.equal(exportText.includes(row.email), false);
     assert.equal(exportText.includes(row.student_code), false);
-    assert.equal(exportData.identity.firstName, 'Supprimé lors de l’anonymisation');
-    assert.equal(exportData.identity.lastName, 'Supprimé lors de l’anonymisation');
-    assert.equal(exportData.identity.email, 'Supprimé lors de l’anonymisation');
-    assert.equal(exportData.identity.participantCode, 'Remplacé lors de l’anonymisation');
+    assert.equal(exportData.identity.firstName, null);
+    assert.equal(exportData.identity.lastName, null);
+    assert.equal(exportData.identity.email, null);
+    assert.equal(exportData.identity.participantCode, null);
     assert.equal(exportData.identity.anonymizedAt.toISOString(), '2026-09-12T12:00:00.000Z');
-    const workbook = buildParticipantDataWorkbook(exportData);
+    const workbook = buildParticipantDataWorkbook(exportData, { language: 'fr' });
     const workbookText = workbook.worksheets
       .flatMap((sheet) => sheet.getSheetValues())
       .flat(Infinity)
@@ -561,13 +989,20 @@ test('anonymized participant survives a real custom-format backup and isolated r
   };
   try {
     await sourceClient.query('UPDATE data_retention_configuration SET inactive_student_retention_months = 12 WHERE id = 1');
+    await sourceClient.query("UPDATE application_terminology SET student_singular = 'Learner archive' WHERE language = 'en'");
+    await sourceClient.query("UPDATE application_terminology SET student_singular = 'Navigateur archive' WHERE language = 'fr'");
     const fixture = await createAnonymizationFixture(sourceClient, 'restore', former);
     const session = await sourceClient.query(
       `INSERT INTO course_sessions
-         (class_id, date, title, instructor, state, started_at, closed_at, start_time)
-       VALUES ($1, DATE '2020-01-02', 'Restore history', 'Test', 'closed', NOW(), NOW(), '20:00')
+         (class_id, date, title, instructor, state, started_at, closed_at, start_time, language)
+       VALUES ($1, DATE '2020-01-02', 'Restore history', 'Test', 'closed', NOW(), NOW(), '20:00', 'en')
        RETURNING id`,
       [fixture.classId],
+    );
+    await sourceClient.query("UPDATE classes SET language = 'fr' WHERE id = $1", [fixture.classId]);
+    await sourceClient.query(
+      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type, ui_language)
+       VALUES ('Restore language user', 'restore-language@example.invalid', NULL, 'manager', TRUE, 'otp', 'fr')`,
     );
     await sourceClient.query(
       `INSERT INTO attendance_records (session_id, student_id, status, checked_in_at)
@@ -676,14 +1111,37 @@ test('anonymized participant survives a real custom-format backup and isolated r
     });
 
     const restoredExport = await loadParticipantDataExport(fixture.public_id, restoreClient);
-    assert.equal(restoredExport.identity.email, 'Supprimé lors de l’anonymisation');
-    assert.equal(restoredExport.identity.participantCode, 'Remplacé lors de l’anonymisation');
+    assert.equal(restoredExport.identity.email, null);
+    assert.equal(restoredExport.identity.participantCode, null);
     const formerValues = [...Object.values(former), String(fixture.qr_token)];
     assert.deepEqual(await findValuesAcrossPublicTables(restoreClient, formerValues), []);
-    const migrations = await restoreClient.query(
-      "SELECT COUNT(*)::integer AS count FROM schema_migrations WHERE name = '024_student_anonymization.sql'",
+    const restoredInternationalSettings = await restoreClient.query(
+      'SELECT default_language, locale, timezone FROM international_settings WHERE id = 1',
     );
-    assert.equal(migrations.rows[0].count, 1);
+    assert.deepEqual(restoredInternationalSettings.rows[0], {
+      default_language: 'en', locale: 'fr-BE', timezone: 'Europe/Brussels',
+    });
+    const restoredTerminology = await restoreClient.query(
+      'SELECT language, student_singular, class_singular FROM application_terminology ORDER BY language',
+    );
+    assert.deepEqual(restoredTerminology.rows, [
+      { language: 'en', student_singular: 'Learner archive', class_singular: 'Class' },
+      { language: 'fr', student_singular: 'Navigateur archive', class_singular: 'Activité' },
+    ]);
+    const restoredLanguageOverrides = await restoreClient.query(
+      `SELECT
+         (SELECT language FROM classes WHERE id = $1) AS class_language,
+         (SELECT language FROM course_sessions WHERE id = $2) AS session_language,
+         (SELECT ui_language FROM admin_users WHERE email = 'restore-language@example.invalid') AS ui_language`,
+      [fixture.classId, session.rows[0].id],
+    );
+    assert.deepEqual(restoredLanguageOverrides.rows[0], {
+      class_language: 'fr', session_language: 'en', ui_language: 'fr',
+    });
+    const migrations = await restoreClient.query(
+      "SELECT COUNT(*)::integer AS count FROM schema_migrations WHERE name IN ('024_student_anonymization.sql', '025_internationalization_foundation.sql', '026_localized_application_terminology.sql')",
+    );
+    assert.equal(migrations.rows[0].count, 3);
   } finally {
     if (restoreClient) await restoreClient.end();
     if (administrationClient) {
@@ -755,6 +1213,71 @@ test('transaction-time eligibility rejects active, active-membership, recent, di
     const once = await createAnonymizationFixture(client, 'once', { membership: false });
     await anonymizeStudent(once.public_id, { transactionPool: pool, now: new Date('2026-09-12T12:00:00Z') });
     await expectAnonymizationError(once.public_id, 'STUDENT_ALREADY_ANONYMIZED');
+  } finally {
+    client.release();
+  }
+});
+
+test('operational reset removes language overrides with operational rows and preserves global/user settings', async () => {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      `UPDATE international_settings
+       SET default_language = 'fr', locale = 'fr-FR', timezone = 'Europe/Paris'
+       WHERE id = 1`,
+    );
+    await client.query("UPDATE application_terminology SET student_plural = 'Crew' WHERE language = 'en'");
+    const user = await client.query(
+      `INSERT INTO admin_users (name, email, password_hash, role, active, account_type, ui_language)
+       VALUES ('Reset language user', 'reset-language@example.invalid', NULL, 'manager', TRUE, 'otp', 'en')
+       RETURNING id`,
+    );
+    const course = await client.query(
+      "INSERT INTO classes (name, language) VALUES ('Reset language class', 'fr') RETURNING id",
+    );
+    const student = await client.query(
+      `INSERT INTO students (email, first_name, last_name, student_code, language)
+       VALUES ('reset-language-student@example.invalid', 'Reset', 'Student', $1, 'en')
+       RETURNING id`,
+      [nextStudentCode()],
+    );
+    await client.query(
+      'INSERT INTO student_classes (student_id, class_id) VALUES ($1, $2)',
+      [student.rows[0].id, course.rows[0].id],
+    );
+    await client.query(
+      `INSERT INTO course_sessions (class_id, date, title, instructor, language)
+       VALUES ($1, DATE '2026-09-12', 'Reset session', 'Test', 'en')`,
+      [course.rows[0].id],
+    );
+    await resetOperationalData({ alreadyLocked: true });
+    const counts = await client.query(`SELECT
+      (SELECT COUNT(*)::integer FROM students) AS students,
+      (SELECT COUNT(*)::integer FROM classes) AS classes,
+      (SELECT COUNT(*)::integer FROM course_sessions) AS sessions`);
+    assert.deepEqual(counts.rows[0], { students: 0, classes: 0, sessions: 0 });
+    const settings = await client.query(
+      'SELECT default_language, locale, timezone FROM international_settings WHERE id = 1',
+    );
+    assert.deepEqual(settings.rows[0], {
+      default_language: 'fr', locale: 'fr-FR', timezone: 'Europe/Paris',
+    });
+    const preservedUser = await client.query(
+      'SELECT ui_language FROM admin_users WHERE id = $1',
+      [user.rows[0].id],
+    );
+    assert.equal(preservedUser.rows[0].ui_language, 'en');
+    const preservedTerminology = await client.query(
+      "SELECT student_plural FROM application_terminology WHERE language = 'en'",
+    );
+    assert.equal(preservedTerminology.rows[0].student_plural, 'Crew');
+    await client.query('DELETE FROM admin_users WHERE id = $1', [user.rows[0].id]);
+    await client.query(
+      `UPDATE international_settings
+       SET default_language = 'en', locale = 'fr-BE', timezone = 'Europe/Brussels'
+       WHERE id = 1`,
+    );
+    await client.query("UPDATE application_terminology SET student_plural = 'Students' WHERE language = 'en'");
   } finally {
     client.release();
   }

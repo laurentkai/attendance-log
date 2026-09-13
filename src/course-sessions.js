@@ -7,7 +7,7 @@ const { formatDateForDisplay, formatDateForInput } = require('./date-format');
 const { parseStudentQrPayload } = require('./student-qr');
 const { hasPermission, permissions } = require('./permissions');
 const { isValidPublicId } = require('./public-id');
-const { TOLERANCE_VALUES, calculatePunctuality, isValidTolerance } = require('./punctuality');
+const { TOLERANCE_VALUES, calculatePunctuality, formatPunctualityLabel, isValidTolerance } = require('./punctuality');
 const {
   loadSessionSummaryConfiguration,
   loadSummaryAdminOptions,
@@ -20,21 +20,23 @@ const {
 const { sendSessionSummary } = require('./session-summary');
 const { recordStudentActivity } = require('./student-activity');
 const { getTerm } = require('./terminology');
-const { businessTerm, escapeHtml, renderPage, renderMessagePage } = require('./ui');
+const { normalizeLanguageOverride, t } = require('./i18n');
+const { businessTerm, escapeHtml, renderLanguageOptions, renderPage, renderMessagePage } = require('./ui');
 
 const router = express.Router();
 const requireAttendanceManagement = requirePermission(permissions.manageAttendance);
 const requireSessionManagement = requirePermission(permissions.manageSessions);
 
-function renderSessionNotFoundPage() {
-  return renderMessagePage(`${getTerm('session')} introuvable`, 'L’élément demandé n’existe pas.', 404);
+function renderSessionNotFoundPage(language) {
+  return renderMessagePage(t(language, 'sessions.error.not_found.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.not_found.message'), 404, language);
 }
 
-function renderSessionReadOnlyPage() {
+function renderSessionReadOnlyPage(language) {
   return renderMessagePage(
-    `${getTerm('session')} en lecture seule`,
-    'Réouverture requise avant modification.',
+    t(language, 'sessions.error.readonly.title', { session: getTerm(language, 'session') }),
+    t(language, 'sessions.error.readonly.message'),
     409,
+    language,
   );
 }
 
@@ -83,50 +85,52 @@ function getFormValues(body = {}) {
       || body.punctuality_tolerance_override_minutes === undefined
       ? null
       : Number.parseInt(body.punctuality_tolerance_override_minutes, 10),
+    language: normalizeLanguageOverride(body.language),
     ...summaryConfiguration,
     summaryConfigurationError,
   };
 }
 
-function validateForm(values) {
+function validateForm(values, language) {
   if (!isValidPublicId(values.class_id)) {
-    return `Sélectionnez une ${getTerm('class').toLocaleLowerCase('fr')}.`;
+    return t(language, 'sessions.validation.class', { class: getTerm(language, 'class') });
   }
   if (!isValidDate(values.date)) {
-    return 'La date est obligatoire et doit être valide.';
+    return t(language, 'sessions.validation.date');
   }
   if (!values.title) {
-    return 'Le titre est obligatoire.';
+    return t(language, 'sessions.validation.title');
   }
   if (!values.instructor) {
-    return `Le nom du ${getTerm('instructor').toLocaleLowerCase('fr')} est obligatoire.`;
+    return t(language, 'sessions.validation.instructor', { instructor: getTerm(language, 'instructor') });
   }
   if (values.start_time_invalid) {
-    return 'L’heure de début doit être une heure valide.';
+    return t(language, 'sessions.validation.start_time');
   }
   if (values.punctuality_tolerance_override_minutes !== null
     && !isValidTolerance(values.punctuality_tolerance_override_minutes)) {
-    return 'Sélectionnez une tolérance de ponctualité valide.';
+    return t(language, 'sessions.validation.tolerance');
   }
   if (values.summaryConfigurationError) {
-    return 'Vérifiez les destinataires et le réglage Excel du résumé automatique.';
+    return t(language, 'sessions.validation.summary');
   }
+  if (values.language === undefined) return t(language, 'sessions.validation.language');
   return '';
 }
 
-function renderSessionForm({ title, action, submitLabel, values, classes, adminUsers = [], error = '', edit = false }) {
+function renderSessionForm({ title, action, submitLabel, values, classes, adminUsers = [], error = '', edit = false, language }) {
   const errorMessage = error
     ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
   const classField = edit
     ? `<div class="form-field">
-         <p><strong>${businessTerm('class')} :</strong> ${escapeHtml(values.class_name)}</p>
+         <p><strong>${businessTerm(language, 'class')} :</strong> ${escapeHtml(values.class_name)}</p>
          <input name="class_id" type="hidden" value="${escapeHtml(values.class_id)}">
        </div>`
     : `<div class="form-field">
-         <label for="class_id">${businessTerm('class')} <span aria-hidden="true">*</span></label>
+         <label for="class_id">${businessTerm(language, 'class')} <span aria-hidden="true">*</span></label>
          <select class="form-select" id="class_id" name="class_id" required data-session-class>
-           <option value="">Sélectionner dans la liste</option>
+           <option value="">${escapeHtml(t(language, 'sessions.form.select_class'))}</option>
            ${classes.map((classRecord) => `<option value="${classRecord.public_id}" data-punctuality-tolerance="${classRecord.punctuality_tolerance_minutes}" data-summary-attach-xlsx="${classRecord.summary_attach_xlsx ? 'true' : 'false'}"${classRecord.public_id === values.class_id ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('')}
          </select>
        </div>`;
@@ -148,53 +152,60 @@ function renderSessionForm({ title, action, submitLabel, values, classes, adminU
       ${classField}
 
       <div class="form-field">
-        <label for="date">Date <span aria-hidden="true">*</span></label>
+        <label for="date">${escapeHtml(t(language, 'sessions.form.date'))} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="date" name="date" type="date" value="${escapeHtml(formatDateForInput(values.date))}" required>
       </div>
 
       <div class="form-field">
-        <label for="start-time">Heure de début</label>
+        <label for="start-time">${escapeHtml(t(language, 'sessions.form.start_time'))}</label>
         <input class="form-control" id="start-time" name="start_time" type="time" value="${escapeHtml(normalizeClockTime(values.start_time || ''))}" autocomplete="off">
-        <p class="form-text mb-0">Facultative. Sans heure de début, aucune ponctualité n’est calculée.</p>
+        <p class="form-text mb-0">${escapeHtml(t(language, 'sessions.form.start_time_help'))}</p>
       </div>
 
       <div class="form-field">
-        <label for="session-punctuality-tolerance">Tolérance de ponctualité</label>
+        <label for="session-punctuality-tolerance">${escapeHtml(t(language, 'sessions.form.tolerance'))}</label>
         <select class="form-select" id="session-punctuality-tolerance" name="punctuality_tolerance_override_minutes" data-session-tolerance>
-          <option value="" data-inherit-option>Hériter de l’activité (+${inheritedTolerance} min)</option>
-          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_override_minutes) === minutes ? ' selected' : ''}>+${minutes} minutes</option>`).join('')}
+          <option value="" data-inherit-option>${escapeHtml(t(language, 'sessions.form.inherit_activity', { class: getTerm(language, 'class'), minutes: inheritedTolerance }))}</option>
+          ${TOLERANCE_VALUES.map((minutes) => `<option value="${minutes}"${Number(values.punctuality_tolerance_override_minutes) === minutes ? ' selected' : ''}>${escapeHtml(t(language, 'punctuality.tolerance_option', { minutes }))}</option>`).join('')}
         </select>
       </div>
 
       <div class="form-field">
-        <label for="title">Titre <span aria-hidden="true">*</span></label>
+        <label for="title">${escapeHtml(t(language, 'sessions.form.title'))} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="title" name="title" type="text" value="${escapeHtml(values.title)}" autocomplete="off" required>
       </div>
 
       <div class="form-field">
-        <label for="instructor">${businessTerm('instructor')} <span aria-hidden="true">*</span></label>
+        <label for="language">${escapeHtml(t(language, 'sessions.form.generated_language'))}</label>
+        <select class="form-select" id="language" name="language">
+          ${renderLanguageOptions(values.language, { language, emptyLabel: t(language, 'sessions.form.inherit_activity_language', { class: getTerm(language, 'class') }) })}
+        </select>
+      </div>
+
+      <div class="form-field">
+        <label for="instructor">${businessTerm(language, 'instructor')} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="instructor" name="instructor" type="text" value="${escapeHtml(values.instructor)}" autocomplete="off" required>
       </div>
 
       <div class="form-field">
-        <label for="notes">Notes</label>
+        <label for="notes">${escapeHtml(t(language, 'sessions.form.notes'))}</label>
         <textarea class="form-control" id="notes" name="notes" rows="5" autocomplete="off">${escapeHtml(values.notes ?? '')}</textarea>
       </div>
 
       ${renderSummaryConfigurationFields({
-        adminUsers, values, scope: 'session', inheritedAttachXlsx,
+        adminUsers, values, scope: 'session', inheritedAttachXlsx, language,
       })}
 
       <div class="form-actions d-flex flex-wrap gap-2">
         <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
-        <a class="btn btn-outline-secondary" href="/sessions">Annuler</a>
+        <a class="btn btn-outline-secondary" href="/sessions">${escapeHtml(t(language, 'action.cancel'))}</a>
       </div>
-    </form>`);
+    </form>`, { language });
 }
 
 async function getClasses() {
   const result = await pool.query(
-    `SELECT public_id, name, punctuality_tolerance_minutes, summary_attach_xlsx
+    `SELECT public_id, name, punctuality_tolerance_minutes, summary_attach_xlsx, language
      FROM classes ORDER BY LOWER(name), id`,
   );
   return result.rows;
@@ -228,7 +239,7 @@ async function loadRoster(session) {
   );
 }
 
-function decorateAttendanceStudent(student, session) {
+function decorateAttendanceStudent(student, session, language) {
   const punctuality = calculatePunctuality({
     status: student.status,
     checkedInAt: student.checked_in_at,
@@ -238,7 +249,7 @@ function decorateAttendanceStudent(student, session) {
   return {
     ...student,
     arrival_time: student.status === 'present' ? formatLocalTime(student.checked_in_at) : '',
-    punctuality,
+    punctuality: { ...punctuality, label: formatPunctualityLabel(punctuality, language) },
   };
 }
 
@@ -322,12 +333,8 @@ async function markStudentPresent(client, sessionId, studentId) {
   };
 }
 
-function getStateLabel(state) {
-  return {
-    scheduled: 'État : planifié',
-    open: 'État : ouvert',
-    closed: 'État : clôturé',
-  }[state];
+function getStateLabel(state, language) {
+  return t(language, 'sessions.state', { state: t(language, `status.${state}`) });
 }
 
 router.param('id', async (request, _response, next, value) => {
@@ -355,6 +362,7 @@ router.param('studentId', async (request, _response, next, value) => {
 });
 
 router.get('/', async (request, response) => {
+  const language = request.uiLanguage;
   const searchQuery = typeof request.query.q === 'string' ? request.query.q.trim().slice(0, 100) : '';
   const searchPattern = `%${searchQuery}%`;
   const classId = isValidPublicId(request.query.class_id || '') ? request.query.class_id : '';
@@ -380,13 +388,13 @@ router.get('/', async (request, response) => {
     ]);
     const classRecord = classResult.rows[0];
     if (classId && !classRecord) {
-      const page = renderMessagePage(`${getTerm('class')} introuvable`, 'L’élément demandé n’existe pas.', 404);
+      const page = renderMessagePage(t(language, 'sessions.error.class_not_found.title', { class: getTerm(language, 'class') }), t(language, 'sessions.error.not_found.message'), 404, language);
       response.status(page.status).send(page.html);
       return;
     }
     const notices = {
-      created: 'La session a été créée.',
-      updated: 'La session a été mise à jour.',
+      created: t(language, 'sessions.notice.created', { session: getTerm(language, 'session') }),
+      updated: t(language, 'sessions.notice.updated', { session: getTerm(language, 'session') }),
     };
     const notice = notices[request.query.notice]
       ? `<p class="alert alert-success" role="status">${escapeHtml(notices[request.query.notice])}</p>`
@@ -394,8 +402,8 @@ router.get('/', async (request, response) => {
     const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
     const sessions = result.rows.length === 0
       ? `<p class="empty-state">${searchQuery
-        ? 'Aucune session ne correspond à la recherche.'
-        : 'Aucune session n’est enregistrée pour le moment.'}</p>`
+        ? escapeHtml(t(language, 'sessions.list.no_search_results', { session: getTerm(language, 'session') }))
+        : escapeHtml(t(language, 'sessions.list.empty', { session: getTerm(language, 'session') }))}</p>`
       : `<div class="list-group compact-list">${result.rows.map((session) => `
           <article class="list-group-item compact-row compact-row-status session-row"${session.state === 'open' ? ` data-live-session-card data-session-id="${session.public_id}"` : ''}>
             <div class="compact-identity session-identity">
@@ -404,60 +412,62 @@ router.get('/', async (request, response) => {
               <p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p>
             </div>
             <div class="compact-status">
-              <span class="badge status-badge status-${session.state}" data-session-state>${getStateLabel(session.state)}</span>
+              <span class="badge status-badge status-${session.state}" data-session-state>${escapeHtml(getStateLabel(session.state, language))}</span>
             </div>
-            <div class="compact-actions compact-actions--split" aria-label="Actions disponibles pour « ${escapeHtml(session.title)} »">
-              <a class="btn btn-primary" href="/sessions/${session.public_id}">${session.state === 'scheduled' ? `Voir la ${businessTerm('session').toLocaleLowerCase('fr')}` : businessTerm('attendance', 'plural')}</a>
+            <div class="compact-actions compact-actions--split" aria-label="${escapeHtml(t(language, 'sessions.list.actions_for', { title: session.title }))}">
+              <a class="btn btn-primary" href="/sessions/${session.public_id}">${session.state === 'scheduled' ? escapeHtml(t(language, 'sessions.list.view_session', { session: getTerm(language, 'session') })) : businessTerm(language, 'attendance', 'plural')}</a>
               ${canManageSessions ? `<span class="session-edit-slot">
-                <a class="btn btn-light" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
-                <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>Modifier</button>
+                <a class="btn btn-light" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>${escapeHtml(t(language, 'action.edit'))}</a>
+                <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled${session.state === 'closed' ? '' : ' hidden'}>${escapeHtml(t(language, 'action.edit'))}</button>
               </span>` : ''}
             </div>
           </article>`).join('')}</div>`;
 
-    response.send(renderPage(getTerm('session', 'plural'), `
+    response.send(renderPage(getTerm(language, 'session', 'plural'), `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
         <div>
-          <h1>${businessTerm('session', 'plural')}</h1>
-          <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : canManageSessions ? `Planifiez et gérez les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.` : `Accédez aux ${businessTerm('session', 'plural').toLocaleLowerCase('fr')} et gérez les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`}</p>
+          <h1>${businessTerm(language, 'session', 'plural')}</h1>
+          <p class="page-description">${classRecord ? escapeHtml(classRecord.name) : escapeHtml(t(language, canManageSessions ? 'sessions.list.manage_description' : 'sessions.list.attendance_description', { attendance: getTerm(language, 'attendance', 'plural'), sessions: getTerm(language, 'session', 'plural') }))}</p>
         </div>
-        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.public_id}` : ''}">Ajouter</a>` : ''}
+        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new${classRecord ? `?class_id=${classRecord.public_id}` : ''}">${escapeHtml(t(language, 'action.add'))}</a>` : ''}
       </header>
-      ${classRecord && canManageSessions ? `<nav class="nav nav-pills context-tabs" aria-label="Gestion de « ${escapeHtml(classRecord.name)} »">
-        <a class="nav-link" href="/classes/${classRecord.public_id}">${businessTerm('student', 'plural')}</a>
-        <a class="nav-link active" href="/sessions?class_id=${classRecord.public_id}" aria-current="page">${businessTerm('session', 'plural')}</a>
+      ${classRecord && canManageSessions ? `<nav class="nav nav-pills context-tabs" aria-label="${escapeHtml(t(language, 'sessions.list.manage_context', { name: classRecord.name }))}">
+        <a class="nav-link" href="/classes/${classRecord.public_id}">${businessTerm(language, 'student', 'plural')}</a>
+        <a class="nav-link active" href="/sessions?class_id=${classRecord.public_id}" aria-current="page">${businessTerm(language, 'session', 'plural')}</a>
       </nav>` : ''}
       <form class="search" method="get" action="/sessions" role="search">
-        <label for="session-search">Rechercher une ${businessTerm('session').toLocaleLowerCase('fr')}</label>
+        <label for="session-search">${escapeHtml(t(language, 'sessions.list.search_label', { session: getTerm(language, 'session') }))}</label>
         ${classId ? `<input name="class_id" type="hidden" value="${classId}">` : ''}
         <div class="search-controls">
-          <input class="form-control" id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="Titre, ${businessTerm('class').toLocaleLowerCase('fr')} ou ${businessTerm('instructor').toLocaleLowerCase('fr')}…">
-          <button class="btn btn-primary" type="submit">Rechercher</button>
-          ${searchQuery ? `<a class="btn btn-outline-secondary" href="/sessions${classId ? `?class_id=${classId}` : ''}">Effacer</a>` : ''}
+          <input class="form-control" id="session-search" name="q" type="search" value="${escapeHtml(searchQuery)}" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'sessions.list.search_placeholder', { class: getTerm(language, 'class'), instructor: getTerm(language, 'instructor') }))}">
+          <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'action.search'))}</button>
+          ${searchQuery ? `<a class="btn btn-outline-secondary" href="/sessions${classId ? `?class_id=${classId}` : ''}">${escapeHtml(t(language, 'action.clear'))}</a>` : ''}
         </div>
       </form>
       ${notice}
-      ${sessions}`));
+      ${sessions}`, { language }));
   } catch (error) {
     console.error('Unable to list course sessions:', error);
-    const page = renderMessagePage(`${getTerm('session', 'plural')} indisponibles`, 'Impossible de charger la liste pour le moment.');
+    const page = renderMessagePage(t(language, 'sessions.error.list.title', { sessions: getTerm(language, 'session', 'plural') }), t(language, 'sessions.error.list.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/new', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   try {
     const [classes, adminUsers] = await Promise.all([getClasses(), loadSummaryAdminOptions()]);
     response.send(renderSessionForm({
-      title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
+      title: t(language, 'sessions.form.create_title', { session: getTerm(language, 'session') }),
       action: '/sessions',
-      submitLabel: 'Créer',
+      submitLabel: t(language, 'sessions.form.create'),
       values: {
         class_id: isValidPublicId(request.query.class_id || '') ? request.query.class_id : '',
         date: '',
         title: '',
         instructor: '',
         notes: '',
+        language: null,
         start_time: '',
         punctuality_tolerance_override_minutes: null,
         adminRecipientIds: [],
@@ -466,33 +476,36 @@ router.get('/new', requireSessionManagement, async (request, response) => {
       },
       classes,
       adminUsers,
+      language,
     }));
   } catch (error) {
     console.error('Unable to load the course session form:', error);
-    const page = renderMessagePage('Formulaire indisponible', 'Impossible de charger le formulaire pour le moment.');
+    const page = renderMessagePage(t(language, 'sessions.error.form.title'), t(language, 'sessions.error.form.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   const values = getFormValues(request.body);
-  const validationError = validateForm(values);
+  const validationError = validateForm(values, language);
 
   if (validationError) {
     try {
       const [classes, adminUsers] = await Promise.all([getClasses(), loadSummaryAdminOptions()]);
       response.status(400).send(renderSessionForm({
-        title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
+        title: t(language, 'sessions.form.create_title', { session: getTerm(language, 'session') }),
         action: '/sessions',
-        submitLabel: 'Créer',
+        submitLabel: t(language, 'sessions.form.create'),
         values,
         classes,
         adminUsers,
         error: validationError,
+        language,
       }));
     } catch (error) {
       console.error('Unable to reload the course session form:', error);
-      const page = renderMessagePage('Formulaire indisponible', 'Impossible de charger le formulaire pour le moment.');
+      const page = renderMessagePage(t(language, 'sessions.error.form.title'), t(language, 'sessions.error.form.message'), 503, language);
       response.status(page.status).send(page.html);
     }
     return;
@@ -503,8 +516,8 @@ router.post('/', requireSessionManagement, async (request, response) => {
       const inserted = await client.query(
         `INSERT INTO course_sessions
            (class_id, date, title, instructor, notes, start_time,
-            punctuality_tolerance_override_minutes)
-         SELECT c.id, $2, $3, $4, $5, $6, $7
+            punctuality_tolerance_override_minutes, language)
+         SELECT c.id, $2, $3, $4, $5, $6, $7, $8
          FROM classes c WHERE c.public_id = $1
          RETURNING id, public_id`,
         [
@@ -515,6 +528,7 @@ router.post('/', requireSessionManagement, async (request, response) => {
           values.notes || null,
           values.start_time || null,
           values.punctuality_tolerance_override_minutes,
+          values.language,
         ],
       );
       if (inserted.rowCount > 0) {
@@ -531,6 +545,7 @@ router.post('/', requireSessionManagement, async (request, response) => {
           state: 'scheduled',
           start_time: values.start_time || null,
           punctuality_tolerance_override_minutes: values.punctuality_tolerance_override_minutes,
+          language: values.language,
           ...summaryConfigurationSnapshot(values, 'session'),
         },
       });
@@ -539,13 +554,14 @@ router.post('/', requireSessionManagement, async (request, response) => {
     if (result.rowCount === 0) {
       const [classes, adminUsers] = await Promise.all([getClasses(), loadSummaryAdminOptions()]);
       response.status(400).send(renderSessionForm({
-        title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
+        title: t(language, 'sessions.form.create_title', { session: getTerm(language, 'session') }),
         action: '/sessions',
-        submitLabel: 'Créer',
+        submitLabel: t(language, 'sessions.form.create'),
         values,
         classes,
         adminUsers,
-        error: 'La sélection ne correspond à aucune activité.',
+        error: t(language, 'sessions.error.class_selection', { class: getTerm(language, 'class') }),
+        language,
       }));
       return;
     }
@@ -556,9 +572,9 @@ router.post('/', requireSessionManagement, async (request, response) => {
         getClasses().catch(() => []), loadSummaryAdminOptions().catch(() => []),
       ]);
       response.status(400).send(renderSessionForm({
-        title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
-        action: '/sessions', submitLabel: 'Créer', values, classes, adminUsers,
-        error: 'Vérifiez les destinataires du résumé automatique.',
+        title: t(language, 'sessions.form.create_title', { session: getTerm(language, 'session') }),
+        action: '/sessions', submitLabel: t(language, 'sessions.form.create'), values, classes, adminUsers,
+        error: t(language, 'sessions.error.summary_recipients'), language,
       }));
       return;
     }
@@ -568,20 +584,22 @@ router.post('/', requireSessionManagement, async (request, response) => {
       loadSummaryAdminOptions().catch(() => []),
     ]);
     response.status(500).send(renderSessionForm({
-      title: `Créer une ${getTerm('session').toLocaleLowerCase('fr')}`,
+      title: t(language, 'sessions.form.create_title', { session: getTerm(language, 'session') }),
       action: '/sessions',
-      submitLabel: 'Créer',
+      submitLabel: t(language, 'sessions.form.create'),
       values,
       classes,
       adminUsers,
-      error: `Impossible de créer la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`,
+      error: t(language, 'sessions.error.create', { session: getTerm(language, 'session') }),
+      language,
     }));
   }
 });
 
 router.get('/:id/edit', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -589,7 +607,7 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
   try {
     const result = await pool.query(
       `SELECT cs.id, cs.public_id, c.public_id AS class_id, cs.date, cs.title, cs.instructor,
-              cs.notes, cs.state, cs.start_time, cs.punctuality_tolerance_override_minutes,
+              cs.notes, cs.state, cs.start_time, cs.punctuality_tolerance_override_minutes, cs.language,
               c.name AS class_name,
               c.punctuality_tolerance_minutes AS class_punctuality_tolerance_minutes,
               c.summary_attach_xlsx AS class_summary_attach_xlsx
@@ -599,12 +617,12 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
       [request.courseSessionId],
     );
     if (result.rowCount === 0) {
-      const page = renderSessionNotFoundPage();
+      const page = renderSessionNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
     if (result.rows[0].state === 'closed') {
-      const page = renderSessionReadOnlyPage();
+      const page = renderSessionReadOnlyPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -614,24 +632,26 @@ router.get('/:id/edit', requireSessionManagement, async (request, response) => {
       loadSummaryAdminOptions(),
     ]);
     response.send(renderSessionForm({
-      title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
+      title: t(language, 'sessions.form.edit_title', { session: getTerm(language, 'session') }),
       action: `/sessions/${result.rows[0].public_id}`,
-      submitLabel: 'Enregistrer',
+      submitLabel: t(language, 'action.save'),
       values: { ...result.rows[0], ...summaryConfiguration },
       classes: [],
       adminUsers,
       edit: true,
+      language,
     }));
   } catch (error) {
     console.error('Unable to load course session:', error);
-    const page = renderMessagePage(`${getTerm('session')} indisponible`, 'Impossible de charger l’élément demandé pour le moment.');
+    const page = renderMessagePage(t(language, 'sessions.error.unavailable.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.unavailable.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -639,24 +659,24 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
   try {
     const stateResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.courseSessionId]);
     if (stateResult.rowCount === 0) {
-      const page = renderSessionNotFoundPage();
+      const page = renderSessionNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
     if (stateResult.rows[0].state === 'closed') {
-      const page = renderSessionReadOnlyPage();
+      const page = renderSessionReadOnlyPage(language);
       response.status(page.status).send(page.html);
       return;
     }
   } catch (error) {
     console.error('Unable to verify course session state:', error);
-    const page = renderMessagePage('Modification impossible', `Impossible de vérifier la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
+    const page = renderMessagePage(t(language, 'sessions.error.update.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.verify', { session: getTerm(language, 'session') }), 503, language);
     response.status(page.status).send(page.html);
     return;
   }
 
   const values = getFormValues(request.body);
-  const validationError = validateForm(values);
+  const validationError = validateForm(values, language);
   if (validationError) {
     const classResult = await pool.query(
       `SELECT name, punctuality_tolerance_minutes, summary_attach_xlsx
@@ -664,9 +684,9 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
       [values.class_id],
     ).catch(() => ({ rows: [] }));
     response.status(400).send(renderSessionForm({
-      title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
+      title: t(language, 'sessions.form.edit_title', { session: getTerm(language, 'session') }),
       action: `/sessions/${request.params.id}`,
-      submitLabel: 'Enregistrer',
+      submitLabel: t(language, 'action.save'),
       values: {
         ...values,
         class_name: classResult.rows[0]?.name || '',
@@ -677,6 +697,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
       adminUsers: await loadSummaryAdminOptions().catch(() => []),
       error: validationError,
       edit: true,
+      language,
     }));
     return;
   }
@@ -685,7 +706,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
     const result = await withTransaction(pool, async (client) => {
       const current = await client.query(
         `SELECT id, public_id, date, title, instructor, notes, state, start_time,
-                punctuality_tolerance_override_minutes
+                punctuality_tolerance_override_minutes, language
          FROM course_sessions WHERE id = $1 FOR UPDATE`,
         [request.courseSessionId],
       );
@@ -694,8 +715,8 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
       const updated = await client.query(
         `UPDATE course_sessions
          SET date = $1, title = $2, instructor = $3, notes = $4, start_time = $5,
-             punctuality_tolerance_override_minutes = $6
-         WHERE id = $7 AND class_id = (SELECT id FROM classes WHERE public_id = $8)
+             punctuality_tolerance_override_minutes = $6, language = $7
+         WHERE id = $8 AND class_id = (SELECT id FROM classes WHERE public_id = $9)
            AND state IN ('scheduled', 'open')
          RETURNING id`,
         [
@@ -705,6 +726,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
           values.notes || null,
           values.start_time || null,
           values.punctuality_tolerance_override_minutes,
+          values.language,
           request.courseSessionId,
           values.class_id,
         ],
@@ -721,6 +743,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
             notes: current.rows[0].notes,
             start_time: normalizeClockTime(current.rows[0].start_time || '') || null,
             punctuality_tolerance_override_minutes: current.rows[0].punctuality_tolerance_override_minutes,
+            language: current.rows[0].language,
           },
           afterData: {
             date: values.date,
@@ -729,6 +752,7 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
             notes: values.notes || null,
             start_time: values.start_time || null,
             punctuality_tolerance_override_minutes: values.punctuality_tolerance_override_minutes,
+            language: values.language,
           },
         });
         const beforeSummary = summaryConfigurationSnapshot(previousSummary, 'session');
@@ -747,8 +771,8 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
     if (result.rowCount === 0) {
       const sessionResult = await pool.query('SELECT state FROM course_sessions WHERE id = $1', [request.courseSessionId]);
       const page = sessionResult.rows[0]?.state === 'closed'
-        ? renderSessionReadOnlyPage()
-        : renderSessionNotFoundPage();
+        ? renderSessionReadOnlyPage(language)
+        : renderSessionNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -761,8 +785,8 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
         [values.class_id],
       ).catch(() => ({ rows: [] }));
       response.status(400).send(renderSessionForm({
-        title: `Modifier la ${getTerm('session').toLocaleLowerCase('fr')}`,
-        action: `/sessions/${request.params.id}`, submitLabel: 'Enregistrer',
+        title: t(language, 'sessions.form.edit_title', { session: getTerm(language, 'session') }),
+        action: `/sessions/${request.params.id}`, submitLabel: t(language, 'action.save'),
         values: {
           ...values,
           class_name: classResult.rows[0]?.name || '',
@@ -770,19 +794,20 @@ router.post('/:id', requireSessionManagement, async (request, response) => {
           class_summary_attach_xlsx: classResult.rows[0]?.summary_attach_xlsx || false,
         },
         classes: [], adminUsers: await loadSummaryAdminOptions().catch(() => []),
-        error: 'Vérifiez les destinataires du résumé automatique.', edit: true,
+        error: t(language, 'sessions.error.summary_recipients'), edit: true, language,
       }));
       return;
     }
     console.error('Unable to update course session:', error);
-    const page = renderMessagePage('Modification impossible', `Impossible de modifier la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
+    const page = renderMessagePage(t(language, 'sessions.error.update.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.update', { session: getTerm(language, 'session') }), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/:id/status', async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    response.status(404).json({ error: `${getTerm('session')} introuvable.` });
+    response.status(404).json({ error: t(language, 'sessions.error.not_found.title', { session: getTerm(language, 'session') }) });
     return;
   }
 
@@ -799,12 +824,12 @@ router.get('/:id/status', async (request, response) => {
       [request.courseSessionId, getApplicationTimezone()],
     );
     if (sessionResult.rowCount === 0) {
-      response.status(404).json({ error: `${getTerm('session')} introuvable.` });
+      response.status(404).json({ error: t(language, 'sessions.error.not_found.title', { session: getTerm(language, 'session') }) });
       return;
     }
     const session = sessionResult.rows[0];
     const rosterResult = await loadRoster(session);
-    const roster = rosterResult.rows.map((student) => decorateAttendanceStudent(student, session));
+    const roster = rosterResult.rows.map((student) => decorateAttendanceStudent(student, session, language));
     response.set('Cache-Control', 'no-store');
     response.json({
       publicId: session.public_id,
@@ -816,7 +841,7 @@ router.get('/:id/status', async (request, response) => {
         status: student.status,
         arrivalTime: student.arrival_time || null,
         arrivalLabel: student.status === 'present'
-          ? student.arrival_time || 'Heure inconnue'
+          ? student.arrival_time || t(language, 'attendance.arrival_unknown')
           : '—',
         punctualityLabel: student.punctuality.label,
         punctualityStatus: student.punctuality.status,
@@ -824,13 +849,14 @@ router.get('/:id/status', async (request, response) => {
     });
   } catch (error) {
     console.error('Unable to load live course session status:', error);
-    response.status(500).json({ error: 'Impossible de charger l’état demandé.' });
+    response.status(500).json({ error: t(language, 'attendance.status_load_failed') });
   }
 });
 
 router.get('/:id/quick-attendance', async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -845,7 +871,7 @@ router.get('/:id/quick-attendance', async (request, response) => {
       [request.courseSessionId],
     );
     if (sessionResult.rowCount === 0) {
-      const page = renderSessionNotFoundPage();
+      const page = renderSessionNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -854,77 +880,75 @@ router.get('/:id/quick-attendance', async (request, response) => {
     const rosterResult = await loadRoster(session);
     const presentCount = rosterResult.rows.filter((student) => student.status === 'present').length;
     if (session.state !== 'open') {
-      response.status(409).send(renderPage(`Mode rapide des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, `
+      response.status(409).send(renderPage(t(language, 'attendance.quick.title', { attendance: getTerm(language, 'attendance', 'plural') }), `
         <div class="quick-attendance quick-attendance--unavailable">
-          <h1 class="visually-hidden">Mode rapide des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h1>
+          <h1 class="visually-hidden">${escapeHtml(t(language, 'attendance.quick.title', { attendance: getTerm(language, 'attendance', 'plural') }))}</h1>
           <header class="quick-topbar">
-            <strong class="quick-attendance-count">${presentCount} / ${rosterResult.rowCount} ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</strong>
-            <a class="quick-close" href="/sessions/${session.public_id}" aria-label="Fermer le mode rapide" data-quick-close><span aria-hidden="true">×</span></a>
+            <strong class="quick-attendance-count">${presentCount} / ${rosterResult.rowCount} ${businessTerm(language, 'attendance', 'plural').toLocaleLowerCase()}</strong>
+            <a class="quick-close" href="/sessions/${session.public_id}" aria-label="${escapeHtml(t(language, 'attendance.quick.close'))}" data-quick-close><span aria-hidden="true">×</span></a>
           </header>
-          <p class="alert alert-warning">${session.state === 'closed'
-            ? `La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Réouvrez-la avant de reprendre les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`
-            : `Ouvrez la ${businessTerm('session').toLocaleLowerCase('fr')} avant de prendre les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.`}</p>
-        </div>`, { navigation: false, pageClass: 'page--quick-attendance' }));
+          <p class="alert alert-warning">${escapeHtml(t(language, session.state === 'closed' ? 'attendance.quick.closed' : 'attendance.quick.scheduled', { session: getTerm(language, 'session'), attendance: getTerm(language, 'attendance', 'plural') }))}</p>
+        </div>`, { navigation: false, pageClass: 'page--quick-attendance', language }));
       return;
     }
 
     const eligibleStudents = rosterResult.rows.filter((student) => student.status !== 'present');
     const studentRows = eligibleStudents.map((student) => `
-      <article class="list-group-item compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+      <article class="list-group-item compact-row student-row quick-attendance-row" data-quick-student data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase())}">
         <div class="compact-identity student-identity">
           <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
           <p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
         </div>
         <div class="compact-actions">
           <form method="post" action="/sessions/${session.public_id}/quick-attendance/${student.public_id}" data-quick-present-form>
-            <button class="btn btn-primary" type="submit">Présent</button>
+            <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'status.present'))}</button>
           </form>
         </div>
       </article>`).join('');
 
-    response.send(renderPage(`Mode rapide des ${getTerm('attendance', 'plural').toLocaleLowerCase('fr')}`, `
+    response.send(renderPage(t(language, 'attendance.quick.title', { attendance: getTerm(language, 'attendance', 'plural') }), `
       <div class="quick-attendance" data-quick-attendance data-session-id="${session.public_id}">
-        <h1 class="visually-hidden">Mode rapide des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</h1>
+        <h1 class="visually-hidden">${escapeHtml(t(language, 'attendance.quick.title', { attendance: getTerm(language, 'attendance', 'plural') }))}</h1>
         <header class="quick-topbar">
-          <strong class="quick-attendance-count" aria-label="Nombre de ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}</strong>
+          <strong class="quick-attendance-count" aria-label="${escapeHtml(t(language, 'attendance.quick.count_aria', { attendance: getTerm(language, 'attendance', 'plural') }))}"><span data-present-count>${presentCount}</span> / <span data-total-count>${rosterResult.rowCount}</span> ${businessTerm(language, 'attendance', 'plural')}</strong>
           <div class="quick-topbar-actions">
             <button class="btn btn-light quick-undo" type="button" data-quick-undo disabled>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
                 <path d="m9 7-4 4 4 4"/>
                 <path d="M5 11h7a5 5 0 0 1 5 5v1"/>
               </svg>
-              <span>Annuler</span>
+              <span>${escapeHtml(t(language, 'action.undo'))}</span>
             </button>
-            <a class="quick-close" href="/sessions/${session.public_id}" aria-label="Fermer le mode rapide"><span aria-hidden="true">×</span></a>
+            <a class="quick-close" href="/sessions/${session.public_id}" aria-label="${escapeHtml(t(language, 'attendance.quick.close'))}"><span aria-hidden="true">×</span></a>
           </div>
         </header>
-        <p class="alert alert-warning" data-quick-readonly hidden>La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Le mode rapide est indisponible.</p>
-        <div class="nav nav-pills view-switch quick-mode-switch" role="group" aria-label="Mode de saisie">
-          <button class="nav-link active" type="button" aria-pressed="true" aria-controls="quick-manual-mode" data-quick-mode="manual">Recherche</button>
+        <p class="alert alert-warning" data-quick-readonly hidden>${escapeHtml(t(language, 'attendance.quick.readonly', { session: getTerm(language, 'session') }))}</p>
+        <div class="nav nav-pills view-switch quick-mode-switch" role="group" aria-label="${escapeHtml(t(language, 'attendance.quick.mode_aria'))}">
+          <button class="nav-link active" type="button" aria-pressed="true" aria-controls="quick-manual-mode" data-quick-mode="manual">${escapeHtml(t(language, 'attendance.quick.search'))}</button>
           <button class="nav-link" type="button" aria-pressed="false" aria-controls="quick-qr-mode" data-quick-mode="qr">QR</button>
         </div>
-        <section id="quick-manual-mode" class="quick-mode-panel" aria-label="Saisie manuelle" data-quick-mode-panel="manual">
+        <section id="quick-manual-mode" class="quick-mode-panel" aria-label="${escapeHtml(t(language, 'attendance.quick.manual_aria'))}" data-quick-mode-panel="manual">
           <div class="search quick-search">
-            <label class="visually-hidden" for="quick-attendance-search">Rechercher dans les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</label>
+            <label class="visually-hidden" for="quick-attendance-search">${escapeHtml(t(language, 'attendance.quick.search_students', { students: getTerm(language, 'student', 'plural') }))}</label>
             <div class="search-input-action">
-              <input class="form-control" id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="Nom ou code…" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
-              <button class="search-clear" type="button" aria-label="Effacer la recherche" data-quick-search-clear hidden><span aria-hidden="true">×</span></button>
+              <input class="form-control" id="quick-attendance-search" name="quick_attendance_filter" type="search" placeholder="${escapeHtml(t(language, 'attendance.quick.search_placeholder'))}" autocomplete="off" autocapitalize="none" enterkeyhint="search" spellcheck="false" aria-controls="quick-attendance-results" data-quick-search>
+              <button class="search-clear" type="button" aria-label="${escapeHtml(t(language, 'attendance.quick.clear_search'))}" data-quick-search-clear hidden><span aria-hidden="true">×</span></button>
             </div>
           </div>
           <span data-quick-feedback-anchor="manual"></span>
           <p class="quick-operational-feedback" role="status" aria-live="polite" aria-atomic="true" data-quick-feedback>&nbsp;</p>
           <div class="quick-results-state" aria-live="polite">
-            <p class="quick-attendance-state" data-quick-no-results hidden>Aucun résultat.</p>
-            <p class="quick-attendance-state" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>Toutes les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')} ont été enregistrées.</p>
+            <p class="quick-attendance-state" data-quick-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
+            <p class="quick-attendance-state" data-quick-complete${eligibleStudents.length > 0 ? ' hidden' : ''}>${escapeHtml(t(language, 'attendance.quick.complete', { attendance: getTerm(language, 'attendance', 'plural') }))}</p>
           </div>
           <div class="list-group compact-list" id="quick-attendance-results" data-quick-results${eligibleStudents.length === 0 ? ' hidden' : ''}>${studentRows}</div>
         </section>
-        <section id="quick-qr-mode" class="quick-mode-panel qr-scanner-panel" aria-label="Scanner un QR" data-quick-mode-panel="qr" data-qr-scanner hidden>
+        <section id="quick-qr-mode" class="quick-mode-panel qr-scanner-panel" aria-label="${escapeHtml(t(language, 'attendance.quick.scan_aria'))}" data-quick-mode-panel="qr" data-qr-scanner hidden>
           <div class="qr-video-frame is-inactive" data-qr-view>
-            <video data-qr-video muted playsinline aria-label="Aperçu de la caméra pour scanner un QR"></video>
+            <video data-qr-video muted playsinline aria-label="${escapeHtml(t(language, 'attendance.quick.camera_preview'))}"></video>
             <span class="qr-scan-guide" aria-hidden="true" data-qr-guide hidden></span>
-            <p class="qr-camera-placeholder" data-qr-placeholder>Activation de la caméra…</p>
-            <button class="qr-camera-switch" type="button" aria-label="Changer de caméra" data-qr-camera-switch hidden>
+            <p class="qr-camera-placeholder" data-qr-placeholder>${escapeHtml(t(language, 'attendance.quick.camera_starting'))}</p>
+            <button class="qr-camera-switch" type="button" aria-label="${escapeHtml(t(language, 'attendance.quick.switch_camera'))}" data-qr-camera-switch hidden>
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
                 <path d="M20 7V3l-2 2a8 8 0 0 0-12.7 2"/>
                 <path d="M4 17v4l2-2a8 8 0 0 0 12.7-2"/>
@@ -943,21 +967,22 @@ router.get('/:id/quick-attendance', async (request, response) => {
           </div>
           <span data-quick-feedback-anchor="qr"></span>
           <div class="compact-actions qr-scanner-actions">
-            <button class="btn btn-outline-secondary" type="button" data-qr-start hidden>Réessayer la caméra</button>
-            <button class="btn btn-light" type="button" aria-pressed="true" data-qr-sound>Son activé</button>
+            <button class="btn btn-outline-secondary" type="button" data-qr-start hidden>${escapeHtml(t(language, 'attendance.quick.retry_camera'))}</button>
+            <button class="btn btn-light" type="button" aria-pressed="true" data-qr-sound>${escapeHtml(t(language, 'attendance.quick.sound_on'))}</button>
           </div>
         </section>
-      </div>`, { navigation: false, pageClass: 'page--quick-attendance' }));
+      </div>`, { navigation: false, pageClass: 'page--quick-attendance', language }));
   } catch (error) {
     console.error('Unable to load quick attendance:', error);
-    const page = renderMessagePage('Mode rapide indisponible', 'Impossible de charger le mode rapide pour le moment.');
+    const page = renderMessagePage(t(language, 'attendance.quick.unavailable.title'), t(language, 'attendance.quick.unavailable.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.get('/:id', async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -977,59 +1002,59 @@ router.get('/:id', async (request, response) => {
       [request.courseSessionId, getApplicationTimezone()],
     );
     if (sessionResult.rowCount === 0) {
-      const page = renderSessionNotFoundPage();
+      const page = renderSessionNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
 
     const session = sessionResult.rows[0];
     const studentsResult = await loadRoster(session);
-    studentsResult.rows = studentsResult.rows.map((student) => decorateAttendanceStudent(student, session));
+    studentsResult.rows = studentsResult.rows.map((student) => decorateAttendanceStudent(student, session, language));
     const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
 
     const presentCount = studentsResult.rows.filter((student) => student.status === 'present').length;
     const notices = {
-      created: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été créée.`],
-      updated: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été mise à jour.`],
-      attendance_updated: ['success', `La ${getTerm('attendance').toLocaleLowerCase('fr')} a été mise à jour.`],
-      arrival_updated: ['success', 'L’heure d’arrivée a été mise à jour.'],
-      closed: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été clôturée.`],
-      closed_summary_sent: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} a été clôturée et le résumé a été envoyé.`],
-      closed_summary_failed: ['warning', `La ${getTerm('session').toLocaleLowerCase('fr')} est clôturée, mais le résumé n’a pas pu être envoyé.`],
-      summary_resent: ['success', 'Le résumé des présences a été renvoyé.'],
-      summary_failed: ['warning', 'Le résumé des présences n’a pas pu être envoyé. Vérifiez la configuration e-mail.'],
-      summary_no_recipients: ['warning', 'Aucun destinataire actif n’est configuré pour ce résumé.'],
-      opened: ['success', `La ${getTerm('session').toLocaleLowerCase('fr')} est ouverte.`],
+      created: ['success', t(language, 'attendance.notice.created', { session: getTerm(language, 'session') })],
+      updated: ['success', t(language, 'attendance.notice.updated', { session: getTerm(language, 'session') })],
+      attendance_updated: ['success', t(language, 'attendance.notice.attendance_updated', { attendance: getTerm(language, 'attendance') })],
+      arrival_updated: ['success', t(language, 'attendance.notice.arrival_updated')],
+      closed: ['success', t(language, 'attendance.notice.closed', { session: getTerm(language, 'session') })],
+      closed_summary_sent: ['success', t(language, 'attendance.notice.closed_summary_sent', { session: getTerm(language, 'session') })],
+      closed_summary_failed: ['warning', t(language, 'attendance.notice.closed_summary_failed', { session: getTerm(language, 'session') })],
+      summary_resent: ['success', t(language, 'attendance.notice.summary_resent', { attendance: getTerm(language, 'attendance') })],
+      summary_failed: ['warning', t(language, 'attendance.notice.summary_failed', { attendance: getTerm(language, 'attendance') })],
+      summary_no_recipients: ['warning', t(language, 'attendance.notice.summary_no_recipients')],
+      opened: ['success', t(language, 'attendance.notice.opened', { session: getTerm(language, 'session') })],
     };
     const notice = notices[request.query.notice]
       ? `<p class="alert alert-${notices[request.query.notice][0]}" role="${notices[request.query.notice][0] === 'success' ? 'status' : 'alert'}">${escapeHtml(notices[request.query.notice][1])}</p>`
       : '';
     const studentList = studentsResult.rows.length === 0
       ? `<p class="empty-state">${session.state === 'closed'
-        ? `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} n’est enregistré pour cette ${businessTerm('session').toLocaleLowerCase('fr')}.`
+        ? escapeHtml(t(language, 'attendance.roster.empty_closed', { student: getTerm(language, 'student'), session: getTerm(language, 'session') }))
         : session.state === 'open'
-        ? `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}.`
-        : `Aucun ${businessTerm('student').toLocaleLowerCase('fr')} actif n’est disponible dans cette ${businessTerm('class').toLocaleLowerCase('fr')}. La ${businessTerm('session').toLocaleLowerCase('fr')} n’a pas encore commencé.`}</p>`
+        ? escapeHtml(t(language, 'attendance.roster.empty_open', { student: getTerm(language, 'student'), class: getTerm(language, 'class') }))
+        : escapeHtml(t(language, 'attendance.roster.empty_scheduled', { student: getTerm(language, 'student'), class: getTerm(language, 'class'), session: getTerm(language, 'session') }))}</p>`
       : `<div class="attendance-roster-header" aria-hidden="true">
-          <span>${businessTerm('student')}</span><span>${businessTerm('attendance')}</span><span>Arrivée</span><span>Ponctualité</span><span></span>
+          <span>${businessTerm(language, 'student')}</span><span>${businessTerm(language, 'attendance')}</span><span>${escapeHtml(t(language, 'attendance.roster.arrival'))}</span><span>${escapeHtml(t(language, 'attendance.roster.punctuality'))}</span><span></span>
         </div>
         <div class="list-group compact-list attendance-roster" id="attendance-roster" data-attendance-roster>${studentsResult.rows.map((student) => `
-          <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase('fr'))}">
+          <article class="list-group-item compact-row compact-row-status student-row" data-student-id="${student.public_id}" data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.student_code}`.toLocaleLowerCase())}">
             <div class="compact-identity student-identity">
               <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
               <p class="compact-meta"><span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
               <span class="badge status-badge status-${student.status}" data-attendance-status>${{
-                pending: 'En attente',
-                present: 'Présent',
-                absent: 'Absent',
+                pending: t(language, 'status.pending'),
+                present: t(language, 'status.present'),
+                absent: t(language, 'status.absent'),
               }[student.status]}</span>
             </div>
             <div class="attendance-arrival">
-              <span class="attendance-field-label">Arrivée</span>
+              <span class="attendance-field-label">${escapeHtml(t(language, 'attendance.roster.arrival'))}</span>
               <span class="attendance-arrival-value" data-attendance-arrival>${student.status === 'present'
-                ? escapeHtml(student.arrival_time || 'Heure inconnue')
+                ? escapeHtml(student.arrival_time || t(language, 'attendance.arrival_unknown'))
                 : '—'}</span>
               ${canManageSessions ? `<button class="btn btn-link btn-sm attendance-time-edit" type="button"
                 data-attendance-time-edit
@@ -1037,16 +1062,16 @@ router.get('/:id', async (request, response) => {
                 data-current-time="${escapeHtml(student.arrival_time)}"
                 data-action="/sessions/${session.public_id}/attendance/${student.public_id}/check-in-time"
                 data-bs-toggle="modal" data-bs-target="#arrival-time-modal"
-                ${session.state === 'open' && student.status === 'present' ? '' : 'hidden'}>Modifier l’heure</button>` : ''}
+                ${session.state === 'open' && student.status === 'present' ? '' : 'hidden'}>${escapeHtml(t(language, 'attendance.roster.edit_arrival'))}</button>` : ''}
             </div>
             <div class="attendance-punctuality">
-              <span class="attendance-field-label">Ponctualité</span>
+              <span class="attendance-field-label">${escapeHtml(t(language, 'attendance.roster.punctuality'))}</span>
               <span class="attendance-punctuality-value${student.punctuality.status ? ` punctuality-${student.punctuality.status}` : ''}" data-attendance-punctuality>${escapeHtml(student.punctuality.label)}</span>
             </div>
             <div class="compact-actions compact-actions--attendance" data-attendance-actions${session.state === 'open' ? '' : ' hidden'}>
               ${session.state === 'open' ? `<form class="compact-actions compact-actions--split" method="post" action="/sessions/${session.public_id}/attendance/${student.public_id}" data-attendance-form>
-                <button class="btn btn-primary" name="status" type="submit" value="present">Présent</button>
-                <button class="btn btn-outline-danger" name="status" type="submit" value="absent">Absent</button>
+                <button class="btn btn-primary" name="status" type="submit" value="present">${escapeHtml(t(language, 'status.present'))}</button>
+                <button class="btn btn-outline-danger" name="status" type="submit" value="absent">${escapeHtml(t(language, 'status.absent'))}</button>
               </form>` : ''}
             </div>
           </article>`).join('')}</div>
@@ -1055,20 +1080,20 @@ router.get('/:id', async (request, response) => {
             <div class="modal-content">
               <form method="post" data-arrival-time-form>
                 <div class="modal-header">
-                  <h2 class="modal-title fs-5" id="arrival-time-modal-title">Modifier l’heure d’arrivée</h2>
-                  <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                  <h2 class="modal-title fs-5" id="arrival-time-modal-title">${escapeHtml(t(language, 'attendance.roster.edit_arrival_title'))}</h2>
+                  <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="${escapeHtml(t(language, 'action.close'))}"></button>
                 </div>
                 <div class="modal-body">
                   <p class="compact-meta mb-3" data-arrival-time-student></p>
                   <div class="form-field">
-                    <label for="arrival-time">Heure d’arrivée</label>
+                    <label for="arrival-time">${escapeHtml(t(language, 'attendance.roster.arrival_time'))}</label>
                     <input class="form-control" id="arrival-time" name="checked_in_time" type="time" required data-arrival-time-input>
-                    <p class="form-text mb-0">La date reste celle de la session.</p>
+                    <p class="form-text mb-0">${escapeHtml(t(language, 'attendance.roster.arrival_date_help', { session: getTerm(language, 'session') }))}</p>
                   </div>
                 </div>
                 <div class="modal-footer">
-                  <button class="btn btn-light" type="button" data-bs-dismiss="modal">Annuler</button>
-                  <button class="btn btn-primary" type="submit">Enregistrer</button>
+                  <button class="btn btn-light" type="button" data-bs-dismiss="modal">${escapeHtml(t(language, 'action.cancel'))}</button>
+                  <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'action.save'))}</button>
                 </div>
               </form>
             </div>
@@ -1081,56 +1106,57 @@ router.get('/:id', async (request, response) => {
           <p class="eyebrow">${escapeHtml(session.class_name)}</p>
           <h1>${escapeHtml(session.title)}</h1>
           <p class="page-description">${escapeHtml(formatDateForDisplay(session.date))}${session.start_time ? ` · ${escapeHtml(normalizeClockTime(session.start_time))}` : ''} · ${escapeHtml(session.instructor)}</p>
-          ${session.start_time ? `<p class="compact-meta">Tolérance : +${session.effective_tolerance_minutes} min${session.punctuality_tolerance_override_minutes === null ? ' (activité)' : ''}</p>` : ''}
+          ${session.start_time ? `<p class="compact-meta">${escapeHtml(t(language, 'attendance.roster.tolerance', { minutes: session.effective_tolerance_minutes }))}${session.punctuality_tolerance_override_minutes === null ? ` (${escapeHtml(t(language, 'attendance.roster.inherited_activity', { class: getTerm(language, 'class') }))})` : ''}</p>` : ''}
           ${session.notes ? `<p class="page-description session-notes">${escapeHtml(session.notes)}</p>` : ''}
         </div>
         <div class="context-actions d-flex flex-wrap gap-2">
-          <a class="btn btn-primary" href="/sessions/${session.public_id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>Mode rapide</a>
-          ${canManageSessions ? `<form method="post" action="/sessions/${session.public_id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${session.state === 'scheduled' ? 'Ouvrir' : 'Réouvrir'}</button></form>
-          <a class="btn btn-outline-secondary" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>Modifier</a>
-          <form method="post" action="/sessions/${session.public_id}/resend-summary"${session.state === 'closed' ? '' : ' hidden'}><button class="btn btn-outline-secondary" type="submit">Renvoyer le résumé</button></form>
-          <form method="post" action="/sessions/${session.public_id}/close" data-session-close data-confirm="Clôturer la ${businessTerm('session').toLocaleLowerCase('fr')} ? Les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} en attente seront marqués absents."${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">Clôturer</button></form>` : ''}
+          <a class="btn btn-primary" href="/sessions/${session.public_id}/quick-attendance" data-quick-attendance-link${session.state === 'open' ? '' : ' hidden'}>${escapeHtml(t(language, 'attendance.roster.quick_mode'))}</a>
+          ${canManageSessions ? `<form method="post" action="/sessions/${session.public_id}/open" data-session-open${session.state === 'open' ? ' hidden' : ''}><button class="btn btn-primary" type="submit">${escapeHtml(t(language, session.state === 'scheduled' ? 'action.open' : 'action.reopen'))}</button></form>
+          <a class="btn btn-outline-secondary" href="/sessions/${session.public_id}/edit" data-session-edit${session.state === 'closed' ? ' hidden' : ''}>${escapeHtml(t(language, 'action.edit'))}</a>
+          <form method="post" action="/sessions/${session.public_id}/resend-summary"${session.state === 'closed' ? '' : ' hidden'}><button class="btn btn-outline-secondary" type="submit">${escapeHtml(t(language, 'attendance.roster.resend_summary'))}</button></form>
+          <form method="post" action="/sessions/${session.public_id}/close" data-session-close data-confirm="${escapeHtml(t(language, 'attendance.roster.close_confirm', { session: getTerm(language, 'session'), students: getTerm(language, 'student', 'plural') }))}"${session.state === 'open' ? '' : ' hidden'}><button class="btn btn-danger" type="submit">${escapeHtml(t(language, 'attendance.roster.close_session', { session: getTerm(language, 'session') }))}</button></form>` : ''}
         </div>
       </header>
       ${notice}
-      ${session.state === 'closed' ? `<p class="alert alert-warning">La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée et en lecture seule. ${canManageSessions ? `Réouvrez-la pour modifier ses informations ou les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}.` : 'Réouverture par un gestionnaire requise avant toute correction.'}</p>` : ''}
-      <section class="card card-body summary-card attendance-summary" aria-label="Résumé des ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')}" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.public_id}"` : ''}>
-        <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> présents</strong>
-        <span class="badge status-badge status-${session.state}" data-session-state aria-live="polite">${getStateLabel(session.state)}</span>
+      ${session.state === 'closed' ? `<p class="alert alert-warning">${escapeHtml(t(language, canManageSessions ? 'attendance.roster.closed_manager' : 'attendance.roster.closed_operator', { session: getTerm(language, 'session'), attendance: getTerm(language, 'attendance', 'plural') }))}</p>` : ''}
+      <section class="card card-body summary-card attendance-summary" aria-label="${escapeHtml(t(language, 'attendance.roster.summary_aria', { attendance: getTerm(language, 'attendance', 'plural') }))}" aria-live="polite"${session.state === 'open' ? ` data-live-session data-session-id="${session.public_id}"` : ''}>
+        <strong><span data-present-count>${presentCount}</span> / <span data-total-count>${studentsResult.rows.length}</span> ${escapeHtml(t(language, 'attendance.roster.present_suffix'))}</strong>
+        <span class="badge status-badge status-${session.state}" data-session-state aria-live="polite">${escapeHtml(getStateLabel(session.state, language))}</span>
       </section>
-      <p class="alert alert-warning" data-live-readonly hidden>La ${businessTerm('session').toLocaleLowerCase('fr')} est clôturée. Les ${businessTerm('attendance', 'plural').toLocaleLowerCase('fr')} sont maintenant en lecture seule.</p>
-      <p class="alert alert-danger" data-live-error role="alert" hidden>La mise à jour a échoué. Réessayez.</p>
+      <p class="alert alert-warning" data-live-readonly hidden>${escapeHtml(t(language, 'attendance.roster.live_readonly', { session: getTerm(language, 'session'), attendance: getTerm(language, 'attendance', 'plural') }))}</p>
+      <p class="alert alert-danger" data-live-error role="alert" hidden>${escapeHtml(t(language, 'attendance.roster.live_error'))}</p>
       <section class="page-section" aria-labelledby="attendance-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="attendance-title">${businessTerm('attendance', 'plural')}</h2>
+            <h2 id="attendance-title">${businessTerm(language, 'attendance', 'plural')}</h2>
           </div>
         </div>
         ${studentsResult.rows.length > 0 ? `<div class="search">
-          <label for="attendance-search">Rechercher dans les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</label>
+          <label for="attendance-search">${escapeHtml(t(language, 'attendance.roster.search', { students: getTerm(language, 'student', 'plural') }))}</label>
           <div class="search-controls">
-            <input class="form-control" id="attendance-search" name="attendance_filter" type="search" placeholder="Nom ou code…" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
+            <input class="form-control" id="attendance-search" name="attendance_filter" type="search" placeholder="${escapeHtml(t(language, 'attendance.quick.search_placeholder'))}" autocomplete="off" spellcheck="false" aria-controls="attendance-roster" data-attendance-search>
           </div>
-          <p class="help-text" role="status" data-attendance-no-results hidden>Aucun résultat.</p>
+          <p class="help-text" role="status" data-attendance-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
         </div>` : ''}
         ${studentList}
-      </section>`));
+      </section>`, { language }));
   } catch (error) {
     console.error('Unable to load course session attendance:', error);
-    const page = renderMessagePage(`${getTerm('session')} indisponible`, 'Impossible de charger l’élément demandé pour le moment.');
+    const page = renderMessagePage(t(language, 'sessions.error.unavailable.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.unavailable.message'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
+    response.status(404).json({ outcome: 'unknown', message: t(language, 'attendance.api.qr_unknown') });
     return;
   }
 
   const qrToken = parseStudentQrPayload(request.body?.payload);
   if (!qrToken) {
-    response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
+    response.status(404).json({ outcome: 'unknown', message: t(language, 'attendance.api.qr_unknown') });
     return;
   }
 
@@ -1142,7 +1168,7 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
       [qrToken],
     );
     if (studentResult.rowCount === 0) {
-      response.status(404).json({ outcome: 'unknown', message: 'QR non reconnu.' });
+      response.status(404).json({ outcome: 'unknown', message: t(language, 'attendance.api.qr_unknown') });
       return;
     }
 
@@ -1154,19 +1180,19 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
           'SELECT state FROM course_sessions WHERE id = $1',
           [request.courseSessionId],
         );
-        if (sessionResult.rowCount === 0) return { status: 404, body: { outcome: 'unknown', message: `${getTerm('session')} introuvable.` } };
+        if (sessionResult.rowCount === 0) return { status: 404, body: { outcome: 'unknown', message: t(language, 'sessions.error.not_found.title', { session: getTerm(language, 'session') }) } };
         if (sessionResult.rows[0].state !== 'open') return {
           status: 409,
           body: {
             outcome: 'session_unavailable',
-            message: `La ${getTerm('session').toLocaleLowerCase('fr')} n’est pas ouverte.`,
+            message: t(language, 'attendance.api.session_not_open', { session: getTerm(language, 'session') }),
           },
         };
         return {
           status: 409,
           body: {
             outcome: 'ineligible',
-            message: `Cette personne ne peut pas être enregistrée dans cette ${getTerm('session').toLocaleLowerCase('fr')}.`,
+            message: t(language, 'attendance.api.ineligible', { session: getTerm(language, 'session') }),
           },
         };
       }
@@ -1193,9 +1219,7 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
           ...attendanceResult,
           studentId: student.public_id,
           outcome: result.changed ? 'present' : 'already_present',
-          message: result.changed
-            ? `${student.first_name} ${student.last_name} — présent`
-            : `${student.first_name} ${student.last_name} — déjà présent`,
+          message: t(language, result.changed ? 'attendance.api.present' : 'attendance.api.already_present', { name: `${student.first_name} ${student.last_name}` }),
         },
       };
     });
@@ -1205,14 +1229,15 @@ router.post('/:id/quick-attendance/qr', requireAttendanceManagement, async (requ
     console.error('Unable to update attendance from QR:', error);
     response.status(500).json({
       outcome: 'error',
-      message: 'Impossible de traiter ce QR pour le moment.',
+      message: t(language, 'attendance.api.qr_failed'),
     });
   }
 });
 
 router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId || !request.studentId) {
-    response.status(404).json({ error: 'Enregistrement introuvable.' });
+    response.status(404).json({ error: t(language, 'attendance.api.record_not_found') });
     return;
   }
 
@@ -1234,7 +1259,7 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
     });
     if (!result.allowed) {
       response.status(409).json({
-        error: `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte et la personne doit être active et admissible.`,
+        error: t(language, 'attendance.api.not_allowed', { session: getTerm(language, 'session') }),
       });
       return;
     }
@@ -1250,13 +1275,14 @@ router.post('/:id/quick-attendance/:studentId', requireAttendanceManagement, asy
     response.json({ ...attendanceResult, studentId: request.params.studentId });
   } catch (error) {
     console.error('Unable to update quick attendance:', error);
-    response.status(500).json({ error: `Impossible d’enregistrer la ${getTerm('attendance').toLocaleLowerCase('fr')}.` });
+    response.status(500).json({ error: t(language, 'attendance.api.record_failed', { attendance: getTerm(language, 'attendance') }) });
   }
 });
 
 router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId || !request.studentId) {
-    response.status(404).json({ error: 'Enregistrement introuvable.' });
+    response.status(404).json({ error: t(language, 'attendance.api.record_not_found') });
     return;
   }
   const previousStatus = typeof request.body.previous_status === 'string'
@@ -1266,7 +1292,7 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
     ? request.body.expected_version
     : '';
   if (!['pending', 'absent'].includes(previousStatus) || !/^\d{1,20}$/.test(expectedVersion)) {
-    response.status(400).json({ error: 'Action à annuler invalide.' });
+    response.status(400).json({ error: t(language, 'attendance.api.undo_invalid') });
     return;
   }
 
@@ -1310,12 +1336,12 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
       return { status: updateResult.rowCount > 0 ? 'updated' : 'stale' };
     });
     if (outcome.status === 'not_allowed') {
-      response.status(409).json({ error: 'Cette action ne peut plus être annulée.' });
+      response.status(409).json({ error: t(language, 'attendance.api.undo_unavailable') });
       return;
     }
     if (outcome.status === 'stale') {
       response.status(409).json({
-        error: 'Cet enregistrement a été modifié depuis cette action. Annulation ignorée.',
+        error: t(language, 'attendance.api.undo_stale'),
       });
       return;
     }
@@ -1328,18 +1354,19 @@ router.post('/:id/quick-attendance/:studentId/undo', requireAttendanceManagement
     });
   } catch (error) {
     console.error('Unable to undo quick attendance:', error);
-    response.status(500).json({ error: 'Impossible d’annuler cette action.' });
+    response.status(500).json({ error: t(language, 'attendance.api.undo_failed') });
   }
 });
 
 router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId || !request.studentId) {
-    const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
+    const page = renderMessagePage(t(language, 'attendance.error.record_not_found.title'), t(language, 'attendance.error.record_not_found.message'), 404, language);
     response.status(page.status).send(page.html);
     return;
   }
   if (!['present', 'absent'].includes(request.body.status)) {
-    const page = renderMessagePage('Statut invalide', 'Le statut demandé est invalide.', 400);
+    const page = renderMessagePage(t(language, 'attendance.error.invalid_status.title'), t(language, 'attendance.error.invalid_status.message'), 400, language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -1395,9 +1422,10 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
     });
     if (!updated) {
       const page = renderMessagePage(
-        'Modification impossible',
-        `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte et la personne doit être active et admissible.`,
+        t(language, 'attendance.error.update.title', { attendance: getTerm(language, 'attendance') }),
+        t(language, 'attendance.api.not_allowed', { session: getTerm(language, 'session') }),
         409,
+        language,
       );
       response.status(page.status).send(page.html);
       return;
@@ -1406,14 +1434,15 @@ router.post('/:id/attendance/:studentId', requireAttendanceManagement, async (re
     response.redirect(303, `/sessions/${request.params.id}?notice=attendance_updated`);
   } catch (error) {
     console.error('Unable to update attendance:', error);
-    const page = renderMessagePage('Modification impossible', `Impossible de mettre à jour la ${getTerm('attendance').toLocaleLowerCase('fr')} pour le moment.`);
+    const page = renderMessagePage(t(language, 'attendance.error.update.title', { attendance: getTerm(language, 'attendance') }), t(language, 'attendance.error.update', { attendance: getTerm(language, 'attendance') }), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id/attendance/:studentId/check-in-time', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId || !request.studentId) {
-    const page = renderMessagePage('Enregistrement introuvable', 'La valeur demandée ne peut pas être modifiée.', 404);
+    const page = renderMessagePage(t(language, 'attendance.error.record_not_found.title'), t(language, 'attendance.error.record_not_found.message'), 404, language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -1421,7 +1450,7 @@ router.post('/:id/attendance/:studentId/check-in-time', requireSessionManagement
     typeof request.body.checked_in_time === 'string' ? request.body.checked_in_time.trim() : '',
   );
   if (!checkedInTime) {
-    const page = renderMessagePage('Heure invalide', 'Saisissez une heure locale valide.', 400);
+    const page = renderMessagePage(t(language, 'attendance.error.invalid_time.title'), t(language, 'attendance.error.invalid_time.message'), 400, language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -1473,11 +1502,12 @@ router.post('/:id/attendance/:studentId/check-in-time', requireSessionManagement
     });
     if (outcome !== 'updated') {
       const page = renderMessagePage(
-        'Modification impossible',
+        t(language, 'attendance.error.update.title', { attendance: getTerm(language, 'attendance') }),
         outcome === 'not_present'
-          ? 'Une heure d’arrivée ne peut être définie que pour une personne présente.'
-          : `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte.`,
+          ? t(language, 'attendance.error.arrival_present_only', { student: getTerm(language, 'student') })
+          : t(language, 'attendance.error.session_must_open', { session: getTerm(language, 'session') }),
         409,
+        language,
       );
       response.status(page.status).send(page.html);
       return;
@@ -1485,14 +1515,15 @@ router.post('/:id/attendance/:studentId/check-in-time', requireSessionManagement
     response.redirect(303, `/sessions/${request.params.id}?notice=arrival_updated`);
   } catch (error) {
     console.error('Unable to correct attendance check-in time:', error);
-    const page = renderMessagePage('Modification impossible', 'Impossible de corriger l’heure d’arrivée pour le moment.');
+    const page = renderMessagePage(t(language, 'attendance.error.update.title', { attendance: getTerm(language, 'attendance') }), t(language, 'attendance.error.arrival_update'), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id/close', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -1544,12 +1575,12 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
       return 'closed';
     });
     if (outcome === 'not_found') {
-      const page = renderSessionNotFoundPage();
+      const page = renderSessionNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
     if (outcome === 'not_open') {
-      const page = renderMessagePage('Clôture impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} doit être ouverte.`, 409);
+      const page = renderMessagePage(t(language, 'sessions.error.close.title', { session: getTerm(language, 'session') }), t(language, 'attendance.error.session_must_open', { session: getTerm(language, 'session') }), 409, language);
       response.status(page.status).send(page.html);
       return;
     }
@@ -1560,25 +1591,26 @@ router.post('/:id/close', requireSessionManagement, async (request, response) =>
     response.redirect(303, `/sessions/${request.params.id}?notice=${notice}`);
   } catch (error) {
     console.error('Unable to close course session:', error);
-    const page = renderMessagePage('Clôture impossible', `Impossible de clôturer la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
+    const page = renderMessagePage(t(language, 'sessions.error.close.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.close', { session: getTerm(language, 'session') }), 503, language);
     response.status(page.status).send(page.html);
   }
 });
 
 router.post('/:id/resend-summary', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
   const delivery = await sendSessionSummary(request.params.id, { source: 'manual_resend' });
   if (delivery.status === 'not_found') {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
   if (delivery.status === 'not_closed') {
-    const page = renderMessagePage('Envoi impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} doit être clôturée.`, 409);
+    const page = renderMessagePage(t(language, 'sessions.error.send.title'), t(language, 'sessions.error.session_must_closed', { session: getTerm(language, 'session') }), 409, language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -1589,8 +1621,9 @@ router.post('/:id/resend-summary', requireSessionManagement, async (request, res
 });
 
 router.post('/:id/open', requireSessionManagement, async (request, response) => {
+  const language = request.uiLanguage;
   if (!request.courseSessionId) {
-    const page = renderSessionNotFoundPage();
+    const page = renderSessionNotFoundPage(language);
     response.status(page.status).send(page.html);
     return;
   }
@@ -1624,19 +1657,19 @@ router.post('/:id/open', requireSessionManagement, async (request, response) => 
       return sessionResult.rowCount > 0 ? 'already_open' : 'not_found';
     });
     if (outcome === 'already_open') {
-      const page = renderMessagePage('Ouverture impossible', `La ${getTerm('session').toLocaleLowerCase('fr')} est déjà ouverte.`, 409);
+      const page = renderMessagePage(t(language, 'sessions.error.open.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.already_open', { session: getTerm(language, 'session') }), 409, language);
       response.status(page.status).send(page.html);
       return;
     }
     if (outcome === 'not_found') {
-      const page = renderSessionNotFoundPage();
+      const page = renderSessionNotFoundPage(language);
       response.status(page.status).send(page.html);
       return;
     }
     response.redirect(303, `/sessions/${request.params.id}?notice=opened`);
   } catch (error) {
     console.error('Unable to open course session:', error);
-    const page = renderMessagePage('Ouverture impossible', `Impossible d’ouvrir la ${getTerm('session').toLocaleLowerCase('fr')} pour le moment.`);
+    const page = renderMessagePage(t(language, 'sessions.error.open.title', { session: getTerm(language, 'session') }), t(language, 'sessions.error.open', { session: getTerm(language, 'session') }), 503, language);
     response.status(page.status).send(page.html);
   }
 });

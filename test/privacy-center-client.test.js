@@ -14,6 +14,16 @@ function deferred() {
 }
 
 function createClientHarness(fetchImplementation) {
+  const clientMessages = {
+    'common.loading': 'Chargement…',
+    'status.unavailable': 'Indisponible',
+    'privacy.anonymization.checking': 'Vérification…',
+    'privacy.anonymization.final_check': 'Vérification finale…',
+    'privacy.anonymization.unavailable_generic': 'Action indisponible.',
+    'privacy.anonymization.no_longer_eligible': 'Le participant n’est plus éligible.',
+    'privacy.anonymization.verified': 'Éligibilité vérifiée.',
+    'privacy.anonymization.unavailable': 'Anonymisation indisponible.',
+  };
   const attributes = new Map([['aria-disabled', 'true'], ['tabindex', '-1']]);
   const classList = (initial = []) => ({
     values: new Set(initial),
@@ -70,6 +80,12 @@ function createClientHarness(fetchImplementation) {
   };
   let clickHandler;
   const context = {
+    window: {
+      AttendanceLogI18n: {
+        ready: { then(callback) { callback(); return { catch() {} }; } },
+        t: (key) => clientMessages[key] || key,
+      },
+    },
     bootstrap: {
       Offcanvas: { getOrCreateInstance: () => ({ show() {} }) },
       Modal: { getOrCreateInstance: () => ({ show() { modalShowCount += 1; } }) },

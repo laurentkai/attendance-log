@@ -268,7 +268,7 @@ function aggregateStudents(rows, privacyContext = identifiedPrivacyContext()) {
 
 async function getCourseReport(classId, privacyContext = identifiedPrivacyContext()) {
   const [classResult, sessions, details] = await Promise.all([
-    pool.query('SELECT id, public_id, name, description FROM classes WHERE public_id = $1', [classId]),
+    pool.query('SELECT id, public_id, name, description, language FROM classes WHERE public_id = $1', [classId]),
     getSessionSummaries({ classId }),
     getAttendanceDetails({ classId }, privacyContext),
   ]);
@@ -291,7 +291,7 @@ async function getCourseReport(classId, privacyContext = identifiedPrivacyContex
 async function getSessionReport(sessionId, privacyContext = identifiedPrivacyContext()) {
   const sessionResult = await pool.query(
     `SELECT cs.id, cs.public_id, cs.class_id, c.public_id AS class_public_id, cs.date, cs.title,
-            cs.instructor, cs.state, cs.start_time,
+            cs.instructor, cs.state, cs.start_time, cs.language, c.language AS class_language,
             COALESCE(cs.punctuality_tolerance_override_minutes,
                      c.punctuality_tolerance_minutes) AS effective_tolerance_minutes,
             CASE WHEN cs.start_time IS NULL THEN NULL
@@ -325,7 +325,7 @@ async function getStudentReport(studentId) {
     `SELECT id, public_id, first_name, last_name,
             CASE WHEN anonymized_at IS NULL THEN email ELSE NULL END AS email,
             CASE WHEN anonymized_at IS NULL THEN student_code ELSE '—' END AS student_code,
-            active
+            active, language
      FROM students
      WHERE public_id = $1`,
     [studentId],

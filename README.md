@@ -2,7 +2,7 @@
 
 Attendance Log is a mobile-first attendance application for a navigation school. It manages students, class memberships, sessions, attendance, rapid manual and QR check-in, student QR delivery by e-mail, SMTP settings, reporting and Excel exports, encrypted provider credentials, and backup and disaster recovery.
 
-The administration interface is in French. This guide therefore retains UI labels such as **Configuration > Sauvegardes** exactly as they appear in the application.
+Attendance Log supports English and French application and generated system text. English is the default for a new installation; existing French-oriented installations retain their effective language when upgraded. This technical guide remains in English and retains selected established UI labels where they help existing operators follow an upgrade procedure.
 
 ## Architecture
 
@@ -56,7 +56,7 @@ Edit `.env` with installation-specific values. Never commit this file.
 | `PORT` | Host port mapped to application port `3000` | Optional; defaults to `3000` |
 | `NODE_ENV` | Node environment | Set to `production` on the VPS |
 | `APP_BASE_URL` | Canonical public application URL used in administrator invitation e-mails | Required for invitations; use the public HTTPS origin in production |
-| `APP_TIMEZONE` | IANA timezone used to interpret session dates and local attendance times | Optional; defaults to `Europe/Brussels` |
+| `APP_TIMEZONE` | IANA timezone used to initialize the persisted installation timezone during migration | Optional; defaults to `Europe/Brussels` |
 | `POSTGRES_DB` | Compose PostgreSQL database name | Configure for the installation |
 | `POSTGRES_USER` | Compose PostgreSQL user | Configure for the installation |
 | `POSTGRES_PASSWORD` | Compose PostgreSQL password | Use a strong, unique value |
@@ -83,7 +83,7 @@ APP_TIMEZONE=Europe/Brussels
 
 This restricts the application port to the VPS loopback interface while nginx serves public HTTPS traffic. A local `docker-compose.override.yml` is no longer required to change the bind address for this deployment.
 
-Set `APP_TIMEZONE` to the installation's operational IANA timezone. Session start times and manually corrected arrival times are interpreted in this zone, independently of the VPS or container timezone.
+Set `APP_TIMEZONE` to the installation's operational IANA timezone before migration. Migration 025 preserves it in the installation settings; session start times and manually corrected arrival times then use that persisted timezone independently of the VPS or container timezone.
 
 ### 3. Build the image
 
@@ -215,6 +215,12 @@ An administrator may manually anonymize one eligible participant at a time. The 
 Existing backup archives are not rewritten after live anonymization and may retain the former identity until they expire under the configured backup-retention/rotation policy. These safeguards support the organization's privacy controls but must not be described as proof of legal compliance.
 
 Participant-facing information is available at `/privacy`. Internal governance documentation is maintained separately in [the Attendance/Punctuality Legitimate Interest Assessment](docs/gdpr-legitimate-interest-assessment.md) and [the Attendance Log processing register](docs/gdpr-processing-register.md).
+
+## Language and regional settings
+
+**Configuration > Langue et région** stores the installation's default business language, locale, and timezone. English and French are supported; English is the new-installation default. Existing installations are initialized conservatively with French and their current `APP_TIMEZONE`, while `fr-BE` preserves the established presentation convention. The persisted timezone becomes authoritative after migration; `APP_TIMEZONE` remains the migration/bootstrap source rather than a second runtime authority.
+
+Each user may independently choose English, French, or automatic browser detection for their own interface. Classes, sessions, and participants may store an explicit language override; otherwise language resolves dynamically from Global → Class → Session → Participant using only the scopes relevant to the output. Reports and communications use the business subject's language rather than the initiating user's interface language. Locale and timezone remain global and independent from language. User-entered names, titles, descriptions, and free text are never automatically translated. The six configurable application-terminology concepts have independent English and French singular/plural sets; UI uses the viewer's set and generated business output uses its resolved language set.
 
 ## Updating Attendance Log
 

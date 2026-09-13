@@ -1,7 +1,4 @@
-const frenchDateFormatter = new Intl.DateTimeFormat('fr-BE', {
-  dateStyle: 'long',
-  timeZone: 'UTC',
-});
+const { getApplicationLocale } = require('./application-time');
 
 function formatDateForInput(value) {
   if (typeof value === 'string') {
@@ -20,7 +17,10 @@ function formatDateForInput(value) {
 function formatDateForDisplay(value) {
   const dateValue = formatDateForInput(value);
   return dateValue
-    ? frenchDateFormatter.format(new Date(`${dateValue}T00:00:00Z`))
+    ? new Intl.DateTimeFormat(getApplicationLocale(), {
+      dateStyle: 'long',
+      timeZone: 'UTC',
+    }).format(new Date(`${dateValue}T00:00:00Z`))
     : '';
 }
 

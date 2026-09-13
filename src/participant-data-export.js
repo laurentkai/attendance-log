@@ -1,16 +1,23 @@
 const ExcelJS = require('exceljs');
+const {
+  auditActionLabel,
+  auditCategoryLabel,
+  auditChanges,
+  auditResultLabel,
+  auditSummaryLabel,
+} = require('./audit-presentation');
 const { getApplicationTimezone } = require('./application-time');
 const { pool } = require('./db/client');
 const { formatDateForInput } = require('./date-format');
 const { isValidPublicId } = require('./public-id');
 const { calculatePunctuality } = require('./punctuality');
 const { getTerm } = require('./terminology');
+const { DEFAULT_LANGUAGE, t } = require('./i18n');
 
 const PARTICIPANT_AUDIT_FIELDS = Object.freeze([
   'active', 'anonymized_at', 'checked_in_at', 'email', 'first_name', 'last_name', 'name',
-  'status', 'student_code',
+  'language', 'status', 'student_code',
 ]);
-const ATTENDANCE_STATUS_LABELS = Object.freeze({ present: 'Présent', absent: 'Absent', pending: 'En attente' });
 
 function exportInstant(value) {
   if (!value) return '';
@@ -19,9 +26,7 @@ function exportInstant(value) {
 }
 
 const MAX_WORKSHEET_NAME_LENGTH = 31;
-const FIXED_WORKSHEET_NAMES = Object.freeze(['Identité', 'Audit']);
-
-function sanitizeWorksheetName(value, fallback) {
+function sanitizeWorksheetName(value, fallback = 'Sheet') {
   const sanitize = (candidate) => String(candidate || '')
     .replace(/[\u0000-\u001f\u007f\\/*?:[\]]/g, ' ')
     .replace(/\s+/g, ' ')
@@ -32,33 +37,35 @@ function sanitizeWorksheetName(value, fallback) {
     .trimEnd()
     .replace(/'+$/g, '')
     .trimEnd();
-  return sanitize(value) || sanitize(fallback) || 'Feuille';
+  return sanitize(value) || sanitize(fallback) || 'Sheet';
 }
 
 function createWorksheetNameAllocator(reservedNames = []) {
-  const used = new Set(reservedNames.map((name) => name.toLocaleLowerCase('fr')));
+  const used = new Set(reservedNames.map((name) => name.toLocaleLowerCase('en')));
   return (value, fallback) => {
     const base = sanitizeWorksheetName(value, fallback);
     let candidate = base;
     let suffixNumber = 2;
-    while (used.has(candidate.toLocaleLowerCase('fr'))) {
+    while (used.has(candidate.toLocaleLowerCase('en'))) {
       const suffix = ` (${suffixNumber})`;
       const stem = base.slice(0, MAX_WORKSHEET_NAME_LENGTH - suffix.length).trimEnd();
       candidate = `${stem}${suffix}`;
       suffixNumber += 1;
     }
-    used.add(candidate.toLocaleLowerCase('fr'));
+    used.add(candidate.toLocaleLowerCase('en'));
     return candidate;
   };
 }
 
-function createParticipantWorksheetNames({ classPlural, attendancePlural } = {}) {
-  const allocate = createWorksheetNameAllocator(FIXED_WORKSHEET_NAMES);
+function createParticipantWorksheetNames({ classPlural, attendancePlural, language = DEFAULT_LANGUAGE } = {}) {
+  const identityName = t(language, 'privacy.export.sheet.identity');
+  const auditName = t(language, 'privacy.export.sheet.audit');
+  const allocate = createWorksheetNameAllocator([identityName, auditName]);
   return {
-    identity: FIXED_WORKSHEET_NAMES[0],
-    memberships: allocate(classPlural, 'Activités'),
-    attendance: allocate(attendancePlural, 'Présences'),
-    audit: FIXED_WORKSHEET_NAMES[1],
+    identity: identityName,
+    memberships: allocate(classPlural, t(language, 'privacy.export.sheet.fallback')),
+    attendance: allocate(attendancePlural, t(language, 'privacy.export.sheet.attendance', { attendance: attendancePlural })),
+    audit: auditName,
   };
 }
 
@@ -76,18 +83,10 @@ function selectAuditFields(value) {
   return Object.keys(selected).length ? selected : null;
 }
 
-function describeChanges(before, after) {
-  const left = selectAuditFields(before) || {};
-  const right = selectAuditFields(after) || {};
-  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
-    .map((field) => `${field}: ${left[field] ?? '—'} → ${right[field] ?? '—'}`)
-    .join('; ');
-}
-
 async function loadParticipantDataExport(publicId, client = pool) {
   if (!isValidPublicId(publicId)) return null;
   const identityResult = await client.query(
-    `SELECT id, public_id, first_name, last_name, email, student_code, active,
+    `SELECT id, public_id, first_name, last_name, email, student_code, active, language,
             created_at, last_activity_at, anonymized_at
      FROM students
      WHERE public_id = $1`,
@@ -130,14 +129,16 @@ async function loadParticipantDataExport(publicId, client = pool) {
   return {
     identity: {
       publicId: row.public_id,
-      firstName: anonymized ? 'Supprimé lors de l’anonymisation' : row.first_name,
-      lastName: anonymized ? 'Supprimé lors de l’anonymisation' : row.last_name,
-      email: anonymized ? 'Supprimé lors de l’anonymisation' : row.email,
-      participantCode: anonymized ? 'Remplacé lors de l’anonymisation' : row.student_code,
+      firstName: anonymized ? null : row.first_name,
+      lastName: anonymized ? null : row.last_name,
+      email: anonymized ? null : row.email,
+      participantCode: anonymized ? null : row.student_code,
+      language: anonymized ? null : row.language,
       active: row.active,
       createdAt: row.created_at,
       lastActivityAt: row.last_activity_at,
       anonymizedAt: row.anonymized_at,
+      anonymized,
     },
     memberships: membershipsResult.rows.map((membership) => ({
       activityName: membership.activity_name,
@@ -166,7 +167,8 @@ async function loadParticipantDataExport(publicId, client = pool) {
       category: event.category,
       result: event.result,
       summary: event.summary,
-      changes: describeChanges(event.before_data, event.after_data),
+      beforeData: selectAuditFields(event.before_data),
+      afterData: selectAuditFields(event.after_data),
     })),
   };
 }
@@ -184,75 +186,94 @@ function addRows(sheet, rows) {
   }
 }
 
-function buildParticipantDataWorkbook(data) {
+function buildParticipantDataWorkbook(data, { language = DEFAULT_LANGUAGE, terminology } = {}) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Attendance Log';
-  workbook.subject = 'Export des données personnelles';
+  workbook.subject = t(language, 'privacy.export.subject');
   const worksheetNames = createParticipantWorksheetNames({
-    classPlural: getTerm('class', 'plural'),
-    attendancePlural: getTerm('attendance', 'plural'),
+    classPlural: getTerm(language, 'class', 'plural', terminology),
+    attendancePlural: getTerm(language, 'attendance', 'plural', terminology),
+    language,
   });
 
   const identity = workbook.addWorksheet(worksheetNames.identity);
-  configureSheet(identity, [{ header: 'Champ', key: 'field', width: 28 }, { header: 'Valeur', key: 'value', width: 45 }]);
+  configureSheet(identity, [{ header: t(language, 'privacy.export.column.field'), key: 'field', width: 28 }, { header: t(language, 'privacy.export.column.value'), key: 'value', width: 45 }]);
   const anonymized = Boolean(data.identity.anonymizedAt);
   addRows(identity, [
-    { field: 'Prénom', value: data.identity.firstName },
-    { field: 'Nom', value: data.identity.lastName },
-    { field: 'E-mail', value: data.identity.email },
-    { field: 'Code participant', value: data.identity.participantCode },
+    { field: t(language, 'privacy.export.field.first_name'), value: anonymized ? t(language, 'privacy.export.value.identity_removed') : data.identity.firstName },
+    { field: t(language, 'privacy.export.field.last_name'), value: anonymized ? t(language, 'privacy.export.value.identity_removed') : data.identity.lastName },
+    { field: t(language, 'privacy.export.field.email'), value: anonymized ? t(language, 'privacy.export.value.identity_removed') : data.identity.email },
+    { field: t(language, 'privacy.export.field.participant_code', { student: getTerm(language, 'student', 'singular', terminology) }), value: anonymized ? t(language, 'privacy.export.value.code_replaced') : data.identity.participantCode },
+    { field: t(language, 'privacy.export.field.communication_language'), value: data.identity.language ? t(language, `language.${data.identity.language}`) : t(language, 'privacy.export.value.inherit') },
     anonymized
-      ? { field: 'Statut', value: 'Participant anonymisé' }
-      : { field: 'Actif', value: data.identity.active ? 'Oui' : 'Non' },
-    { field: 'Identifiant public', value: data.identity.publicId },
-    { field: 'Créé le', value: exportInstant(data.identity.createdAt) },
-    { field: 'Dernière activité', value: exportInstant(data.identity.lastActivityAt) || 'Inconnue' },
-    { field: 'Anonymisé le', value: exportInstant(data.identity.anonymizedAt) },
+      ? { field: t(language, 'privacy.export.field.status'), value: t(language, 'status.anonymized') }
+      : { field: t(language, 'privacy.export.field.active'), value: t(language, data.identity.active ? 'common.yes' : 'common.no') },
+    { field: t(language, 'privacy.export.field.public_id'), value: data.identity.publicId },
+    { field: t(language, 'privacy.export.field.created_at'), value: exportInstant(data.identity.createdAt) },
+    { field: t(language, 'privacy.export.field.last_activity'), value: exportInstant(data.identity.lastActivityAt) || t(language, 'common.unknown') },
+    { field: t(language, 'privacy.export.field.anonymized_at'), value: exportInstant(data.identity.anonymizedAt) },
   ]);
 
   const memberships = workbook.addWorksheet(worksheetNames.memberships);
   configureSheet(memberships, [
-    { header: getTerm('class'), key: 'activity', width: 38 },
-    { header: 'Inscription active', key: 'active', width: 20 },
-    { header: 'Inscrit le', key: 'createdAt', width: 24 },
+    { header: getTerm(language, 'class', 'singular', terminology), key: 'activity', width: 38 },
+    { header: t(language, 'privacy.export.column.membership_active', { membership: getTerm(language, 'membership', 'singular', terminology) }), key: 'active', width: 20 },
+    { header: t(language, 'privacy.export.column.registered_at'), key: 'createdAt', width: 24 },
   ]);
-  addRows(memberships, data.memberships.map((row) => ({ activity: row.activityName, active: row.active ? 'Oui' : 'Non', createdAt: exportInstant(row.createdAt) })));
+  addRows(memberships, data.memberships.map((row) => ({ activity: row.activityName, active: t(language, row.active ? 'common.yes' : 'common.no'), createdAt: exportInstant(row.createdAt) })));
 
   const attendance = workbook.addWorksheet(worksheetNames.attendance);
   configureSheet(attendance, [
-    { header: getTerm('class'), key: 'activity', width: 32 },
-    { header: getTerm('session'), key: 'session', width: 32 },
-    { header: 'Date', key: 'date', width: 15 },
-    { header: 'Heure de début', key: 'start', width: 17 },
-    { header: 'Statut', key: 'status', width: 14 },
-    { header: 'Arrivée', key: 'arrival', width: 24 },
-    { header: 'Écart (min)', key: 'delay', width: 13 },
-    { header: 'Ponctualité', key: 'punctuality', width: 16 },
-    { header: 'Mis à jour le', key: 'updatedAt', width: 24 },
+    { header: getTerm(language, 'class', 'singular', terminology), key: 'activity', width: 32 },
+    { header: getTerm(language, 'session', 'singular', terminology), key: 'session', width: 32 },
+    { header: t(language, 'report.column.date'), key: 'date', width: 15 },
+    { header: t(language, 'report.column.start_time'), key: 'start', width: 17 },
+    { header: t(language, 'report.column.status'), key: 'status', width: 14 },
+    { header: t(language, 'privacy.export.column.arrival'), key: 'arrival', width: 24 },
+    { header: t(language, 'report.column.delay_minutes'), key: 'delay', width: 13 },
+    { header: t(language, 'report.column.punctuality'), key: 'punctuality', width: 16 },
+    { header: t(language, 'privacy.export.column.updated_at'), key: 'updatedAt', width: 24 },
   ]);
   addRows(attendance, data.attendance.map((row) => ({
     activity: row.activityName,
     session: row.sessionName,
     date: formatDateForInput(row.sessionDate),
     start: row.sessionStartTime || '',
-    status: ATTENDANCE_STATUS_LABELS[row.status] || row.status,
+    status: ['present', 'absent', 'pending'].includes(row.status) ? t(language, `status.${row.status}`) : row.status,
     arrival: exportInstant(row.checkedInAt),
     delay: row.punctuality.delayMinutes,
-    punctuality: row.punctuality.available ? row.punctuality.label : 'Non disponible',
+    punctuality: row.punctuality.available ? t(language, `status.${row.punctuality.status}`) : t(language, 'privacy.export.value.not_available'),
     updatedAt: exportInstant(row.updatedAt),
   })));
 
   const audit = workbook.addWorksheet(worksheetNames.audit);
   configureSheet(audit, [
-    { header: 'Date', key: 'occurredAt', width: 24 },
-    { header: 'Utilisateur', key: 'actor', width: 26 },
-    { header: 'Catégorie', key: 'category', width: 18 },
-    { header: 'Action', key: 'action', width: 30 },
-    { header: 'Résultat', key: 'result', width: 14 },
-    { header: 'Résumé', key: 'summary', width: 55 },
-    { header: 'Modifications', key: 'changes', width: 55 },
+    { header: t(language, 'report.column.date'), key: 'occurredAt', width: 24 },
+    { header: t(language, 'privacy.export.column.user'), key: 'actor', width: 26 },
+    { header: t(language, 'privacy.export.column.category'), key: 'category', width: 18 },
+    { header: t(language, 'privacy.export.column.action'), key: 'action', width: 30 },
+    { header: t(language, 'privacy.export.column.result'), key: 'result', width: 14 },
+    { header: t(language, 'privacy.export.column.summary'), key: 'summary', width: 55 },
+    { header: t(language, 'privacy.export.column.changes'), key: 'changes', width: 55 },
   ]);
-  addRows(audit, data.audit.map((row) => ({ occurredAt: exportInstant(row.occurredAt), actor: row.actorName || 'Système', category: row.category, action: row.action, result: row.result, summary: row.summary, changes: row.changes })));
+  addRows(audit, data.audit.map((row) => {
+    const presentationRow = {
+      action: row.action,
+      summary: row.summary,
+      before_data: row.beforeData,
+      after_data: row.afterData,
+    };
+    return {
+      occurredAt: exportInstant(row.occurredAt),
+      actor: row.actorName || t(language, 'privacy.export.value.system'),
+      category: auditCategoryLabel(row.category, language, terminology),
+      action: auditActionLabel(row.action, language, terminology),
+      result: auditResultLabel(row.result, language),
+      summary: auditSummaryLabel(presentationRow, language, terminology),
+      changes: auditChanges(presentationRow, language, terminology)
+        .map((change) => `${change.label}: ${change.before} → ${change.after}`).join('; '),
+    };
+  }));
   return workbook;
 }
 

@@ -1,4 +1,5 @@
-(() => {
+window.AttendanceLogI18n.ready.then(() => {
+  const t = (key, params) => window.AttendanceLogI18n.t(key, params);
   const drawerElement = document.getElementById('privacy-participant-detail');
   if (!drawerElement || typeof bootstrap === 'undefined') return;
 
@@ -23,7 +24,7 @@
     if (fields[name]) fields[name].textContent = value || '—';
   }
 
-  function disableAnonymization(message = 'Vérification en cours…') {
+  function disableAnonymization(message = t('privacy.anonymization.checking')) {
     if (!anonymizeButton) return;
     anonymizeButton.hidden = false;
     anonymizeButton.disabled = true;
@@ -43,16 +44,16 @@
       anonymizeButton.removeAttribute('aria-disabled');
       anonymizeButton.dataset.previewUrl = configuration.previewUrl;
     } else {
-      disableAnonymization(configuration?.message || 'Cette action n’est pas disponible.');
+      disableAnonymization(configuration?.message || t('privacy.anonymization.unavailable_generic'));
     }
     anonymizeButton.hidden = alreadyAnonymized;
-    if (anonymizationMessage) anonymizationMessage.textContent = configuration?.message || 'Cette action n’est pas disponible.';
+    if (anonymizationMessage) anonymizationMessage.textContent = configuration?.message || t('privacy.anonymization.unavailable_generic');
   }
 
   async function openDetail(url) {
     const generation = ++requestGeneration;
     drawerElement.setAttribute('aria-busy', 'true');
-    Object.keys(fields).forEach((name) => setField(name, 'Chargement…'));
+    Object.keys(fields).forEach((name) => setField(name, t('common.loading')));
     exportLink?.classList.add('disabled');
     exportLink?.setAttribute('aria-disabled', 'true');
     exportLink?.setAttribute('tabindex', '-1');
@@ -75,7 +76,7 @@
     } catch (_error) {
       if (generation !== requestGeneration) return;
       Object.keys(fields).forEach((name) => setField(name, '—'));
-      setField('name', 'Détails indisponibles');
+      setField('name', t('status.unavailable'));
     } finally {
       if (generation === requestGeneration) drawerElement.removeAttribute('aria-busy');
     }
@@ -84,23 +85,23 @@
   async function openAnonymizationPreview(url) {
     if (!url || !modal || !anonymizationForm) return;
     const generation = requestGeneration;
-    disableAnonymization('Vérification finale de l’éligibilité…');
+    disableAnonymization(t('privacy.anonymization.final_check'));
     try {
       const response = await fetch(url, { headers: { Accept: 'application/json' } });
       const preview = await response.json().catch(() => ({}));
       if (generation !== requestGeneration) return;
       if (!response.ok) {
-        disableAnonymization(preview.message || 'Le participant n’est plus éligible.');
+        disableAnonymization(preview.message || t('privacy.anonymization.no_longer_eligible'));
         return;
       }
       Object.entries(preview.counts || {}).forEach(([name, value]) => {
         if (anonymizationCounts[name]) anonymizationCounts[name].textContent = String(value);
       });
       anonymizationForm.action = preview.actionUrl;
-      configureAnonymization({ eligible: true, previewUrl: url, message: 'Éligibilité vérifiée. Confirmez uniquement si vous souhaitez poursuivre.' });
+      configureAnonymization({ eligible: true, previewUrl: url, message: t('privacy.anonymization.verified') });
       modal.show();
     } catch (_error) {
-      if (generation === requestGeneration) disableAnonymization('La vérification est indisponible pour le moment.');
+      if (generation === requestGeneration) disableAnonymization(t('privacy.anonymization.unavailable'));
     }
   }
 
@@ -115,4 +116,4 @@
     if (!anonymizationTrigger || anonymizationTrigger.disabled) return;
     openAnonymizationPreview(anonymizationTrigger.dataset.previewUrl);
   });
-})();
+}).catch(() => {});

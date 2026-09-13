@@ -1,13 +1,16 @@
 const CACHE_PREFIX = 'attendance-log-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v10`;
+const CACHE_NAME = `${CACHE_PREFIX}v15`;
 const OFFLINE_URL = '/offline.html';
 const STATIC_ASSETS = [
   OFFLINE_URL,
   '/manifest.webmanifest',
+  '/i18n/en.json',
+  '/i18n/fr.json',
   '/vendor/bootstrap/css/bootstrap.min.css',
   '/vendor/bootstrap/js/bootstrap.bundle.min.js',
   '/css/styles.css',
   '/js/backup-settings.js',
+  '/js/i18n.js',
   '/js/classes.js',
   '/js/live-attendance.js',
   '/js/otp-resend.js',
@@ -62,6 +65,32 @@ async function networkFirstStatic(request, pathname) {
   }
 }
 
+function languageFromHeader(header = '') {
+  const supported = new Set(['en', 'fr']);
+  return String(header).split(',')
+    .map((entry, index) => {
+      const [tag, ...parameters] = entry.trim().split(';');
+      const qualityParameter = parameters.find((parameter) => parameter.trim().startsWith('q='));
+      const quality = qualityParameter ? Number.parseFloat(qualityParameter.trim().slice(2)) : 1;
+      return { language: tag.toLowerCase().split('-')[0], quality: Number.isFinite(quality) ? quality : 0, index };
+    })
+    .filter((entry) => supported.has(entry.language) && entry.quality > 0)
+    .sort((left, right) => right.quality - left.quality || left.index - right.index)[0]?.language || 'en';
+}
+
+async function offlineTextResponse(request) {
+  const language = languageFromHeader(request.headers.get('Accept-Language') || '');
+  const resource = await caches.match(`/i18n/${language}.json`) || await caches.match('/i18n/en.json');
+  let message = 'Attendance Log is offline. Reconnect, then try again.';
+  if (resource) {
+    try {
+      const translations = await resource.json();
+      message = `${translations['pwa.offline.heading']} ${translations['pwa.offline.retry_help']}`;
+    } catch (_error) { /* Keep the canonical English emergency fallback. */ }
+  }
+  return new Response(message, { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -73,10 +102,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request).catch(async () => (
         (await caches.match(OFFLINE_URL))
-        || new Response('Attendance Log est hors ligne. Reconnectez-vous puis réessayez.', {
-          status: 503,
-          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-        })
+        || offlineTextResponse(request)
       )),
     );
     return;

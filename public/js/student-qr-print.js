@@ -1,3 +1,4 @@
+window.AttendanceLogI18n.ready.then(() => {
 const qrPrintForm = document.querySelector('[data-qr-print-form]');
 
 if (qrPrintForm) {
@@ -64,8 +65,8 @@ if (qrPrintForm) {
     }
     if (warningHelp) {
       warningHelp.textContent = warningSupported
-        ? 'Option facultative. Le texte est composé à une taille adaptée à l’impression.'
-        : 'Ce format est trop petit pour afficher cet avertissement de façon lisible.';
+        ? window.AttendanceLogI18n.t('qr.print.warning.optional')
+        : window.AttendanceLogI18n.t('qr.print.warning.unsupported');
     }
   }
 
@@ -84,7 +85,7 @@ if (qrPrintForm) {
   }
 
   function filterManualRows() {
-    const query = manualSearch.value.trim().toLocaleLowerCase('fr');
+    const query = manualSearch.value.trim().toLocaleLowerCase(document.documentElement.lang || 'en');
     let visible = 0;
     manualRows.forEach((row) => {
       const matches = row.dataset.search.includes(query);
@@ -111,3 +112,4 @@ if (qrPrintForm) {
 
   updateMode();
 }
+}).catch(() => {});

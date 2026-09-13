@@ -9,6 +9,7 @@ const {
   validateStudentValues,
 } = require('./student-data');
 const { getTerm } = require('./terminology');
+const { DEFAULT_LANGUAGE, t } = require('./i18n');
 const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
@@ -22,18 +23,18 @@ async function loadClasses() {
   return result.rows;
 }
 
-function renderImportPage({ classes, selectedClassId = '', error = '', summary = null }) {
+function renderImportPage({ classes, selectedClassId = '', error = '', summary = null, language = DEFAULT_LANGUAGE }) {
   const errorMessage = error
     ? `<p class="alert alert-danger" role="alert">${escapeHtml(error)}</p>`
     : '';
   const summaryContent = summary
     ? `<section class="card card-body summary-card import-summary" aria-labelledby="import-summary-title">
-        <h2 id="import-summary-title">Résumé de l’import</h2>
+        <h2 id="import-summary-title">${escapeHtml(t(language, 'import.summary'))}</h2>
         <dl class="summary-list">
-          <div><dt>Créés</dt><dd>${summary.created}</dd></div>
-          <div><dt>Existants retrouvés</dt><dd>${summary.matchedExisting}</dd></div>
-          <div><dt>${businessTerm('membership', 'plural')}</dt><dd>${summary.newlyAssigned}</dd></div>
-          <div><dt>Erreurs ou lignes ignorées</dt><dd>${summary.skipped}</dd></div>
+          <div><dt>${escapeHtml(t(language, 'import.created'))}</dt><dd>${summary.created}</dd></div>
+          <div><dt>${escapeHtml(t(language, 'import.matched'))}</dt><dd>${summary.matchedExisting}</dd></div>
+          <div><dt>${businessTerm(language, 'membership', 'plural')}</dt><dd>${summary.newlyAssigned}</dd></div>
+          <div><dt>${escapeHtml(t(language, 'import.skipped'))}</dt><dd>${summary.skipped}</dd></div>
         </dl>
       </section>`
     : '';
@@ -41,42 +42,44 @@ function renderImportPage({ classes, selectedClassId = '', error = '', summary =
     <option value="${classRecord.public_id}"${classRecord.public_id === selectedClassId ? ' selected' : ''}>${escapeHtml(classRecord.name)}</option>`).join('');
   const selectedClass = classes.find((classRecord) => classRecord.public_id === selectedClassId);
 
-  return renderPage(`Importer des ${getTerm('student', 'plural').toLocaleLowerCase('fr')}`, `
+  const students = getTerm(language, 'student', 'plural');
+  const classTerm = getTerm(language, 'class');
+  return renderPage(t(language, 'import.title', { students }), `
     <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
       <div>
-        <h1>Importer des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</h1>
-        <p class="page-description">Ajoutez des ${businessTerm('student', 'plural').toLocaleLowerCase('fr')} à une ${businessTerm('class').toLocaleLowerCase('fr')} depuis un fichier CSV.</p>
+        <h1>${escapeHtml(t(language, 'import.title', { students }))}</h1>
+        <p class="page-description">${escapeHtml(t(language, 'import.description', { students, class: classTerm }))}</p>
       </div>
       ${selectedClass
-        ? `<a class="btn btn-outline-secondary" href="/classes/${selectedClass.public_id}">Retour</a>`
+        ? `<a class="btn btn-outline-secondary" href="/classes/${selectedClass.public_id}">${escapeHtml(t(language, 'action.back'))}</a>`
         : ''}
     </header>
     ${errorMessage}
     ${summaryContent}
     <section class="card card-body instruction-panel" aria-labelledby="import-instructions-title">
-      <h2 id="import-instructions-title">Préparer le fichier</h2>
-      <p>Utilisez les colonnes <span class="student-code" translate="no">first_name</span>, <span class="student-code" translate="no">last_name</span> et <span class="student-code" translate="no">email</span>. Taille maximale : 1 Mo.</p>
+      <h2 id="import-instructions-title">${escapeHtml(t(language, 'import.prepare'))}</h2>
+      <p>${escapeHtml(t(language, 'import.columns'))}</p>
     </section>
-    ${classes.length === 0 ? `<p class="alert alert-warning" role="status">Créez d’abord une ${businessTerm('class').toLocaleLowerCase('fr')}.</p>` : ''}
+    ${classes.length === 0 ? `<p class="alert alert-warning" role="status">${escapeHtml(t(language, 'import.create_class_first', { class: classTerm }))}</p>` : ''}
     <form class="card card-body app-form import-form" method="post" action="/students/import" enctype="multipart/form-data">
       <div class="form-field">
-        <label for="class_id">${businessTerm('class')} cible <span aria-hidden="true">*</span></label>
+        <label for="class_id">${escapeHtml(t(language, 'import.target', { class: classTerm }))} <span aria-hidden="true">*</span></label>
         <select class="form-select" id="class_id" name="class_id" required>
-          <option value="">Choisir une ${businessTerm('class').toLocaleLowerCase('fr')}</option>
+          <option value="">${escapeHtml(t(language, 'import.choose_class', { class: classTerm }))}</option>
           ${classOptions}
         </select>
       </div>
 
       <div class="form-field">
-        <label for="csv_file">Fichier CSV <span aria-hidden="true">*</span></label>
+        <label for="csv_file">${escapeHtml(t(language, 'import.file'))} <span aria-hidden="true">*</span></label>
         <input class="form-control" id="csv_file" name="csv_file" type="file" accept=".csv,text/csv" required>
-        <p class="help-text">Un seul fichier CSV, jusqu’à 2 000 lignes.</p>
+        <p class="help-text">${escapeHtml(t(language, 'import.file_help'))}</p>
       </div>
 
       <div class="form-actions d-flex flex-wrap gap-2">
-        <button class="btn btn-primary" type="submit"${classes.length === 0 ? ' disabled' : ''}>Importer les ${businessTerm('student', 'plural').toLocaleLowerCase('fr')}</button>
+        <button class="btn btn-primary" type="submit"${classes.length === 0 ? ' disabled' : ''}>${escapeHtml(t(language, 'import.submit', { students }))}</button>
       </div>
-    </form>`);
+    </form>`, { language });
 }
 
 router.get('/', async (request, response) => {
@@ -88,10 +91,10 @@ router.get('/', async (request, response) => {
     const selectedClassId = classes.some((classRecord) => classRecord.public_id === requestedClassId)
       ? requestedClassId
       : '';
-    response.send(renderImportPage({ classes, selectedClassId }));
+    response.send(renderImportPage({ classes, selectedClassId, language: request.uiLanguage }));
   } catch (error) {
     console.error('Unable to load import form:', error);
-    const page = renderMessagePage('Import indisponible', 'Impossible de charger le formulaire d’import pour le moment.');
+    const page = renderMessagePage(t(request.uiLanguage, 'import.error.unavailable'), t(request.uiLanguage, 'import.error.load'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
@@ -109,12 +112,13 @@ function receiveCsvFile(request, response, next) {
         classes: await loadClasses(),
         selectedClassId: request.body?.class_id || '',
         error: error.code === 'LIMIT_FILE_SIZE'
-          ? 'Le fichier dépasse la taille maximale de 1 Mo.'
-          : 'Le fichier n’a pas pu être envoyé.',
+          ? t(request.uiLanguage, 'import.error.too_large')
+          : t(request.uiLanguage, 'import.error.upload'),
+        language: request.uiLanguage,
       }));
     } catch (databaseError) {
       console.error('Unable to load classes after upload error:', databaseError);
-      const page = renderMessagePage('Import impossible', 'Impossible de traiter l’import pour le moment.');
+      const page = renderMessagePage(t(request.uiLanguage, 'import.error.failed'), t(request.uiLanguage, 'import.error.process'), 500, request.uiLanguage);
       response.status(page.status).send(page.html);
     }
   });
@@ -126,7 +130,7 @@ router.post('/', receiveCsvFile, async (request, response) => {
     classes = await loadClasses();
   } catch (error) {
     console.error('Unable to load classes for import:', error);
-    const page = renderMessagePage('Import impossible', 'Impossible de traiter l’import pour le moment.');
+    const page = renderMessagePage(t(request.uiLanguage, 'import.error.failed'), t(request.uiLanguage, 'import.error.process'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
     return;
   }
@@ -141,8 +145,9 @@ router.post('/', receiveCsvFile, async (request, response) => {
       classes,
       selectedClassId,
       error: !selectedClassExists
-        ? `Sélectionnez une ${getTerm('class').toLocaleLowerCase('fr')} valide.`
-        : 'Sélectionnez un fichier CSV.',
+        ? t(request.uiLanguage, 'import.error.class', { class: getTerm(language, 'class') })
+        : t(request.uiLanguage, 'import.error.file'),
+      language: request.uiLanguage,
     }));
     return;
   }
@@ -172,7 +177,8 @@ router.post('/', receiveCsvFile, async (request, response) => {
     response.status(400).send(renderImportPage({
       classes,
       selectedClassId,
-      error: 'Le fichier CSV est invalide ou ne contient pas les colonnes requises.',
+      error: t(request.uiLanguage, 'import.error.invalid_csv'),
+      language: request.uiLanguage,
     }));
     return;
   }
@@ -238,7 +244,7 @@ router.post('/', receiveCsvFile, async (request, response) => {
     },
   });
 
-  response.send(renderImportPage({ classes, selectedClassId, summary }));
+  response.send(renderImportPage({ classes, selectedClassId, summary, language: request.uiLanguage }));
 });
 
 module.exports = router;

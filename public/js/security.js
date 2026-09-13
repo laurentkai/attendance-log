@@ -1,7 +1,9 @@
+window.AttendanceLogI18n.ready.then(() => {
 const recoveryKeyDialog = document.querySelector('[data-recovery-key-dialog]');
 const recoveryKeyValue = document.querySelector('[data-recovery-key-value]');
 const copyFeedback = document.querySelector('[data-copy-feedback]');
 const securityFeedback = document.querySelector('[data-security-client-feedback]');
+const t = (key, params) => window.AttendanceLogI18n.t(key, params);
 
 const clearRecoveryKey = () => {
   recoveryKeyValue.value = '';
@@ -26,7 +28,7 @@ document.querySelector('[data-show-recovery-key]')?.addEventListener('click', as
     copyFeedback.textContent = '';
     recoveryKeyDialog.showModal();
   } catch (_error) {
-    securityFeedback.textContent = 'La clé ne peut pas être affichée pour le moment.';
+    securityFeedback.textContent = t('security.dialog.unavailable');
     securityFeedback.hidden = false;
   }
 });
@@ -34,11 +36,11 @@ document.querySelector('[data-show-recovery-key]')?.addEventListener('click', as
 document.querySelector('[data-copy-recovery-key]')?.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(recoveryKeyValue.value);
-    copyFeedback.textContent = 'Clé copiée.';
+    copyFeedback.textContent = t('security.dialog.copied');
   } catch (_error) {
     recoveryKeyValue.focus();
     recoveryKeyValue.select();
-    copyFeedback.textContent = 'Copie automatique indisponible. Copiez la sélection manuellement.';
+    copyFeedback.textContent = t('security.dialog.copy_manual');
   }
 });
 
@@ -49,3 +51,4 @@ document.querySelector('[data-close-recovery-key]')?.addEventListener('click', (
 
 recoveryKeyDialog?.addEventListener('close', clearRecoveryKey);
 window.addEventListener('pagehide', clearRecoveryKey);
+}).catch(() => {});

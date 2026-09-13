@@ -18,6 +18,7 @@ const {
   getEncryptedReportingPseudonymSecret,
   getReportingPseudonymSecretStatus,
 } = require('./reporting-privacy');
+const { DEFAULT_LANGUAGE, t } = require('./i18n');
 const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
@@ -50,43 +51,41 @@ async function getSecretStatus() {
   return statuses.includes('mismatch') ? 'mismatch' : 'available';
 }
 
-function sourceLabel(source) {
-  return source === 'environment'
-    ? 'Clé fournie par l’environnement'
-    : 'Clé persistante de l’application';
+function sourceLabel(source, language) {
+  return t(language, source === 'environment' ? 'security.source.environment' : 'security.source.application');
 }
 
-function renderSecurityPage({ feedback = null, secretStatus = 'available' } = {}) {
+function renderSecurityPage({ feedback = null, secretStatus = 'available', language = DEFAULT_LANGUAGE } = {}) {
   const keyInfo = getKeyInfo();
   const feedbackMessage = feedback?.message
     ? `<p class="alert alert-${feedback.type === 'success' ? 'success' : 'danger'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
     : '';
   const mismatchMessage = secretStatus === 'mismatch'
-    ? '<p class="alert alert-danger" role="alert">La clé est configurée, mais elle est incompatible avec les secrets chiffrés actuellement stockés. Importez la clé de récupération correspondant à cette base de données.</p>'
+    ? `<p class="alert alert-danger" role="alert">${escapeHtml(t(language, 'security.mismatch'))}</p>`
     : '';
 
-  return renderPage('Configuration de sécurité', renderSettingsLayout({
+  return renderPage(t(language, 'security.title'), renderSettingsLayout({
     activeSection: 'security',
-    title: 'Sécurité',
-    description: 'Gérez la clé de récupération utilisée pour protéger les secrets sauvegardés.',
-    status: `<span class="badge status-badge status-${secretStatus === 'available' ? 'active' : 'inactive'}">${secretStatus === 'available' ? 'Chiffrement actif' : 'Clé à vérifier'}</span>`,
+    title: t(language, 'security.title'),
+    description: t(language, 'security.description'),
+    status: `<span class="badge status-badge status-${secretStatus === 'available' ? 'active' : 'inactive'}">${escapeHtml(t(language, secretStatus === 'available' ? 'security.encryption_active' : 'security.key_check'))}</span>`,
     notifications: `${feedbackMessage}${mismatchMessage}<p class="alert alert-danger" role="alert" data-security-client-feedback hidden></p>`,
     content: `<section class="card card-body app-form" aria-labelledby="encryption-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="encryption-title">Chiffrement des données sensibles</h2>
-            <p class="section-description">Conservez une copie de cette clé avec vos sauvegardes. Elle est nécessaire pour restaurer les secrets chiffrés.</p>
+            <h2 id="encryption-title">${escapeHtml(t(language, 'security.encryption.title'))}</h2>
+            <p class="section-description">${escapeHtml(t(language, 'security.encryption.help'))}</p>
           </div>
         </div>
         <dl class="security-key-summary">
-          <div><dt>État</dt><dd>${secretStatus === 'available' ? 'Actif et configuré' : 'Clé incompatible avec les secrets stockés'}</dd></div>
-          <div><dt>Identifiant de clé</dt><dd class="student-code">${escapeHtml(keyInfo.fingerprint)}</dd></div>
-          <div><dt>Source</dt><dd>${escapeHtml(sourceLabel(keyInfo.source))}</dd></div>
+          <div><dt>${escapeHtml(t(language, 'security.state'))}</dt><dd>${escapeHtml(t(language, secretStatus === 'available' ? 'security.state.active' : 'security.state.mismatch'))}</dd></div>
+          <div><dt>${escapeHtml(t(language, 'security.key_id'))}</dt><dd class="student-code">${escapeHtml(keyInfo.fingerprint)}</dd></div>
+          <div><dt>${escapeHtml(t(language, 'security.source'))}</dt><dd>${escapeHtml(sourceLabel(keyInfo.source, language))}</dd></div>
         </dl>
         <div class="form-actions d-flex flex-wrap gap-2">
-          <button class="btn btn-primary" type="button" data-show-recovery-key>Afficher la clé</button>
+          <button class="btn btn-primary" type="button" data-show-recovery-key>${escapeHtml(t(language, 'security.show_key'))}</button>
           <form method="post" action="/settings/security/key/export">
-            <button class="btn btn-light" type="submit">Exporter la clé</button>
+            <button class="btn btn-light" type="submit">${escapeHtml(t(language, 'security.export_key'))}</button>
           </form>
         </div>
       </section>
@@ -94,40 +93,40 @@ function renderSecurityPage({ feedback = null, secretStatus = 'available' } = {}
       <section class="page-section" aria-labelledby="import-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="import-title">Importer une clé</h2>
-            <p class="section-description">Utilisez le fichier de récupération associé à une base restaurée. La clé ne sera remplacée que si elle correspond aux secrets existants.</p>
+            <h2 id="import-title">${escapeHtml(t(language, 'security.import.title'))}</h2>
+            <p class="section-description">${escapeHtml(t(language, 'security.import.help'))}</p>
           </div>
         </div>
         <form class="card card-body app-form" method="post" action="/settings/security/key/import" enctype="multipart/form-data">
           <div class="form-field">
-            <label for="recovery-key-file">Fichier de clé de récupération</label>
+            <label for="recovery-key-file">${escapeHtml(t(language, 'security.import.file'))}</label>
             <input class="form-control" id="recovery-key-file" name="recovery_key" type="file" accept=".txt,text/plain" required>
           </div>
           <label class="checkbox-option">
             <input class="form-check-input" name="confirm_import" type="checkbox" value="yes" required>
-            <span>Je confirme vouloir activer cette clé de récupération.</span>
+            <span>${escapeHtml(t(language, 'security.import.confirm'))}</span>
           </label>
           <div class="form-actions d-flex flex-wrap gap-2">
-            <button class="btn btn-outline-secondary" type="submit">Importer la clé</button>
+            <button class="btn btn-outline-secondary" type="submit">${escapeHtml(t(language, 'security.import.submit'))}</button>
           </div>
         </form>
       </section>`,
     after: `
     <dialog class="security-key-dialog" data-recovery-key-dialog aria-labelledby="recovery-key-title">
       <div class="dialog-content">
-        <h2 id="recovery-key-title">Clé de récupération</h2>
-        <p>Toute personne possédant cette clé peut déchiffrer les secrets sauvegardés par Attendance Log.</p>
-        <label for="recovery-key-value">Clé Base64</label>
+        <h2 id="recovery-key-title">${escapeHtml(t(language, 'security.dialog.title'))}</h2>
+        <p>${escapeHtml(t(language, 'security.dialog.warning'))}</p>
+        <label for="recovery-key-value">${escapeHtml(t(language, 'security.dialog.base64'))}</label>
         <textarea id="recovery-key-value" class="form-control recovery-key-output" rows="3" wrap="off" readonly spellcheck="false" data-recovery-key-value></textarea>
         <p class="compact-meta" role="status" aria-live="polite" data-copy-feedback></p>
         <div class="form-actions d-flex flex-wrap gap-2">
-          <button class="btn btn-primary" type="button" data-copy-recovery-key>Copier la clé</button>
-          <button class="btn btn-light" type="button" data-close-recovery-key>Fermer</button>
+          <button class="btn btn-primary" type="button" data-copy-recovery-key>${escapeHtml(t(language, 'security.dialog.copy'))}</button>
+          <button class="btn btn-light" type="button" data-close-recovery-key>${escapeHtml(t(language, 'action.close'))}</button>
         </div>
       </div>
     </dialog>
     <script src="/js/security.js" defer></script>`,
-  }));
+  }), language);
 }
 
 async function renderCurrentSecurity(response, options = {}) {
@@ -139,17 +138,19 @@ async function renderCurrentSecurity(response, options = {}) {
 
 router.get('/', async (request, response) => {
   const notices = {
-    imported: 'La clé de récupération a été importée et activée.',
+    imported: t(request.uiLanguage, 'security.notice.imported'),
   };
   try {
     const notice = notices[request.query.notice];
     await renderCurrentSecurity(response, {
+      language: request.uiLanguage,
       feedback: notice ? { type: 'success', message: notice } : null,
     });
   } catch (error) {
     console.error('Unable to load security settings:', error.code || 'DATABASE_ERROR');
     response.status(500).send(renderSecurityPage({
-      feedback: { type: 'error', message: 'Impossible de charger la configuration de sécurité pour le moment.' },
+      feedback: { type: 'error', message: t(request.uiLanguage, 'security.error.load') },
+      language: request.uiLanguage,
     }));
   }
 });
@@ -170,14 +171,12 @@ router.post('/key/export', async (_request, response) => {
   response.send(exportRecoveryKey());
 });
 
-function importErrorMessage(code) {
-  return {
-    ENVIRONMENT_KEY_MANAGED: 'La clé est fournie par l’environnement. Modifiez-la dans le gestionnaire de secrets du déploiement.',
-    IMPORT_CONFIRMATION_REQUIRED: 'Confirmez explicitement l’import de la clé.',
-    RECOVERY_FINGERPRINT_MISMATCH: 'L’identifiant du fichier ne correspond pas à la clé qu’il contient.',
-    RECOVERY_KEY_MISMATCH: 'Cette clé ne permet pas de déchiffrer les secrets actuellement sauvegardés. Elle n’a pas été activée.',
-    RECOVERY_FORMAT_INVALID: 'Le fichier de clé de récupération n’est pas valide.',
-  }[code] || 'La clé de récupération n’a pas pu être importée.';
+function importErrorMessage(code, language = DEFAULT_LANGUAGE) {
+  try {
+    return t(language, `security.error.${code}`);
+  } catch (_error) {
+    return t(language, 'security.error.default');
+  }
 }
 
 router.post('/key/import', (request, response) => {
@@ -185,15 +184,17 @@ router.post('/key/import', (request, response) => {
     try {
       if (uploadError || !request.file) {
         response.status(400).send(renderSecurityPage({
-          feedback: { type: 'error', message: 'Sélectionnez un fichier de clé de récupération valide.' },
+          feedback: { type: 'error', message: t(request.uiLanguage, 'security.error.file') },
           secretStatus: await getSecretStatus(),
+          language: request.uiLanguage,
         }));
         return;
       }
       if (request.body.confirm_import !== 'yes') {
         response.status(400).send(renderSecurityPage({
-          feedback: { type: 'error', message: 'Confirmez explicitement l’import de la clé.' },
+          feedback: { type: 'error', message: t(request.uiLanguage, 'security.error.IMPORT_CONFIRMATION_REQUIRED') },
           secretStatus: await getSecretStatus(),
+          language: request.uiLanguage,
         }));
         return;
       }
@@ -208,12 +209,13 @@ router.post('/key/import', (request, response) => {
       console.error('Unable to import recovery key:', error.code || 'IMPORT_FAILED');
       try {
         response.status(400).send(renderSecurityPage({
-          feedback: { type: 'error', message: importErrorMessage(error.code) },
+          feedback: { type: 'error', message: importErrorMessage(error.code, request.uiLanguage) },
           secretStatus: await getSecretStatus(),
+          language: request.uiLanguage,
         }));
       } catch (renderError) {
         console.error('Unable to render security settings:', renderError.code || 'DATABASE_ERROR');
-        response.status(500).send('Impossible de charger la configuration de sécurité pour le moment.');
+        response.status(500).send(t(request.uiLanguage, 'security.error.load'));
       }
     }
   });

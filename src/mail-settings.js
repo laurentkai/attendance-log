@@ -7,6 +7,7 @@ const {
   sendMail,
 } = require('./mail');
 const { decryptSecret, encryptSecret } = require('./secrets');
+const { DEFAULT_LANGUAGE, t } = require('./i18n');
 const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
@@ -38,28 +39,28 @@ function getFormValues(body = {}) {
   };
 }
 
-function validateConfiguration(values, existingPassword = '') {
-  if (!values.host) return 'Le serveur SMTP est obligatoire.';
+function validateConfiguration(values, existingPassword = '', language = DEFAULT_LANGUAGE) {
+  if (!values.host) return t(language, 'mail.validation.host');
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return 'Le port SMTP doit être un nombre compris entre 1 et 65535.';
+    return t(language, 'mail.validation.port');
   }
   if (!securityModes.has(values.securityMode)) {
-    return 'Le mode de sécurité SMTP sélectionné n’est pas pris en charge.';
+    return t(language, 'mail.validation.security');
   }
   if (!emailPattern.test(values.senderEmail)) {
-    return 'L’adresse d’expéditeur n’est pas valide.';
+    return t(language, 'mail.validation.sender_email');
   }
-  if (!values.senderName) return 'Le nom d’expéditeur est obligatoire.';
+  if (!values.senderName) return t(language, 'mail.validation.sender_name');
   if (values.replyTo && !emailPattern.test(values.replyTo)) {
-    return 'L’adresse Reply-To n’est pas valide.';
+    return t(language, 'mail.validation.reply_to');
   }
   const effectivePassword = values.username ? values.password || existingPassword : '';
   if (values.username && !effectivePassword) {
-    return 'Renseignez à la fois le nom d’utilisateur et le mot de passe SMTP, ou laissez les deux vides pour un relais sans authentification.';
+    return t(language, 'mail.validation.credentials');
   }
   if (values.securityMode === 'none' && values.username) {
-    return 'L’authentification SMTP nécessite une connexion chiffrée.';
+    return t(language, 'mail.validation.encryption');
   }
   return '';
 }
@@ -70,6 +71,7 @@ function renderSettingsPage({
   secretReadable = true,
   feedback = null,
   testRecipient = '',
+  language = DEFAULT_LANGUAGE,
 }) {
   const complete = secretReadable && isCompleteMailConfiguration({
     ...values,
@@ -80,54 +82,54 @@ function renderSettingsPage({
     ? `<p class="alert alert-${feedback.type === 'success' ? 'success' : 'danger'}" role="${feedback.type === 'success' ? 'status' : 'alert'}">${escapeHtml(feedback.message)}</p>`
     : '';
 
-  return renderPage('Configuration e-mail', renderSettingsLayout({
+  return renderPage(t(language, 'mail.title'), renderSettingsLayout({
     activeSection: 'email',
-    title: 'Configuration e-mail',
-    description: 'Configurez un fournisseur SMTP standard pour les futurs envois de l’application.',
-    status: `<span class="badge status-badge status-${complete ? 'active' : 'inactive'}">${complete ? 'E-mail configuré' : 'Configuration e-mail incomplète'}</span>`,
+    title: t(language, 'mail.title'),
+    description: t(language, 'mail.description'),
+    status: `<span class="badge status-badge status-${complete ? 'active' : 'inactive'}">${t(language, complete ? 'mail.configured' : 'mail.incomplete')}</span>`,
     notifications: feedbackMessage,
-    content: `<section class="page-section" aria-label="Configuration SMTP">
+    content: `<section class="page-section" aria-label="${escapeHtml(t(language, 'mail.smtp'))}">
         <form class="card card-body app-form" method="post" action="/settings/email" autocomplete="off">
         <div class="form-field">
-          <label for="smtp-host">Serveur SMTP <span aria-hidden="true">*</span></label>
+          <label for="smtp-host">${escapeHtml(t(language, 'mail.host'))} <span aria-hidden="true">*</span></label>
           <input class="form-control" id="smtp-host" name="smtp_host" type="text" value="${escapeHtml(values.host)}" autocomplete="off" spellcheck="false" required>
         </div>
         <div class="form-field">
-          <label for="smtp-port">Port <span aria-hidden="true">*</span></label>
+          <label for="smtp-port">${escapeHtml(t(language, 'mail.port'))} <span aria-hidden="true">*</span></label>
           <input class="form-control" id="smtp-port" name="smtp_port" type="number" min="1" max="65535" inputmode="numeric" value="${escapeHtml(values.port)}" autocomplete="off" required>
         </div>
         <div class="form-field">
-          <label for="security-mode">Sécurité <span aria-hidden="true">*</span></label>
+          <label for="security-mode">${escapeHtml(t(language, 'mail.security'))} <span aria-hidden="true">*</span></label>
           <select class="form-select" id="security-mode" name="security_mode" required>
             <option value="starttls"${values.securityMode === 'starttls' ? ' selected' : ''}>STARTTLS</option>
-            <option value="tls"${values.securityMode === 'tls' ? ' selected' : ''}>TLS implicite / SMTPS</option>
-            <option value="none"${values.securityMode === 'none' ? ' selected' : ''}>Aucun chiffrement</option>
+            <option value="tls"${values.securityMode === 'tls' ? ' selected' : ''}>${escapeHtml(t(language, 'mail.security.implicit'))}</option>
+            <option value="none"${values.securityMode === 'none' ? ' selected' : ''}>${escapeHtml(t(language, 'mail.security.none'))}</option>
           </select>
         </div>
         <div class="form-field">
-          <label for="smtp-username">Nom d’utilisateur</label>
+          <label for="smtp-username">${escapeHtml(t(language, 'mail.username'))}</label>
           <input class="form-control" id="smtp-username" name="smtp_username" type="text" value="${escapeHtml(values.username)}" autocomplete="off" autocapitalize="none" spellcheck="false">
         </div>
         <div class="form-field">
-          <label for="smtp-password">Mot de passe</label>
-          <input class="form-control" id="smtp-password" name="smtp_password" type="password" value="" autocomplete="new-password"${hasPassword ? ' placeholder="Laisser vide pour conserver le mot de passe…"' : ''}>
-          <p class="help-text">${hasPassword ? 'Un mot de passe est enregistré. Laissez ce champ vide pour le conserver.' : 'Laissez les identifiants vides si votre relais SMTP n’exige pas d’authentification.'}</p>
+          <label for="smtp-password">${escapeHtml(t(language, 'mail.password'))}</label>
+          <input class="form-control" id="smtp-password" name="smtp_password" type="password" value="" autocomplete="new-password"${hasPassword ? ` placeholder="${escapeHtml(t(language, 'mail.password.keep_placeholder'))}"` : ''}>
+          <p class="help-text">${escapeHtml(t(language, hasPassword ? 'mail.password.saved_help' : 'mail.password.relay_help'))}</p>
         </div>
         <div class="form-field">
-          <label for="sender-email">Adresse d’expéditeur <span aria-hidden="true">*</span></label>
+          <label for="sender-email">${escapeHtml(t(language, 'mail.sender_email'))} <span aria-hidden="true">*</span></label>
           <input class="form-control" id="sender-email" name="sender_email" type="email" value="${escapeHtml(values.senderEmail)}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
         </div>
         <div class="form-field">
-          <label for="sender-name">Nom d’expéditeur <span aria-hidden="true">*</span></label>
+          <label for="sender-name">${escapeHtml(t(language, 'mail.sender_name'))} <span aria-hidden="true">*</span></label>
           <input class="form-control" id="sender-name" name="sender_name" type="text" value="${escapeHtml(values.senderName)}" autocomplete="off" required>
         </div>
         <div class="form-field">
           <label for="reply-to">Reply-To</label>
           <input class="form-control" id="reply-to" name="reply_to" type="email" value="${escapeHtml(values.replyTo)}" autocomplete="off" autocapitalize="none" spellcheck="false">
         </div>
-        <p class="help-text">Utilisez les paramètres et identifiants SMTP fournis par votre prestataire.</p>
+        <p class="help-text">${escapeHtml(t(language, 'mail.provider_help'))}</p>
         <div class="form-actions d-flex flex-wrap gap-2">
-          <button class="btn btn-primary" type="submit">Enregistrer la configuration</button>
+          <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'mail.save'))}</button>
         </div>
         </form>
       </section>
@@ -135,21 +137,21 @@ function renderSettingsPage({
       <section class="page-section" aria-labelledby="test-email-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="test-email-title">Tester la configuration</h2>
-            <p class="section-description">Le test utilise uniquement la configuration enregistrée ci-dessus.</p>
+            <h2 id="test-email-title">${escapeHtml(t(language, 'mail.test.title'))}</h2>
+            <p class="section-description">${escapeHtml(t(language, 'mail.test.help'))}</p>
           </div>
         </div>
         <form class="card card-body app-form" method="post" action="/settings/email/test" autocomplete="off">
           <div class="form-field">
-            <label for="test-recipient">Adresse de destination</label>
+            <label for="test-recipient">${escapeHtml(t(language, 'mail.test.recipient'))}</label>
             <input class="form-control" id="test-recipient" name="test_recipient" type="email" value="${escapeHtml(testRecipient)}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
           </div>
           <div class="form-actions d-flex flex-wrap gap-2">
-            <button class="btn btn-primary" type="submit">Envoyer un e-mail de test</button>
+            <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'mail.test.send'))}</button>
           </div>
         </form>
       </section>`,
-  }));
+  }), language);
 }
 
 function publicValues(configuration) {
@@ -183,7 +185,7 @@ async function renderCurrentSettings(response, options = {}) {
     feedback: !secretReadable
       ? {
         type: 'error',
-        message: 'Le secret SMTP ne peut pas être déchiffré avec la clé active. Vérifiez que la clé de chiffrement correspond à cette base restaurée.',
+        message: t(options.language, 'mail.error.secret_mismatch'),
       }
       : options.feedback,
   }));
@@ -191,12 +193,13 @@ async function renderCurrentSettings(response, options = {}) {
 
 router.get('/', async (request, response) => {
   const notices = {
-    saved: 'La configuration e-mail a été enregistrée.',
-    test_sent: 'L’e-mail de test a été accepté par le serveur SMTP.',
+    saved: t(request.uiLanguage, 'mail.notice.saved'),
+    test_sent: t(request.uiLanguage, 'mail.notice.test_sent'),
   };
   try {
     const notice = notices[request.query.notice] || '';
     await renderCurrentSettings(response, {
+      language: request.uiLanguage,
       feedback: notice ? { type: 'success', message: notice } : null,
     });
   } catch (error) {
@@ -206,8 +209,9 @@ router.get('/', async (request, response) => {
       hasPassword: false,
       feedback: {
         type: 'error',
-        message: 'Impossible de charger la configuration e-mail pour le moment.',
+        message: t(request.uiLanguage, 'mail.error.load'),
       },
+      language: request.uiLanguage,
     }));
   }
 });
@@ -217,12 +221,13 @@ router.post('/', async (request, response) => {
   let current = null;
   try {
     current = await migratePlaintextMailPassword();
-    const validationError = validateConfiguration(values, current?.password || '');
+    const validationError = validateConfiguration(values, current?.password || '', request.uiLanguage);
     if (validationError) {
       response.status(400).send(renderSettingsPage({
         values,
         hasPassword: Boolean(current?.password),
         feedback: { type: 'error', message: validationError },
+        language: request.uiLanguage,
       }));
       return;
     }
@@ -274,24 +279,22 @@ router.post('/', async (request, response) => {
       hasPassword: Boolean(current?.password),
       feedback: {
         type: 'error',
-        message: 'Impossible d’enregistrer la configuration e-mail pour le moment.',
+        message: t(request.uiLanguage, 'mail.error.save'),
       },
+      language: request.uiLanguage,
     }));
   }
 });
 
-function testMailErrorMessage(code) {
-  return {
-    NOT_CONFIGURED: 'Enregistrez une configuration e-mail complète avant d’envoyer un test.',
-    AUTHENTICATION_FAILED: 'L’authentification SMTP a échoué. Vérifiez le nom d’utilisateur et le mot de passe.',
-    CONNECTION_FAILED: 'Impossible de joindre le serveur SMTP. Vérifiez le serveur, le port et le réseau.',
-    TLS_FAILED: 'La négociation TLS a échoué. Vérifiez le mode de sécurité et le certificat du serveur.',
-    SENDER_REJECTED: 'Le serveur SMTP a refusé l’adresse d’expéditeur.',
-    RECIPIENT_REJECTED: 'Le serveur SMTP a refusé l’adresse de destination.',
-    DELIVERY_FAILED: 'Le serveur SMTP n’a pas accepté l’e-mail de test.',
-    SECRET_KEY_MISMATCH: 'Le secret SMTP ne peut pas être déchiffré avec la clé active. Vérifiez que la clé de chiffrement correspond à cette base restaurée.',
-    SECRET_STORAGE_FAILED: 'Le secret SMTP n’a pas pu être protégé avant son utilisation.',
-  }[code] || 'L’e-mail de test n’a pas pu être envoyé.';
+function testMailErrorMessage(code, language = DEFAULT_LANGUAGE) {
+  const key = `mail.test.error.${code}`;
+  try {
+    return t(language, key);
+  } catch (_error) {
+    return code === 'SECRET_KEY_MISMATCH'
+      ? t(language, 'mail.error.secret_mismatch')
+      : t(language, 'mail.test.error.default');
+  }
 }
 
 router.post('/test', async (request, response) => {
@@ -304,8 +307,9 @@ router.post('/test', async (request, response) => {
         testRecipient,
         feedback: {
           type: 'error',
-          message: 'L’adresse de destination n’est pas valide.',
+          message: t(request.uiLanguage, 'mail.validation.recipient'),
         },
+        language: request.uiLanguage,
       });
     } catch (error) {
       console.error('Unable to load mail configuration:', error.code || 'DATABASE_ERROR');
@@ -315,8 +319,9 @@ router.post('/test', async (request, response) => {
         testRecipient,
         feedback: {
           type: 'error',
-          message: 'Impossible de charger la configuration e-mail pour le moment.',
+          message: t(request.uiLanguage, 'mail.error.load'),
         },
+        language: request.uiLanguage,
       }));
     }
     return;
@@ -325,9 +330,9 @@ router.post('/test', async (request, response) => {
   try {
     await sendMail({
       to: testRecipient,
-      subject: 'Attendance Log — test e-mail',
-      text: 'Cet e-mail confirme que la configuration SMTP d’Attendance Log fonctionne.',
-      html: '<p>Cet e-mail confirme que la configuration SMTP d’Attendance Log fonctionne.</p>',
+      subject: t(request.uiLanguage, 'mail.test.subject'),
+      text: t(request.uiLanguage, 'mail.test.body'),
+      html: `<p>${escapeHtml(t(request.uiLanguage, 'mail.test.body'))}</p>`,
     });
     await recordAuditEventSafely({ category: 'mail', action: 'mail.test', summary: 'Test de la configuration e-mail réussi.' });
     response.redirect(303, '/settings/email?notice=test_sent');
@@ -337,7 +342,8 @@ router.post('/test', async (request, response) => {
     try {
       await renderCurrentSettings(response.status(error.code === 'NOT_CONFIGURED' ? 400 : 502), {
         testRecipient,
-        feedback: { type: 'error', message: testMailErrorMessage(error.code) },
+        feedback: { type: 'error', message: testMailErrorMessage(error.code, request.uiLanguage) },
+        language: request.uiLanguage,
       });
     } catch (loadError) {
       console.error('Unable to load mail configuration:', loadError.code || 'DATABASE_ERROR');
@@ -345,7 +351,8 @@ router.post('/test', async (request, response) => {
         values: emptyValues(),
         hasPassword: false,
         testRecipient,
-        feedback: { type: 'error', message: testMailErrorMessage(error.code) },
+        feedback: { type: 'error', message: testMailErrorMessage(error.code, request.uiLanguage) },
+        language: request.uiLanguage,
       }));
     }
   }

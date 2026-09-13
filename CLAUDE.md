@@ -93,6 +93,10 @@ Consult it when assessing behavior preservation, blast radius, and the smallest 
 
 ## Domain integrity review
 
+### Internationalization review
+
+For internationalization/localization changes, verify language resolution precedence; separation of user UI language from business-output language; independence of language, locale, and timezone; deterministic English fallback; and preservation of session-local date/start-time semantics. Confirm user-entered business content is never automatically translated, while configurable application terminology uses the terminology set matching the UI or business-output context. Check for cross-language terminology bleed and verify migration preserves existing customized terminology exactly as French. Stable machine values must not be localized or rewritten, and HTML/export/e-mail/PDF outputs must share the same effective-language decision. Check translated and interpolated output for correct escaping and ensure language selection creates no RBAC or authorization difference.
+
 ### Attendance and reporting
 
 - Keep global student activity separate from class-membership activity.

@@ -1,4 +1,5 @@
-(() => {
+window.AttendanceLogI18n.ready.then(() => {
+  const t = (key, params) => window.AttendanceLogI18n.t(key, params);
   const form = document.querySelector('[data-otp-resend-form]');
   if (!form) return;
 
@@ -29,14 +30,14 @@
     const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     if (remaining === 0) {
       button.disabled = submitting;
-      label.textContent = submitting ? 'Envoi…' : 'Renvoyer un code';
-      if (wasCoolingDown && !submitting) status.textContent = 'Vous pouvez maintenant renvoyer un code.';
+      label.textContent = submitting ? t('action.sending') : t('auth.otp.resend');
+      if (wasCoolingDown && !submitting) status.textContent = t('auth.otp.resend_ready');
       wasCoolingDown = false;
       return;
     }
 
     button.disabled = true;
-    label.textContent = `Renvoyer un code dans ${formatRemaining(remaining)}`;
+    label.textContent = t('auth.otp.resend_in', { time: formatRemaining(remaining) });
     timer = window.setTimeout(update, 250);
   }
 
@@ -47,10 +48,10 @@
     }
     submitting = true;
     button.disabled = true;
-    label.textContent = 'Envoi…';
+    label.textContent = t('action.sending');
   });
 
   window.addEventListener('pagehide', clearTimer);
   window.addEventListener('pageshow', update);
   update();
-})();
+}).catch(() => {});

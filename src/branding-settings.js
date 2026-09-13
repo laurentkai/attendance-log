@@ -10,15 +10,16 @@ const {
   saveGlobalLogo,
 } = require('./branding');
 const { escapeHtml, renderPage, renderSettingsLayout } = require('./ui');
+const { t } = require('./i18n');
 
 const router = express.Router();
 
-function logoFeedback(query = {}) {
+function logoFeedback(query = {}, language) {
   const messages = {
-    saved: ['success', 'Le logo de l’installation a été enregistré.'],
-    removed: ['success', 'Le logo de l’installation a été supprimé.'],
-    invalid: ['danger', 'Choisissez une image PNG ou JPEG valide de 2 Mo maximum.'],
-    failed: ['danger', 'Impossible d’enregistrer le logo pour le moment.'],
+    saved: ['success', t(language, 'branding.notice.saved')],
+    removed: ['success', t(language, 'branding.notice.removed')],
+    invalid: ['danger', t(language, 'branding.notice.invalid')],
+    failed: ['danger', t(language, 'branding.notice.failed')],
   };
   const feedback = messages[query.notice];
   return feedback
@@ -26,46 +27,46 @@ function logoFeedback(query = {}) {
     : '';
 }
 
-function renderBrandingPage(hasLogo, query = {}) {
-  return renderPage('Identité visuelle', renderSettingsLayout({
+function renderBrandingPage(hasLogo, query = {}, language) {
+  return renderPage(t(language, 'branding.title'), renderSettingsLayout({
     activeSection: 'branding',
-    title: 'Identité visuelle',
-    description: 'Ajoutez un logo commun aux e-mails QR et aux badges qui disposent de suffisamment d’espace.',
-    notifications: logoFeedback(query),
+    title: t(language, 'branding.title'),
+    description: t(language, 'branding.description'),
+    notifications: logoFeedback(query, language),
     content: `<section class="page-section" aria-labelledby="installation-logo-title">
       <div class="section-header">
         <div>
-          <h2 id="installation-logo-title">Logo de l’installation</h2>
-          <p class="section-description">PNG ou JPEG, 2 Mo maximum. L’image est vérifiée puis normalisée en PNG.</p>
+          <h2 id="installation-logo-title">${escapeHtml(t(language, 'branding.logo.title'))}</h2>
+          <p class="section-description">${escapeHtml(t(language, 'branding.logo.help'))}</p>
         </div>
       </div>
       <div class="card card-body app-form">
         ${hasLogo ? `<div class="branding-logo-preview">
-          <img src="/settings/branding/logo" width="240" height="96" alt="Logo actuel de l’installation">
-        </div>` : '<p class="empty-state mb-0">Aucun logo n’est configuré.</p>'}
+          <img src="/settings/branding/logo" width="240" height="96" alt="${escapeHtml(t(language, 'branding.logo.current_alt'))}">
+        </div>` : `<p class="empty-state mb-0">${escapeHtml(t(language, 'branding.logo.none'))}</p>`}
         <form class="app-form" method="post" action="/settings/branding/logo" enctype="multipart/form-data">
           <div class="form-field">
-            <label for="installation-logo">${hasLogo ? 'Remplacer le logo' : 'Choisir un logo'}</label>
+            <label for="installation-logo">${escapeHtml(t(language, hasLogo ? 'branding.logo.replace' : 'branding.logo.choose'))}</label>
             <input class="form-control" id="installation-logo" name="logo" type="file" accept="image/png,image/jpeg" required>
           </div>
           <div class="form-actions">
-            <button class="btn btn-primary" type="submit">${hasLogo ? 'Remplacer' : 'Enregistrer'}</button>
+            <button class="btn btn-primary" type="submit">${escapeHtml(t(language, hasLogo ? 'branding.logo.replace' : 'action.save'))}</button>
           </div>
         </form>
-        ${hasLogo ? `<form method="post" action="/settings/branding/logo/remove" data-confirm="Supprimer le logo de l’installation ?">
-          <button class="btn btn-outline-danger" type="submit">Supprimer le logo</button>
+        ${hasLogo ? `<form method="post" action="/settings/branding/logo/remove" data-confirm="${escapeHtml(t(language, 'branding.logo.confirm_remove'))}">
+          <button class="btn btn-outline-danger" type="submit">${escapeHtml(t(language, 'branding.logo.remove'))}</button>
         </form>` : ''}
       </div>
     </section>`,
-  }));
+  }, language), { language });
 }
 
 router.get('/', async (request, response) => {
   try {
-    response.send(renderBrandingPage(Boolean(await getGlobalLogo()), request.query));
+    response.send(renderBrandingPage(Boolean(await getGlobalLogo()), request.query, request.uiLanguage));
   } catch (error) {
     console.error('Unable to load installation branding:', error.code || 'DATABASE_ERROR');
-    response.status(500).send(renderBrandingPage(false, { notice: 'failed' }));
+    response.status(500).send(renderBrandingPage(false, { notice: 'failed' }, request.uiLanguage));
   }
 });
 

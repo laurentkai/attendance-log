@@ -1,4 +1,5 @@
-(() => {
+window.AttendanceLogI18n.ready.then(() => {
+  const t = (key, params) => window.AttendanceLogI18n.t(key, params);
   const drawer = document.querySelector('#audit-detail');
   if (!drawer || typeof bootstrap === 'undefined') return;
   const instance = bootstrap.Offcanvas.getOrCreateInstance(drawer);
@@ -22,7 +23,7 @@
       if (detail.changes.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'text-body-secondary mb-0';
-        empty.textContent = 'Aucune modification de champ enregistrée.';
+        empty.textContent = t('audit.details.no_changes');
         changes.append(empty);
       } else {
         const list = document.createElement('dl');
@@ -45,7 +46,7 @@
       if (detail.metadata.length === 0) {
         const item = document.createElement('li');
         item.className = 'text-body-secondary';
-        item.textContent = 'Aucune information complémentaire.';
+        item.textContent = t('audit.details.no_metadata');
         metadata.append(item);
       }
       instance.show();
@@ -53,10 +54,10 @@
       setText('timestamp', '—');
       setText('actor', '—');
       setText('role', '—');
-      setText('action', 'Détail indisponible');
+      setText('action', t('audit.details.unavailable'));
       setText('target', '—');
-      setText('result', 'Échec');
-      setText('summary', 'Impossible de charger le détail pour le moment.');
+      setText('result', t('status.failed'));
+      setText('summary', t('audit.details.load_failed'));
       setText('ipHash', '—');
       setText('userAgentHash', '—');
       changes.replaceChildren();
@@ -71,4 +72,4 @@
     const trigger = event.target.closest('[data-audit-detail-url]');
     if (trigger) openDetail(trigger);
   });
-})();
+}).catch(() => {});

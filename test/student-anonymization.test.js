@@ -106,7 +106,7 @@ test('the authoritative eligibility rule rejects an already-anonymized participa
     anonymized_at: '2026-01-01T00:00:00.000Z',
   }, 12, new Date('2026-09-12T00:00:00.000Z'));
   assert.equal(result.eligible, false);
-  assert(result.reasons.includes('Participant déjà anonymisé'));
+  assert(result.reasons.includes('already_anonymized'));
 });
 
 test('malformed public identifiers fail safely before any database access', async () => {

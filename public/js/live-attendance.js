@@ -1,14 +1,17 @@
+window.AttendanceLogI18n.ready.then(() => {
 const pollInterval = 2500;
-const sessionTerm = document.body.dataset.termSession || 'Élément';
+const t = window.AttendanceLogI18n?.t || ((key) => key);
+const classTerm = document.body.dataset.termClass || t('common.item');
+const sessionTerm = document.body.dataset.termSession || t('common.item');
 const stateLabels = {
-  scheduled: 'État : planifié',
-  open: 'État : ouvert',
-  closed: 'État : clôturé',
+  scheduled: t('sessions.state', { state: t('status.scheduled') }),
+  open: t('sessions.state', { state: t('status.open') }),
+  closed: t('sessions.state', { state: t('status.closed') }),
 };
 const attendanceLabels = {
-  pending: 'En attente',
-  present: 'Présent',
-  absent: 'Absent',
+  pending: t('status.pending'),
+  present: t('status.present'),
+  absent: t('status.absent'),
 };
 
 const sessionClassSelect = document.querySelector('[data-session-class]');
@@ -21,16 +24,15 @@ function updateInheritedToleranceLabel() {
   if (!sessionClassSelect || !inheritedToleranceOption) return;
   const tolerance = sessionClassSelect.selectedOptions[0]?.dataset.punctualityTolerance;
   inheritedToleranceOption.textContent = tolerance
-    ? `Hériter de l’activité (+${tolerance} min)`
-    : 'Hériter de l’activité';
+    ? t('attendance.client.inherit_tolerance', { class: classTerm, minutes: tolerance })
+    : t('attendance.client.inherit_activity', { class: classTerm });
 }
-
 function updateInheritedSummaryAttachmentLabel() {
   if (!sessionClassSelect || !inheritedSummaryAttachmentOption) return;
   const inherited = sessionClassSelect.selectedOptions[0]?.dataset.summaryAttachXlsx;
   inheritedSummaryAttachmentOption.textContent = inherited
-    ? `Hériter de l’activité (${inherited === 'true' ? 'Oui' : 'Non'})`
-    : 'Hériter de l’activité';
+    ? t('attendance.client.inherit_attachment', { class: classTerm, value: t(inherited === 'true' ? 'common.yes' : 'common.no') })
+    : t('attendance.client.inherit_activity', { class: classTerm });
 }
 
 sessionClassSelect?.addEventListener('change', () => {
@@ -97,7 +99,7 @@ const attendanceRows = [...document.querySelectorAll('[data-student-id]')];
 
 function filterAttendanceRows() {
   if (!attendanceSearch) return;
-  const query = attendanceSearch.value.trim().toLocaleLowerCase('fr');
+  const query = attendanceSearch.value.trim().toLocaleLowerCase();
   let visibleCount = 0;
   attendanceRows.forEach((row) => {
     const matches = row.dataset.inRoster !== 'false' && row.dataset.search.includes(query);
@@ -521,7 +523,7 @@ if (quickAttendance) {
 
   const updateSoundButton = () => {
     if (!qrSoundButton) return;
-    qrSoundButton.textContent = soundEnabled ? 'Son activé' : 'Son désactivé';
+    qrSoundButton.textContent = t(soundEnabled ? 'attendance.client.sound_on' : 'attendance.client.sound_off');
     qrSoundButton.setAttribute('aria-pressed', String(soundEnabled));
   };
 
@@ -535,7 +537,7 @@ if (quickAttendance) {
   };
 
   const filterQuickRows = () => {
-    const query = searchInput.value.trim().toLocaleLowerCase('fr');
+    const query = searchInput.value.trim().toLocaleLowerCase();
     let eligibleCount = 0;
     let visibleCount = 0;
 
@@ -618,7 +620,7 @@ if (quickAttendance) {
     retainedCameraStream = null;
   };
 
-  const stopScanner = async ({ offerRestart = false, placeholder = 'Caméra arrêtée.' } = {}) => {
+  const stopScanner = async ({ offerRestart = false, placeholder = t('attendance.client.camera_stopped') } = {}) => {
     scannerGeneration += 1;
     scannerActive = false;
     updateCameraSwitchButton();
@@ -661,7 +663,7 @@ if (quickAttendance) {
       if (searchClearButton) searchClearButton.disabled = true;
       modeButtons.forEach((button) => { button.disabled = true; });
       scannerUnavailable = true;
-      await stopScanner({ placeholder: `${sessionTerm} clôturée.` });
+      await stopScanner({ placeholder: t('attendance.client.session_closed', { session: sessionTerm }) });
       if (qrSoundButton) qrSoundButton.disabled = true;
       if (completeState) completeState.hidden = true;
       setFeedback();
@@ -689,17 +691,17 @@ if (quickAttendance) {
         });
         if (redirectOnUnauthorized(response)) return;
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || 'La mise à jour est impossible pour le moment.');
+        if (!response.ok) throw new Error(payload.error || t('attendance.client.update_unavailable'));
 
         applyPresentResult(payload, row);
         setFeedback(
-          payload.changed ? `${studentName} — présent` : `${studentName} est déjà présent`,
+          payload.changed ? t('attendance.api.present', { name: studentName }) : t('attendance.client.already_present', { name: studentName }),
           payload.changed ? 'success' : 'warning',
         );
         clearManualSearch({ focus: true });
         await refreshQuickAttendance().catch(() => {});
       } catch (error) {
-        setError(error.message || 'La mise à jour est impossible pour le moment. Réessayez.');
+        setError(error.message || t('attendance.client.update_retry'));
         focusSearch();
       } finally {
         button.disabled = false;
@@ -733,7 +735,7 @@ if (quickAttendance) {
       undoCandidate = null;
       updateUndoButton();
       if (!response.ok) {
-        setError(payload.error || 'Cette action ne peut plus être annulée.');
+        setError(payload.error || t('attendance.api.undo_unavailable'));
         await refreshQuickAttendance();
         return;
       }
@@ -744,12 +746,12 @@ if (quickAttendance) {
       const presentCount = Number(quickAttendance.querySelector('[data-present-count]').textContent);
       const totalCount = Number(quickAttendance.querySelector('[data-total-count]').textContent);
       updateQuickCount(Math.max(0, presentCount - 1), totalCount);
-      setFeedback('Dernière action annulée.', 'success');
+      setFeedback(t('attendance.client.undo_done'), 'success');
       await refreshQuickAttendance();
     } catch (_error) {
       undoCandidate = candidate;
       updateUndoButton();
-      setError('L’annulation a échoué. Réessayez.');
+      setError(t('attendance.client.undo_retry'));
     }
   });
 
@@ -769,7 +771,7 @@ if (quickAttendance) {
     scanProcessing = true;
     updateCameraSwitchButton();
     let scanFeedbackHandled = false;
-    setQrFeedback('QR détecté, vérification…', 'warning');
+    setQrFeedback(t('attendance.client.qr_checking'), 'warning');
     try {
       const response = await fetch(`/sessions/${sessionId}/quick-attendance/qr`, {
         method: 'POST',
@@ -783,7 +785,7 @@ if (quickAttendance) {
       const payload = await response.json();
       if (currentMode !== 'qr' || resultGeneration !== scannerGeneration) return;
       if (!response.ok) {
-        setQrFeedback(payload.message || 'QR non reconnu.', 'error');
+        setQrFeedback(payload.message || t('attendance.api.qr_unknown'), 'error');
         scanFeedbackHandled = triggerQrScanFeedback('failure', resultGeneration);
         await refreshQuickAttendance();
         return;
@@ -798,7 +800,7 @@ if (quickAttendance) {
       await refreshQuickAttendance();
     } catch (_error) {
       if (currentMode !== 'qr' || resultGeneration !== scannerGeneration) return;
-      setQrFeedback('Le QR n’a pas pu être traité. Réessayez.', 'error');
+      setQrFeedback(t('attendance.client.qr_process_retry'), 'error');
       if (
         !scanFeedbackHandled
         && triggerQrScanFeedback('failure', resultGeneration)
@@ -813,7 +815,7 @@ if (quickAttendance) {
 
   const startScanner = async () => {
     if (scannerUnavailable) {
-      setQrFeedback(scannerUnavailableMessage || 'Scanner indisponible. Passez en mode Manuel.', 'error');
+      setQrFeedback(scannerUnavailableMessage || t('attendance.client.scanner_unavailable'), 'error');
       return;
     }
     if (scannerActive || scannerStarting || cameraSwitching || currentMode !== 'qr') return;
@@ -825,10 +827,10 @@ if (quickAttendance) {
       qrStartButton.hidden = true;
     }
     if (qrPlaceholder) {
-      qrPlaceholder.textContent = 'Activation de la caméra…';
+      qrPlaceholder.textContent = t('attendance.client.camera_starting');
       qrPlaceholder.hidden = false;
     }
-    setQrFeedback('Activation de la caméra…', 'warning');
+    setQrFeedback(t('attendance.client.camera_starting'), 'warning');
 
     try {
       await prepareAudio();
@@ -868,7 +870,7 @@ if (quickAttendance) {
       if (qrPlaceholder) qrPlaceholder.hidden = true;
       if (qrStartButton) qrStartButton.hidden = true;
       await refreshAvailableCameras(startGeneration);
-      setQrFeedback('Présentez un QR devant la caméra.');
+      setQrFeedback(t('attendance.client.present_qr'));
     } catch (error) {
       if (currentMode !== 'qr' || startGeneration !== scannerGeneration) {
         await settleStaleScannerStart();
@@ -877,24 +879,24 @@ if (quickAttendance) {
       const reason = `${error?.name || ''} ${error?.message || error}`;
       if (/NotAllowed|Permission|denied/i.test(reason)) {
         scannerUnavailable = true;
-        scannerUnavailableMessage = 'Accès à la caméra refusé. Passez en mode Manuel.';
-        await stopScanner({ placeholder: 'Accès à la caméra refusé.' });
+        scannerUnavailableMessage = t('attendance.client.camera_denied');
+        await stopScanner({ placeholder: t('attendance.client.camera_denied_short') });
         setQrFeedback(scannerUnavailableMessage, 'error');
       } else if (/not found|NotFound|DevicesNotFound/i.test(reason)) {
         scannerUnavailable = true;
-        scannerUnavailableMessage = 'Aucune caméra disponible. Passez en mode Manuel.';
-        await stopScanner({ placeholder: 'Aucune caméra disponible.' });
+        scannerUnavailableMessage = t('attendance.client.no_camera');
+        await stopScanner({ placeholder: t('attendance.client.no_camera_short') });
         setQrFeedback(scannerUnavailableMessage, 'error');
       } else if (/unsupported/i.test(reason)) {
         scannerUnavailable = true;
-        scannerUnavailableMessage = 'Scanner indisponible sur ce navigateur. Passez en mode Manuel.';
-        await stopScanner({ placeholder: 'Scanner indisponible.' });
+        scannerUnavailableMessage = t('attendance.client.unsupported');
+        await stopScanner({ placeholder: t('attendance.client.scanner_short') });
         setQrFeedback(scannerUnavailableMessage, 'error');
       } else {
         scannerUnavailable = false;
         scannerUnavailableMessage = '';
-        await stopScanner({ offerRestart: true, placeholder: 'La caméra n’a pas démarré.' });
-        setQrFeedback('Le scanner n’a pas pu démarrer. Réessayez ou passez en mode Manuel.', 'error');
+        await stopScanner({ offerRestart: true, placeholder: t('attendance.client.camera_failed') });
+        setQrFeedback(t('attendance.client.scanner_failed'), 'error');
       }
     } finally {
       scannerStarting = false;
@@ -926,7 +928,7 @@ if (quickAttendance) {
     scannerActive = false;
     lastScan = { payload: '', at: 0 };
     updateCameraSwitchButton();
-    setQrFeedback('Changement de caméra…', 'warning');
+    setQrFeedback(t('attendance.client.switching_camera'), 'warning');
 
     try {
       selectedCamera = nextCamera.id;
@@ -942,7 +944,7 @@ if (quickAttendance) {
       if (qrGuide) qrGuide.hidden = false;
       if (qrPlaceholder) qrPlaceholder.hidden = true;
       await refreshAvailableCameras(switchGeneration);
-      setQrFeedback('Présentez un QR devant la caméra.');
+      setQrFeedback(t('attendance.client.present_qr'));
     } catch (_error) {
       if (currentMode !== 'qr' || switchGeneration !== scannerGeneration) return;
       selectedCamera = previousCamera;
@@ -965,12 +967,12 @@ if (quickAttendance) {
         scannerActive = false;
         if (qrGuide) qrGuide.hidden = true;
         if (qrPlaceholder) {
-          qrPlaceholder.textContent = 'La caméra n’a pas redémarré.';
+          qrPlaceholder.textContent = t('attendance.client.camera_restart_failed');
           qrPlaceholder.hidden = false;
         }
         if (qrStartButton) qrStartButton.hidden = false;
       }
-      setQrFeedback('Impossible de changer de caméra. Réessayez.', 'error');
+      setQrFeedback(t('attendance.client.camera_switch_failed'), 'error');
     } finally {
       cameraSwitching = false;
       updateCameraSwitchButton();
@@ -1046,3 +1048,4 @@ if (quickAttendance) {
   setMode('manual', { focus: false });
   startPolling(refreshQuickAttendance);
 }
+}).catch(() => {});

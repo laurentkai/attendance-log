@@ -1,5 +1,7 @@
 const { pool } = require('./db/client');
+const { t } = require('./i18n');
 const { isValidPublicId } = require('./public-id');
+const { getTerm } = require('./terminology');
 const { escapeHtml } = require('./ui');
 
 const MAX_EXTERNAL_RECIPIENTS = 50;
@@ -207,43 +209,45 @@ function summaryConfigurationChanged(before, after, scope) {
       : before.attachXlsxOverride !== after.attachXlsxOverride);
 }
 
-function renderAdminRecipientOptions(adminUsers, selectedIds) {
+function renderAdminRecipientOptions(adminUsers, selectedIds, language) {
   const selected = new Set(selectedIds);
-  if (adminUsers.length === 0) return '<p class="form-text mb-0">Aucun utilisateur avec une adresse e-mail n’est disponible.</p>';
+  if (adminUsers.length === 0) return `<p class="form-text mb-0">${escapeHtml(t(language, 'summary.config.no_users'))}</p>`;
   return `<div class="border rounded p-2 d-grid gap-1">${adminUsers.map((user) => `<label class="form-check mb-0">
     <input class="form-check-input" name="summary_admin_user_ids" type="checkbox" value="${escapeHtml(user.public_id)}"${selected.has(user.public_id) ? ' checked' : ''}>
-    <span class="form-check-label">${escapeHtml(user.name)} <span class="text-body-secondary">· ${escapeHtml(user.email)}${user.active ? '' : ' · inactif'}</span></span>
+    <span class="form-check-label">${escapeHtml(user.name)} <span class="text-body-secondary">· ${escapeHtml(user.email)}${user.active ? '' : ` · ${escapeHtml(t(language, 'status.inactive'))}`}</span></span>
   </label>`).join('')}</div>`;
 }
 
-function renderSummaryConfigurationFields({ adminUsers = [], values, scope, inheritedAttachXlsx = false }) {
+function renderSummaryConfigurationFields({ adminUsers = [], values, scope, inheritedAttachXlsx = false, language }) {
+  const classTerm = getTerm(language, 'class');
+  const sessionTerm = getTerm(language, 'session');
   const externalValue = values.externalRecipients.join('\n');
   const attachmentControl = scope === 'class'
     ? `<div class="form-check form-switch mb-0">
         <input class="form-check-input" id="summary-attach-xlsx" name="summary_attach_xlsx" type="checkbox"${values.attachXlsx ? ' checked' : ''}>
-        <label class="form-check-label" for="summary-attach-xlsx">Joindre le fichier Excel</label>
+        <label class="form-check-label" for="summary-attach-xlsx">${escapeHtml(t(language, 'summary.config.attach_xlsx'))}</label>
       </div>`
     : `<div class="form-field mb-0">
-        <label for="summary-attach-xlsx-override">Joindre le fichier Excel</label>
+        <label for="summary-attach-xlsx-override">${escapeHtml(t(language, 'summary.config.attach_xlsx'))}</label>
         <select class="form-select" id="summary-attach-xlsx-override" name="summary_attach_xlsx_override" data-session-summary-attachment>
-          <option value="" data-summary-inherit-option${values.attachXlsxOverride === null ? ' selected' : ''}>Hériter de l’activité (${inheritedAttachXlsx ? 'Oui' : 'Non'})</option>
-          <option value="true"${values.attachXlsxOverride === true ? ' selected' : ''}>Oui</option>
-          <option value="false"${values.attachXlsxOverride === false ? ' selected' : ''}>Non</option>
+          <option value="" data-summary-inherit-option${values.attachXlsxOverride === null ? ' selected' : ''}>${escapeHtml(t(language, 'summary.config.inherit', { class: classTerm, value: t(language, inheritedAttachXlsx ? 'common.yes' : 'common.no') }))}</option>
+          <option value="true"${values.attachXlsxOverride === true ? ' selected' : ''}>${escapeHtml(t(language, 'common.yes'))}</option>
+          <option value="false"${values.attachXlsxOverride === false ? ' selected' : ''}>${escapeHtml(t(language, 'common.no'))}</option>
         </select>
       </div>`;
   return `<section class="border-top pt-3" aria-labelledby="summary-email-title">
     <div class="section-header mb-3">
-      <div><h2 class="h5 mb-1" id="summary-email-title">Résumé automatique par e-mail</h2>
-      <p class="form-text mb-0">${scope === 'class' ? 'Destinataires par défaut de cette activité.' : 'Destinataires supplémentaires pour cette session.'}</p></div>
+      <div><h2 class="h5 mb-1" id="summary-email-title">${escapeHtml(t(language, 'summary.config.title'))}</h2>
+      <p class="form-text mb-0">${escapeHtml(t(language, scope === 'class' ? 'summary.config.class_help' : 'summary.config.session_help', scope === 'class' ? { class: classTerm } : { session: sessionTerm }))}</p></div>
     </div>
     <div class="form-field">
-      <span class="form-label d-block">Utilisateurs</span>
-      ${renderAdminRecipientOptions(adminUsers, values.adminRecipientIds)}
+      <span class="form-label d-block">${escapeHtml(t(language, 'summary.config.users'))}</span>
+      ${renderAdminRecipientOptions(adminUsers, values.adminRecipientIds, language)}
     </div>
     <div class="form-field">
-      <label for="summary-external-recipients">Adresses e-mail externes</label>
-      <textarea class="form-control" id="summary-external-recipients" name="summary_external_recipients" rows="3" maxlength="${MAX_EXTERNAL_INPUT_LENGTH}" placeholder="une.adresse@example.com">${escapeHtml(externalValue)}</textarea>
-      <p class="form-text mb-0">Une adresse par ligne. Elles seront utilisées en copie cachée.</p>
+      <label for="summary-external-recipients">${escapeHtml(t(language, 'summary.config.external'))}</label>
+      <textarea class="form-control" id="summary-external-recipients" name="summary_external_recipients" rows="3" maxlength="${MAX_EXTERNAL_INPUT_LENGTH}" placeholder="${escapeHtml(t(language, 'summary.config.external_placeholder'))}">${escapeHtml(externalValue)}</textarea>
+      <p class="form-text mb-0">${escapeHtml(t(language, 'summary.config.external_help'))}</p>
     </div>
     ${attachmentControl}
   </section>`;

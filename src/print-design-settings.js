@@ -13,7 +13,9 @@ const {
 } = require('./print-design');
 const { canIncludeQrWarning, createDefaultPrintDesign, createParticipantQrSheetPdf } = require('./student-qr-label-pdf');
 const { createStudentQrPng } = require('./student-qr');
-const { PERSONAL_QR_WARNING } = require('./student-qr-content');
+const { getPersonalQrWarning } = require('./student-qr-content');
+const { DEFAULT_LANGUAGE, t } = require('./i18n');
+const { getTerm } = require('./terminology');
 const { escapeHtml, renderMessagePage, renderPage, renderSettingsLayout } = require('./ui');
 
 const router = express.Router();
@@ -21,9 +23,15 @@ const SAMPLE = Object.freeze({
   participant: Object.freeze({
     first_name: 'Paul', last_name: 'BALDEWYNS', student_code: 'NAV2027', qr_token: crypto.randomUUID(),
   }),
-  title: 'Carte étudiant 2027',
-  activityName: 'Cours de navigation 2026-2027',
 });
+
+function sampleContent(language) {
+  return {
+    participant: SAMPLE.participant,
+    title: t(language, 'print.design.sample.title', { student: getTerm(language, 'student') }),
+    activityName: t(language, 'print.design.sample.activity'),
+  };
+}
 
 function selectedProfile(reference) {
   return getAveryProfile(reference) || Object.values(AVERY_PROFILES)[0];
@@ -37,57 +45,63 @@ function serializeForAttribute(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
 }
 
-function renderElementControls(name, label, element) {
+function renderElementControls(name, label, element, language) {
   const text = ['code', 'title', 'name', 'activity', 'disclaimer'].includes(name);
   const align = ['title', 'name', 'activity', 'disclaimer'].includes(name);
   return `<div class="print-design-controls" data-controls-for="${name}" hidden>
     <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
       <strong>${escapeHtml(label)}</strong>
-      ${name === 'qr' ? '' : `<div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="design-${name}-enabled" data-control="enabled"${element.enabled ? ' checked' : ''}><label class="form-check-label" for="design-${name}-enabled">Afficher</label></div>`}
+      ${name === 'qr' ? '' : `<div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="design-${name}-enabled" data-control="enabled"${element.enabled ? ' checked' : ''}><label class="form-check-label" for="design-${name}-enabled">${escapeHtml(t(language, 'print.design.show'))}</label></div>`}
     </div>
     <div class="row g-2">
-      ${[['x', 'X'], ['y', 'Y'], ['width', 'Largeur'], ['height', 'Hauteur']].map(([property, caption]) => `<div class="col-6"><label class="form-label" for="design-${name}-${property}">${caption} (mm)</label><input class="form-control form-control-sm" id="design-${name}-${property}" type="number" step="0.1" data-control="${property}" value="${element[property]}"></div>`).join('')}
-      ${text ? `<div class="col-6"><label class="form-label" for="design-${name}-fontSize">Corps (pt)</label><input class="form-control form-control-sm" id="design-${name}-fontSize" type="number" step="0.5" data-control="fontSize" value="${element.fontSize}"></div>` : ''}
-      ${align ? `<div class="col-6"><label class="form-label" for="design-${name}-align">Alignement</label><select class="form-select form-select-sm" id="design-${name}-align" data-control="align"><option value="left"${element.align === 'left' ? ' selected' : ''}>Gauche</option><option value="center"${element.align === 'center' ? ' selected' : ''}>Centré</option><option value="right"${element.align === 'right' ? ' selected' : ''}>Droite</option></select></div>` : ''}
-      ${name === 'code' ? `<div class="col-6"><label class="form-label" for="design-code-rotation">Rotation</label><select class="form-select form-select-sm" id="design-code-rotation" data-control="rotation"><option value="-90"${element.rotation === -90 ? ' selected' : ''}>−90°</option><option value="0"${element.rotation === 0 ? ' selected' : ''}>0°</option><option value="90"${element.rotation === 90 ? ' selected' : ''}>90°</option></select></div>` : ''}
+      ${[['x', 'X'], ['y', 'Y'], ['width', t(language, 'print.design.width')], ['height', t(language, 'print.design.height')]].map(([property, caption]) => `<div class="col-6"><label class="form-label" for="design-${name}-${property}">${escapeHtml(caption)} (mm)</label><input class="form-control form-control-sm" id="design-${name}-${property}" type="number" step="0.1" data-control="${property}" value="${element[property]}"></div>`).join('')}
+      ${text ? `<div class="col-6"><label class="form-label" for="design-${name}-fontSize">${escapeHtml(t(language, 'print.design.font_size'))} (pt)</label><input class="form-control form-control-sm" id="design-${name}-fontSize" type="number" step="0.5" data-control="fontSize" value="${element.fontSize}"></div>` : ''}
+      ${align ? `<div class="col-6"><label class="form-label" for="design-${name}-align">${escapeHtml(t(language, 'print.design.alignment'))}</label><select class="form-select form-select-sm" id="design-${name}-align" data-control="align"><option value="left"${element.align === 'left' ? ' selected' : ''}>${escapeHtml(t(language, 'print.design.align.left'))}</option><option value="center"${element.align === 'center' ? ' selected' : ''}>${escapeHtml(t(language, 'print.design.align.center'))}</option><option value="right"${element.align === 'right' ? ' selected' : ''}>${escapeHtml(t(language, 'print.design.align.right'))}</option></select></div>` : ''}
+      ${name === 'code' ? `<div class="col-6"><label class="form-label" for="design-code-rotation">${escapeHtml(t(language, 'print.design.rotation'))}</label><select class="form-select form-select-sm" id="design-code-rotation" data-control="rotation"><option value="-90"${element.rotation === -90 ? ' selected' : ''}>−90°</option><option value="0"${element.rotation === 0 ? ' selected' : ''}>0°</option><option value="90"${element.rotation === 90 ? ' selected' : ''}>90°</option></select></div>` : ''}
     </div>
   </div>`;
 }
 
-function renderEditor(profile, design, customized, logo, qrPreview, query = {}, error = '') {
-  const labels = { qr: 'QR', code: 'Code participant', title: 'Titre', name: 'Nom du participant', activity: 'Activité', logo: 'Logo', disclaimer: 'Avertissement' };
+function renderEditor(profile, design, customized, logo, qrPreview, query = {}, error = '', language = DEFAULT_LANGUAGE) {
+  const sample = sampleContent(language);
+  const labels = Object.fromEntries(Object.keys(design.elements).map((name) => [
+    name,
+    t(language, `print.design.element.${name}`, {
+      student: getTerm(language, 'student'), class: getTerm(language, 'class'),
+    }),
+  ]));
   const previewText = {
-    code: 'NAV2027', title: SAMPLE.title, name: `${SAMPLE.participant.first_name} ${SAMPLE.participant.last_name}`,
-    activity: SAMPLE.activityName, disclaimer: PERSONAL_QR_WARNING,
+    code: 'NAV2027', title: sample.title, name: `${sample.participant.first_name} ${sample.participant.last_name}`,
+    activity: sample.activityName, disclaimer: getPersonalQrWarning(language),
   };
-  const options = Object.values(AVERY_PROFILES).map((item) => `<option value="${item.reference}"${item.reference === profile.reference ? ' selected' : ''}>${escapeHtml(item.reference)} — ${escapeHtml(item.description)}</option>`).join('');
+  const options = Object.values(AVERY_PROFILES).map((item) => `<option value="${item.reference}"${item.reference === profile.reference ? ' selected' : ''}>${escapeHtml(item.reference)} — ${escapeHtml(t(language, 'avery.description', { width: item.labelWidthMm, height: item.labelHeightMm, count: item.rows * item.columns }))}</option>`).join('');
   const elements = Object.entries(design.elements).map(([name, element]) => {
     const content = name === 'qr' ? `<img src="data:image/png;base64,${qrPreview.toString('base64')}" alt="">`
-      : name === 'logo' ? (logo ? `<img src="${logoDataUrl(logo)}" alt="Logo actuel">` : '<span>LOGO</span>')
+      : name === 'logo' ? (logo ? `<img src="${logoDataUrl(logo)}" alt="${escapeHtml(t(language, 'print.design.logo_current'))}">` : '<span>LOGO</span>')
         : escapeHtml(previewText[name]);
-    return `<button class="print-design-element print-design-element--${name}" type="button" data-design-element="${name}" style="--x:${element.x};--y:${element.y};--w:${element.width};--h:${element.height};--font:${element.fontSize || 10};--rotation:${element.rotation || 0}deg;text-align:${element.align || 'center'}"${element.enabled ? '' : ' data-disabled="true"'} aria-label="Modifier : ${escapeHtml(labels[name])}"><span class="print-design-element-content">${content}</span><span class="print-design-resize" aria-hidden="true"></span></button>`;
+    return `<button class="print-design-element print-design-element--${name}" type="button" data-design-element="${name}" style="--x:${element.x};--y:${element.y};--w:${element.width};--h:${element.height};--font:${element.fontSize || 10};--rotation:${element.rotation || 0}deg;text-align:${element.align || 'center'}"${element.enabled ? '' : ' data-disabled="true"'} aria-label="${escapeHtml(t(language, 'print.design.edit_element', { element: labels[name] }))}"><span class="print-design-element-content">${content}</span><span class="print-design-resize" aria-hidden="true"></span></button>`;
   }).join('');
-  const controls = Object.entries(design.elements).map(([name, element]) => renderElementControls(name, labels[name], element)).join('');
-  const notification = error ? `<p class="alert alert-danger py-2" role="alert">${escapeHtml(error)}</p>` : query.saved ? '<p class="alert alert-success py-2" role="status">Le modèle a été enregistré.</p>'
-    : query.reset ? '<p class="alert alert-success py-2" role="status">Le modèle par défaut a été restauré.</p>' : '';
+  const controls = Object.entries(design.elements).map(([name, element]) => renderElementControls(name, labels[name], element, language)).join('');
+  const notification = error ? `<p class="alert alert-danger py-2" role="alert">${escapeHtml(error)}</p>` : query.saved ? `<p class="alert alert-success py-2" role="status">${escapeHtml(t(language, 'print.design.notice.saved'))}</p>`
+    : query.reset ? `<p class="alert alert-success py-2" role="status">${escapeHtml(t(language, 'print.design.notice.reset'))}</p>` : '';
 
-  return renderPage('Design d’impression', renderSettingsLayout({
+  return renderPage(t(language, 'print.design.title'), renderSettingsLayout({
     activeSection: 'print-design',
-    title: 'Design d’impression',
-    description: 'Ajustez le contenu d’un badge sans modifier la géométrie Avery.',
+    title: t(language, 'print.design.title'),
+    description: t(language, 'print.design.description'),
     notifications: notification,
     content: `<section class="page-section" aria-labelledby="print-design-profile-title">
-      <div class="section-header"><div><h2 id="print-design-profile-title">Modèle Avery</h2><p class="section-description">Les dimensions, marges, pas et positions sur la feuille A4 restent verrouillés.</p></div><span class="badge text-bg-light">${customized ? 'Personnalisé' : 'Par défaut'}</span></div>
-      <form method="get" action="/settings/print-design"><label class="form-label" for="print-design-profile">Format</label><select class="form-select" id="print-design-profile" name="profile" data-print-design-profile>${options}</select></form>
+      <div class="section-header"><div><h2 id="print-design-profile-title">${escapeHtml(t(language, 'print.design.profile'))}</h2><p class="section-description">${escapeHtml(t(language, 'print.design.geometry_locked'))}</p></div><span class="badge text-bg-light">${escapeHtml(t(language, customized ? 'print.design.custom' : 'print.design.default'))}</span></div>
+      <form method="get" action="/settings/print-design"><label class="form-label" for="print-design-profile">${escapeHtml(t(language, 'print.design.format'))}</label><select class="form-select" id="print-design-profile" name="profile" data-print-design-profile>${options}</select></form>
     </section>
     <section class="page-section" aria-labelledby="print-design-editor-title">
-      <div class="section-header"><div><h2 id="print-design-editor-title">Composition</h2><p class="section-description">Sélectionnez, déplacez ou redimensionnez un élément. Les valeurs sont exprimées en millimètres.</p></div></div>
-      <p class="alert alert-info d-lg-none mb-0">L’édition du modèle nécessite un écran plus large.</p>
+      <div class="section-header"><div><h2 id="print-design-editor-title">${escapeHtml(t(language, 'print.design.composition'))}</h2><p class="section-description">${escapeHtml(t(language, 'print.design.composition_help'))}</p></div></div>
+      <p class="alert alert-info d-lg-none mb-0">${escapeHtml(t(language, 'print.design.desktop_only'))}</p>
       <div class="print-design-editor d-none d-lg-grid" data-print-design-editor data-profile-width="${profile.labelWidthMm}" data-profile-height="${profile.labelHeightMm}" data-design="${serializeForAttribute(design)}">
-        <div class="print-design-aids d-flex flex-wrap gap-3" aria-label="Aides au placement">
-          <div class="form-check form-switch mb-0"><input class="form-check-input" id="print-design-grid" type="checkbox" data-grid-toggle><label class="form-check-label" for="print-design-grid">Afficher la grille</label></div>
-          <div class="form-check form-switch mb-0"><input class="form-check-input" id="print-design-snap" type="checkbox" data-grid-snap aria-describedby="print-design-snap-help"><label class="form-check-label" for="print-design-snap">Aimantation à la grille</label></div>
-          <span class="small text-body-secondary" id="print-design-snap-help">Les repères d’alignement restent actifs indépendamment.</span>
+        <div class="print-design-aids d-flex flex-wrap gap-3" aria-label="${escapeHtml(t(language, 'print.design.aids'))}">
+          <div class="form-check form-switch mb-0"><input class="form-check-input" id="print-design-grid" type="checkbox" data-grid-toggle><label class="form-check-label" for="print-design-grid">${escapeHtml(t(language, 'print.design.grid'))}</label></div>
+          <div class="form-check form-switch mb-0"><input class="form-check-input" id="print-design-snap" type="checkbox" data-grid-snap aria-describedby="print-design-snap-help"><label class="form-check-label" for="print-design-snap">${escapeHtml(t(language, 'print.design.snap'))}</label></div>
+          <span class="small text-body-secondary" id="print-design-snap-help">${escapeHtml(t(language, 'print.design.snap_help'))}</span>
         </div>
         <div class="print-design-stage-wrap">
           <div class="print-design-stage" data-design-stage tabindex="-1" style="--profile-ratio:${profile.labelWidthMm} / ${profile.labelHeightMm};--profile-width:${profile.labelWidthMm};--profile-height:${profile.labelHeightMm}">
@@ -95,18 +109,18 @@ function renderEditor(profile, design, customized, logo, qrPreview, query = {}, 
             <span class="print-design-guide print-design-guide--vertical" data-design-guide="x" aria-hidden="true" hidden></span>
             <span class="print-design-guide print-design-guide--horizontal" data-design-guide="y" aria-hidden="true" hidden></span>
           </div>
-          <p class="compact-meta mt-2 mb-0">${profile.labelWidthMm} × ${profile.labelHeightMm} mm · aperçu physique proportionnel</p>
+          <p class="compact-meta mt-2 mb-0">${profile.labelWidthMm} × ${profile.labelHeightMm} mm · ${escapeHtml(t(language, 'print.design.preview_scale'))}</p>
         </div>
-        <aside class="print-design-inspector" aria-label="Propriétés de l’élément">${controls}<p class="empty-state mb-0" data-no-design-selection>Sélectionnez un élément dans l’aperçu.</p></aside>
+        <aside class="print-design-inspector" aria-label="${escapeHtml(t(language, 'print.design.properties'))}">${controls}<p class="empty-state mb-0" data-no-design-selection>${escapeHtml(t(language, 'print.design.select_element'))}</p></aside>
         <form class="print-design-actions" method="post" action="/settings/print-design/save" data-print-design-form>
           <input type="hidden" name="profile" value="${profile.reference}"><input type="hidden" name="layout" data-design-json>
-          <div class="form-actions d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">Enregistrer</button><button class="btn btn-outline-secondary" type="button" data-example-preview>Aperçu avec données exemple</button><button class="btn btn-outline-secondary" type="submit" formaction="/settings/print-design/test">Générer une page de test</button></div>
+          <div class="form-actions d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'action.save'))}</button><button class="btn btn-outline-secondary" type="button" data-example-preview>${escapeHtml(t(language, 'print.design.example'))}</button><button class="btn btn-outline-secondary" type="submit" formaction="/settings/print-design/test">${escapeHtml(t(language, 'print.design.test_page'))}</button></div>
         </form>
-        <form class="print-design-reset" method="post" action="/settings/print-design/reset" data-confirm="Réinitialiser ce modèle Avery ?"><input type="hidden" name="profile" value="${profile.reference}"><button class="btn btn-outline-danger" type="submit"${customized ? '' : ' disabled'}>Réinitialiser le modèle</button></form>
+        <form class="print-design-reset" method="post" action="/settings/print-design/reset" data-confirm="${escapeHtml(t(language, 'print.design.reset_confirm'))}"><input type="hidden" name="profile" value="${profile.reference}"><button class="btn btn-outline-danger" type="submit"${customized ? '' : ' disabled'}>${escapeHtml(t(language, 'print.design.reset'))}</button></form>
         <p class="alert alert-danger py-2 mb-0 print-design-error" role="alert" data-design-error hidden></p>
       </div>
     </section>`,
-  }));
+  }), { language });
 }
 
 async function loadPage(request, response, status = 200, error = '', profileReference = request.query.profile) {
@@ -115,12 +129,12 @@ async function loadPage(request, response, status = 200, error = '', profileRefe
     const [saved, logo, qrPreview] = await Promise.all([
       getSavedPrintDesign(profile.reference), getGlobalLogo(), createStudentQrPng(SAMPLE.participant.qr_token),
     ]);
-    const design = saved ? validatePrintDesign(profile, saved) : createDefaultPrintDesign(profile, SAMPLE);
-    const html = renderEditor(profile, design, Boolean(saved), logo, qrPreview, request.query, error);
+    const design = saved ? validatePrintDesign(profile, saved) : createDefaultPrintDesign(profile, sampleContent(request.uiLanguage));
+    const html = renderEditor(profile, design, Boolean(saved), logo, qrPreview, request.query, error, request.uiLanguage);
     response.status(status).send(html);
   } catch (error) {
     console.error('Unable to load print design editor:', error.code || error.name);
-    const page = renderMessagePage('Design indisponible', 'Impossible de charger le design d’impression pour le moment.');
+    const page = renderMessagePage(t(request.uiLanguage, 'print.design.error.unavailable.title'), t(request.uiLanguage, 'print.design.error.unavailable.message'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 }
@@ -130,10 +144,10 @@ router.get('/', (request, response) => loadPage(request, response));
 function parseDesign(request) {
   const profile = getAveryProfile(request.body.profile);
   if (!profile || typeof request.body.layout !== 'string' || Buffer.byteLength(request.body.layout, 'utf8') > 16 * 1024) {
-    throw new PrintDesignValidationError('Le modèle d’impression est invalide.');
+    throw new PrintDesignValidationError(t(request.uiLanguage, 'print.design.error.invalid'));
   }
   let parsed;
-  try { parsed = JSON.parse(request.body.layout); } catch (_error) { throw new PrintDesignValidationError('Le modèle d’impression est invalide.'); }
+  try { parsed = JSON.parse(request.body.layout); } catch (_error) { throw new PrintDesignValidationError(t(request.uiLanguage, 'print.design.error.invalid')); }
   return { profile, design: validatePrintDesign(profile, parsed) };
 }
 
@@ -146,14 +160,14 @@ router.post('/save', async (request, response) => {
     });
     response.redirect(303, `/settings/print-design?profile=${encodeURIComponent(profile.reference)}&saved=1`);
   } catch (error) {
-    if (error.code === 'PRINT_DESIGN_INVALID') { await loadPage(request, response, 400, error.message, request.body.profile); return; }
-    console.error('Unable to save print design:', error.code || error.name); const page = renderMessagePage('Enregistrement impossible', 'Impossible d’enregistrer le modèle pour le moment.'); response.status(page.status).send(page.html);
+    if (error.code === 'PRINT_DESIGN_INVALID') { await loadPage(request, response, 400, t(request.uiLanguage, error.translationKey, error.translationParams), request.body.profile); return; }
+    console.error('Unable to save print design:', error.code || error.name); const page = renderMessagePage(t(request.uiLanguage, 'print.design.error.save.title'), t(request.uiLanguage, 'print.design.error.save.message'), 500, request.uiLanguage); response.status(page.status).send(page.html);
   }
 });
 
 router.post('/reset', async (request, response) => {
   const profile = getAveryProfile(request.body.profile);
-  if (!profile) { const page = renderMessagePage('Modèle introuvable', 'Le modèle Avery demandé est introuvable.', 404); response.status(page.status).send(page.html); return; }
+  if (!profile) { const page = renderMessagePage(t(request.uiLanguage, 'print.design.error.not_found.title'), t(request.uiLanguage, 'print.design.error.not_found.message'), 404, request.uiLanguage); response.status(page.status).send(page.html); return; }
   try {
     await withTransaction(pool, async (client) => {
       await resetPrintDesign(profile.reference, client);
@@ -162,7 +176,7 @@ router.post('/reset', async (request, response) => {
     response.redirect(303, `/settings/print-design?profile=${encodeURIComponent(profile.reference)}&reset=1`);
   } catch (error) {
     console.error('Unable to reset print design:', error.code || error.name);
-    const page = renderMessagePage('Réinitialisation impossible', 'Impossible de réinitialiser le modèle pour le moment.');
+    const page = renderMessagePage(t(request.uiLanguage, 'print.design.error.reset.title'), t(request.uiLanguage, 'print.design.error.reset.message'), 500, request.uiLanguage);
     response.status(page.status).send(page.html);
   }
 });
@@ -172,11 +186,16 @@ router.post('/test', async (request, response) => {
     const { profile, design } = parseDesign(request);
     const logo = await getGlobalLogo();
     const includeWarning = canIncludeQrWarning(profile);
-    const pdf = await createParticipantQrSheetPdf({ profile, participants: [SAMPLE.participant], activityName: SAMPLE.activityName, includeWarning, title: SAMPLE.title, logo, design });
+    const sample = sampleContent(request.uiLanguage);
+    const pdf = await createParticipantQrSheetPdf({
+      profile, participants: [{ ...SAMPLE.participant, effectiveLanguage: request.uiLanguage }],
+      activityName: sample.activityName, includeWarning, title: sample.title, logo, design,
+      defaultLanguage: request.uiLanguage,
+    });
     response.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="attendance-log-design-${profile.reference.toLowerCase()}.pdf"`, 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'X-Content-Type-Options': 'nosniff' }).send(pdf);
   } catch (error) {
-    if (error.code === 'PRINT_DESIGN_INVALID') { await loadPage(request, response, 400, error.message, request.body.profile); return; }
-    console.error('Unable to generate print design preview:', error.code || error.name); const page = renderMessagePage('PDF indisponible', 'Impossible de générer le PDF de test pour le moment.'); response.status(page.status).send(page.html);
+    if (error.code === 'PRINT_DESIGN_INVALID') { await loadPage(request, response, 400, t(request.uiLanguage, error.translationKey, error.translationParams), request.body.profile); return; }
+    console.error('Unable to generate print design preview:', error.code || error.name); const page = renderMessagePage(t(request.uiLanguage, 'print.design.error.pdf.title'), t(request.uiLanguage, 'print.design.error.pdf.message'), 500, request.uiLanguage); response.status(page.status).send(page.html);
   }
 });
 
