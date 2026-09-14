@@ -13,7 +13,7 @@ const {
 } = require('./auth');
 const adminUserSettingsRouter = require('./admin-user-settings');
 const auditSettingsRouter = require('./audit-settings');
-const { getApplicationTimezone, configureApplicationRegionalSettings } = require('./application-time');
+const { getApplicationTimezone, configureApplicationRegionalSettings, normalizeClockTime } = require('./application-time');
 const backupSettingsRouter = require('./backup-settings');
 const brandingSettingsRouter = require('./branding-settings');
 const { getStoredBackupSecretStatus, startBackupScheduler } = require('./backup');
@@ -52,6 +52,10 @@ const {
   escapeHtml,
   renderMessagePage,
   renderPage,
+  renderDateMarker,
+  renderAttendanceProgress,
+  renderSettingsOverview,
+  renderIcon,
 } = require('./ui');
 
 const app = express();
@@ -91,7 +95,7 @@ app.get('/manifest.webmanifest', (request, response) => {
     id: '/', name: 'Attendance Log', short_name: 'Attendance',
     description: t(requestedLanguage, 'pwa.description'), lang: requestedLanguage, dir: 'ltr',
     start_url: '/', scope: '/', display: 'standalone',
-    background_color: '#f4f7f9', theme_color: '#f4f7f9',
+    background_color: '#f4f7f8', theme_color: '#f4f7f8',
     icons: [
       { src: '/icons/attendance-log-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: '/icons/attendance-log-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
@@ -172,7 +176,10 @@ app.use(async (request, response, next) => {
   }
 });
 app.use('/preferences', languagePreferencesRouter);
-app.get('/settings', requirePermission(permissions.manageSettings), (_request, response) => response.redirect(303, '/settings/email'));
+app.get('/settings', requirePermission(permissions.manageSettings), (request, response) => {
+  response.set('Cache-Control', 'private, no-store, max-age=0');
+  response.send(renderPage(t(request.uiLanguage, 'shell.settings'), renderSettingsOverview(request.uiLanguage)));
+});
 app.get('/vendor/qr-scanner/qr-scanner.min.js', (_request, response) => {
   response.sendFile(path.join(
     __dirname,
@@ -240,23 +247,31 @@ app.get('/', async (request, response) => {
        ORDER BY cs.date, LOWER(cs.title), cs.id`,
     );
     const canManageSessions = hasPermission(request.currentUser, permissions.manageSessions);
-    const canManageClasses = hasPermission(request.currentUser, permissions.manageClasses);
-    const canManageStudents = hasPermission(request.currentUser, permissions.manageStudents);
+    const upcoming = await pool.query(
+      `SELECT cs.public_id, cs.date, cs.start_time, cs.title, cs.instructor, c.name AS class_name
+       FROM course_sessions cs JOIN classes c ON c.id = cs.class_id
+       WHERE cs.state = 'scheduled' AND cs.date >= (CURRENT_TIMESTAMP AT TIME ZONE $1)::date
+       ORDER BY cs.date, cs.start_time NULLS LAST, LOWER(cs.title), cs.id LIMIT 8`,
+      [getApplicationTimezone()],
+    );
     const openSessions = result.rows.length === 0
       ? ''
       : `<div class="list-group compact-list" data-live-session-list>${result.rows.map((sessionRecord) => `
-          <article class="list-group-item compact-row compact-row-status session-row" data-live-session-card data-session-id="${sessionRecord.public_id}">
+          <article class="list-group-item compact-row compact-row-status session-row watch-register" data-live-session-card data-session-id="${sessionRecord.public_id}">
+            ${renderDateMarker(sessionRecord.date)}
             <div class="compact-identity session-identity">
               <p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(sessionRecord.date))}</p>
-              <p class="compact-title">${escapeHtml(sessionRecord.title)}</p>
+              <p class="compact-title"><a href="/sessions/${sessionRecord.public_id}">${escapeHtml(sessionRecord.title)}</a></p>
               <p class="compact-meta">${escapeHtml(sessionRecord.class_name)} · ${escapeHtml(sessionRecord.instructor)}</p>
             </div>
             <div class="compact-status">
-              <strong class="compact-count">${escapeHtml(t(language, 'dashboard.present_count', { present: sessionRecord.present_count, total: sessionRecord.total_students }))}</strong>
+              <strong class="compact-count" aria-label="${escapeHtml(t(language, 'dashboard.present_count', { present: sessionRecord.present_count, total: sessionRecord.total_students }))}"><span data-present-count>${sessionRecord.present_count}</span> / <span data-total-count>${sessionRecord.total_students}</span> ${escapeHtml(t(language, 'attendance.roster.present_suffix'))}</strong>
               <span class="badge status-badge status-open" data-session-state>${escapeHtml(t(language, 'dashboard.state_open'))}</span>
+              ${renderAttendanceProgress(sessionRecord.present_count, sessionRecord.total_students, language)}
+              <span class="compact-meta" data-attendance-remaining>${escapeHtml(t(language, 'workspace.remaining', { count: sessionRecord.total_students - sessionRecord.present_count }))}</span>
             </div>
             <div class="compact-actions compact-actions--split" aria-label="${escapeHtml(t(language, 'action.actions_for', { name: sessionRecord.title }))}">
-              <a class="btn btn-primary" href="/sessions/${sessionRecord.public_id}">${businessTerm(language, 'attendance', 'plural')}</a>
+              <a class="btn btn-primary" href="/sessions/${sessionRecord.public_id}/quick-attendance">${escapeHtml(t(language, 'attendance.roster.quick_mode'))}${renderIcon('arrow')}</a>
               ${canManageSessions ? `<span class="session-edit-slot">
                 <a class="btn btn-light" href="/sessions/${sessionRecord.public_id}/edit" data-session-edit>${escapeHtml(t(language, 'action.edit'))}</a>
                 <button class="btn btn-light button-unavailable" type="button" data-session-edit-disabled disabled hidden>${escapeHtml(t(language, 'action.edit'))}</button>
@@ -270,26 +285,35 @@ app.get('/', async (request, response) => {
           <h1>${escapeHtml(t(language, 'dashboard.title'))}</h1>
           <p class="page-description">${escapeHtml(t(language, 'dashboard.description', { sessions: terms.sessions }))}</p>
         </div>
+        ${canManageSessions ? `<a class="btn btn-primary" href="/sessions/new">${escapeHtml(t(language, 'workspace.plan', { session: getTerm(language, 'session') }))}</a>` : ''}
       </header>
-      <nav class="dashboard-actions" aria-label="${escapeHtml(t(language, 'dashboard.quick_access'))}">
-        <div class="row g-2 row-cols-1 row-cols-md-2">
-          ${canManageClasses ? `<div class="col"><a class="card card-body dashboard-link h-100" href="/classes"><strong>${businessTerm(language, 'class', 'plural')}</strong><span>${escapeHtml(t(language, 'dashboard.manage_students', { students: terms.students }))}</span></a></div>` : ''}
-          ${canManageStudents ? `<div class="col"><a class="card card-body dashboard-link h-100" href="/students"><strong>${businessTerm(language, 'student', 'plural')}</strong><span>${escapeHtml(t(language, 'dashboard.student_directory'))}</span></a></div>` : ''}
-          <div class="col"><a class="card card-body dashboard-link h-100" href="/sessions"><strong>${businessTerm(language, 'session', 'plural')}</strong><span>${escapeHtml(t(language, canManageSessions ? 'dashboard.plan_attendance' : 'dashboard.record_attendance', { attendance: terms.attendance }))}</span></a></div>
-          ${canManageStudents ? `<div class="col"><a class="card card-body dashboard-link h-100" href="/students/import"><strong>${escapeHtml(t(language, 'action.import'))}</strong><span>${escapeHtml(t(language, 'dashboard.import_students', { students: terms.students }))}</span></a></div>` : ''}
-        </div>
-      </nav>
-      <section class="page-section" aria-labelledby="open-sessions-title" data-live-dashboard>
+      <div class="watch-desk">
+      <section class="page-section dashboard-live" aria-labelledby="open-sessions-title" data-live-dashboard>
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
           <div>
-            <h2 id="open-sessions-title">${escapeHtml(t(language, 'dashboard.open_sessions', { sessions: terms.sessions }))}</h2>
-            <p class="section-description">${escapeHtml(t(language, 'dashboard.current_attendance', { attendance: terms.attendance }))}</p>
+            <h2 id="open-sessions-title">${escapeHtml(t(language, 'workspace.now'))}</h2>
+            <p class="section-description">${escapeHtml(t(language, 'workspace.watch_help'))}</p>
           </div>
           <a class="btn btn-light" href="/sessions">${escapeHtml(t(language, 'dashboard.view_sessions', { sessions: terms.sessions }))}</a>
         </div>
         ${openSessions}
         <p class="empty-state" data-live-empty-state${result.rows.length > 0 ? ' hidden' : ''}>${escapeHtml(t(language, 'dashboard.no_open_sessions', { sessions: terms.sessions }))}</p>
-      </section>`, { language }));
+      </section>
+      <section class="page-section dashboard-agenda" aria-labelledby="upcoming-title">
+        <div class="section-header d-flex justify-content-between align-items-center gap-2"><div><h2 id="upcoming-title">${escapeHtml(t(language, 'workspace.upcoming'))}</h2><p class="section-description">${escapeHtml(t(language, 'workspace.next_help'))}</p></div><a class="btn btn-light" href="/sessions?state=scheduled&sort=oldest">${businessTerm(language, 'session', 'plural')}</a></div>
+        ${upcoming.rows.length ? `<div class="list-group compact-list">${upcoming.rows.map((session) => `<article class="list-group-item compact-row compact-row-status session-row agenda-row">
+          ${renderDateMarker(session.date)}
+          <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}${session.start_time ? ` · ${escapeHtml(normalizeClockTime(session.start_time))}` : ''}</p><p class="compact-title"><a href="/sessions/${session.public_id}">${escapeHtml(session.title)}</a></p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
+          <div class="compact-status"><span class="badge status-badge status-scheduled">${escapeHtml(t(language, 'status.scheduled'))}</span></div>
+          <div class="compact-actions"><a class="btn btn-light" href="/sessions/${session.public_id}">${escapeHtml(t(language, 'workspace.details'))}</a></div>
+        </article>`).join('')}</div>` : `<p class="empty-state">${escapeHtml(t(language, 'workspace.upcoming_empty'))}</p>`}
+      </section>
+      <nav class="watch-shortcuts" aria-label="${escapeHtml(t(language, 'workspace.quick_links'))}">
+        <span>${escapeHtml(t(language, 'workspace.quick_links'))}</span>
+        <a href="/sessions">${renderIcon('sessions')}${businessTerm(language, 'session', 'plural')}</a>
+        ${hasPermission(request.currentUser, permissions.manageStudents) ? `<a href="/students">${renderIcon('students')}${businessTerm(language, 'student', 'plural')}</a>` : ''}
+        ${hasPermission(request.currentUser, permissions.viewReporting) ? `<a href="/reporting">${renderIcon('reporting')}${escapeHtml(t(language, 'shell.reporting'))}</a>` : ''}
+      </nav></div>`, { language }));
   } catch (error) {
     console.error('Unable to load dashboard:', error);
     const language = request.uiLanguage;

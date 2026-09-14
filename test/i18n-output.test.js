@@ -263,7 +263,7 @@ test('the PWA shell ships an English fallback and cached EN/FR offline resources
   assert.match(offline, /<html lang="en"[^>]*data-i18n-title="pwa\.offline\.title"/);
   assert.match(offline, /data-i18n="pwa\.offline\.heading"/);
   assert.match(offline, /src="\/js\/i18n\.js"/);
-  assert.match(worker, /CACHE_NAME = `\$\{CACHE_PREFIX\}v15`/);
+  assert.match(worker, /CACHE_NAME = `\$\{CACHE_PREFIX\}v17`/);
   assert.match(worker, /'\/i18n\/en\.json'/);
   assert.match(worker, /'\/i18n\/fr\.json'/);
   assert.equal(manifest.lang, 'en');

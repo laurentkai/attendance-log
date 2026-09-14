@@ -200,7 +200,7 @@ test('international settings persist and real rows resolve explicit language inh
   }
 });
 
-test('authenticated Dashboard renders empty and populated states in EN and FR', async () => {
+test('authenticated Dashboard renders empty and populated states in EN and FR', async (context) => {
   const client = await pool.connect();
   const sid = `dashboard-${randomUUID()}`;
   let userId;
@@ -288,7 +288,7 @@ test('authenticated Dashboard renders empty and populated states in EN and FR', 
     const emptyEnglish = await emptyEnglishResponse.text();
     assert.equal(emptyEnglishResponse.status, 200);
     assert.match(emptyEnglish, /<html lang="en">/);
-    assert.match(emptyEnglish, /<h1>Dashboard<\/h1>/);
+    assert.match(emptyEnglish, /<h1>Home<\/h1>/);
     assert.match(emptyEnglish, />Learners<\/a>/);
     assert.match(emptyEnglish, />Courses<\/a>/);
     assert.match(emptyEnglish, />Meetings<\/a>/);
@@ -323,7 +323,7 @@ test('authenticated Dashboard renders empty and populated states in EN and FR', 
     assert.match(populatedEnglish, /11 September 2026/);
     assert.match(populatedEnglish, /1 \/ 1 present/);
     assert.match(populatedEnglish, /Status: open/);
-    assert.doesNotMatch(populatedEnglish, /<h1>Tableau de bord<\/h1>|Accès rapides|État : ouvert|Closed business session/);
+    assert.doesNotMatch(populatedEnglish, /<h1>(?:Tableau de bord|Accueil)<\/h1>|Accès rapides|État : ouvert|Closed business session/);
     for (const path of ['/students', '/classes', '/sessions', `/sessions/${openSession.rows[0].public_id}`, '/reporting', '/settings/terminology']) {
       const routeResponse = await authenticatedGet(path, 'fr-BE,fr;q=0.9');
       const routeHtml = await routeResponse.text();
@@ -342,7 +342,7 @@ test('authenticated Dashboard renders empty and populated states in EN and FR', 
     const populatedFrench = await populatedFrenchResponse.text();
     assert.equal(populatedFrenchResponse.status, 200);
     assert.match(populatedFrench, /<html lang="fr">/);
-    assert.match(populatedFrench, /<h1>Tableau de bord<\/h1>/);
+    assert.match(populatedFrench, /<h1>Accueil<\/h1>/);
     assert.match(populatedFrench, />Navigateurs<\/a>/);
     assert.match(populatedFrench, />Formations<\/a>/);
     assert.match(populatedFrench, />Ateliers<\/a>/);
@@ -351,7 +351,7 @@ test('authenticated Dashboard renders empty and populated states in EN and FR', 
     assert.match(populatedFrench, /11 September 2026/);
     assert.match(populatedFrench, /1 \/ 1 présents/);
     assert.match(populatedFrench, /État : ouvert/);
-    assert.doesNotMatch(populatedFrench, /<h1>Tableau de bord indisponible<\/h1>|<h1>Dashboard<\/h1>|Quick access|Status: open|Closed business session/);
+    assert.doesNotMatch(populatedFrench, /<h1>Tableau de bord indisponible<\/h1>|<h1>(?:Dashboard|Home)<\/h1>|Quick access|Status: open|Closed business session/);
     for (const path of ['/students', '/classes', '/sessions', `/sessions/${openSession.rows[0].public_id}`, '/reporting', '/settings/terminology']) {
       const routeResponse = await authenticatedGet(path, 'en-GB,en;q=0.9');
       const routeHtml = await routeResponse.text();
@@ -363,6 +363,43 @@ test('authenticated Dashboard renders empty and populated states in EN and FR', 
       assert.match(routeHtml, />Formations<\/a>/, path);
       assert.match(routeHtml, />Ateliers<\/a>/, path);
     }
+
+    await context.test('session views filter lifecycle and paginate without changing report inclusion', async () => {
+      await client.query(`INSERT INTO course_sessions (class_id, date, title, instructor)
+        SELECT $1, DATE '2030-01-01' + n, 'Pagination ' || n, 'Synthetic trainer'
+        FROM generate_series(1, 51) AS n`, [classId]);
+      const open = await (await authenticatedGet('/sessions?state=open', 'fr')).text();
+      assert.match(open, /Cours de navigation 2026/);
+      assert.doesNotMatch(open, /Closed business session|Pagination 1/);
+      const closed = await (await authenticatedGet('/sessions?state=closed', 'fr')).text();
+      assert.match(closed, /Closed business session/);
+      assert.doesNotMatch(closed, /Cours de navigation 2026|Pagination 1/);
+      const first = await (await authenticatedGet('/sessions?q=Pagination&state=scheduled&sort=oldest', 'fr')).text();
+      assert.equal((first.match(/<article class="list-group-item/g) || []).length, 50);
+      assert.match(first, /Pagination 1<\/a>/);
+      assert.doesNotMatch(first, /Pagination 51<\/a>/);
+      const second = await (await authenticatedGet('/sessions?q=Pagination&state=scheduled&sort=oldest&page=2', 'fr')).text();
+      assert.equal((second.match(/<article class="list-group-item/g) || []).length, 1);
+      assert.match(second, /Pagination 51<\/a>/);
+      const stale = await authenticatedGet('/sessions?q=Pagination&state=scheduled&page=999999', 'fr');
+      assert.equal(stale.status, 303);
+      assert.match(stale.headers.get('location'), /^\/sessions\?q=Pagination&state=scheduled&sort=oldest$/);
+      const preview = await (await authenticatedGet('/reporting', 'fr')).text();
+      assert.match(preview, /lang="en" data-report-preview/);
+      assert.match(preview, /<dd>1<\/dd>/);
+      assert.doesNotMatch(preview, /Pagination 1|Cours de navigation 2026/);
+    });
+    await context.test('report preview validates filters and preserves the exact export selection', async () => {
+      const response = await authenticatedGet('/reporting?date_from=2099-01-01&date_to=2099-02-01', 'fr');
+      assert.equal(response.status, 200);
+      const html = await response.text();
+      assert.match(html, /href="\/reporting\/export\?date_from=2099-01-01&amp;date_to=2099-02-01"/);
+      assert.match(html, /<dd>0<\/dd>/);
+      for (const query of ['date_from=2026-02-30', 'date_from=2026-09-02&date_to=2026-09-01', 'class_id=malformed']) {
+        assert.equal((await authenticatedGet(`/reporting?${query}`, 'fr')).status, 400);
+      }
+      assert.equal((await authenticatedGet('/reporting?class_id=00000000-0000-4000-8000-000000000000', 'fr')).status, 404);
+    });
 
     const resetTerminologyResponse = await fetch(`http://127.0.0.1:${port}/settings/terminology/reset`, {
       method: 'POST',

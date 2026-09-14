@@ -22,22 +22,9 @@ const {
   summaryConfigurationChanged,
   summaryConfigurationSnapshot,
 } = require('./session-summary-config');
-const { businessTerm, escapeHtml, renderLanguageOptions, renderPage } = require('./ui');
+const { businessTerm, escapeHtml, renderActionMenu, renderCollectionTools, renderLanguageOptions, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
-
-function renderMessagePage(title, message, status = 500, language) {
-  return {
-    status,
-    html: renderPage(title, `
-      <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
-        <div>
-          <h1>${escapeHtml(title)}</h1>
-        </div>
-      </header>
-      <p class="alert alert-danger">${escapeHtml(message)}</p>`, { language }),
-  };
-}
 
 function renderClassNotFoundPage(language) {
   return renderMessagePage(
@@ -141,6 +128,9 @@ function renderClassForm({
         <textarea class="form-control" id="description" name="description" rows="5" autocomplete="off">${escapeHtml(values.description || '')}</textarea>
       </div>
 
+      <details class="form-disclosure"${error ? ' open' : ''}>
+        <summary>${escapeHtml(t(language, 'workspace.configuration'))}</summary>
+        <div class="form-disclosure-content">
       <div class="form-field">
         <label for="language">${escapeHtml(t(language, 'classes.form.generated_language'))}</label>
         <select class="form-select" id="language" name="language">
@@ -157,6 +147,8 @@ function renderClassForm({
       </div>
 
       ${renderSummaryConfigurationFields({ adminUsers, values, scope: 'class', language })}
+        </div>
+      </details>
 
       <div class="form-actions d-flex flex-wrap gap-2">
         <button class="btn btn-primary" type="submit">${escapeHtml(submitLabel)}</button>
@@ -190,27 +182,28 @@ router.get('/', async (request, response) => {
       : '';
     const classList = result.rows.length === 0
       ? `<p class="empty-state">${escapeHtml(t(language, 'classes.list.empty', { class: getTerm(language, 'class') }))}</p>`
-      : `<div class="list-group compact-list">${result.rows.map((classRecord) => `
-          <article class="list-group-item compact-row class-management-row">
+      : `<section data-filterable-list>${renderCollectionTools({ language, id: 'class-list', count: result.rows.length })}
+        <p class="empty-state" role="status" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
+        <div class="list-group compact-list" id="class-list" data-list-results>${result.rows.map((classRecord) => `
+          <article class="list-group-item compact-row collection-row class-management-row" data-list-row data-search="${escapeHtml(`${classRecord.name} ${classRecord.description || ''}`)}">
             <div class="compact-identity class-identity">
-              <p class="compact-title">${escapeHtml(classRecord.name)}</p>
+              <p class="compact-title"><a href="/classes/${classRecord.public_id}">${escapeHtml(classRecord.name)}</a></p>
               <p class="compact-meta class-description">${classRecord.description
                 ? escapeHtml(classRecord.description)
                 : `<span class="muted">${escapeHtml(t(language, 'common.no_description'))}</span>`}</p>
             </div>
-            <div class="row-action-stack">
-              <div class="compact-actions compact-actions--split" aria-label="${escapeHtml(t(language, 'classes.list.manage_aria', { name: classRecord.name }))}">
-                <a class="btn btn-outline-secondary" href="/classes/${classRecord.public_id}">${businessTerm(language, 'student', 'plural')}</a>
-                <a class="btn btn-outline-secondary" href="/sessions?class_id=${classRecord.public_id}">${businessTerm(language, 'session', 'plural')}</a>
-              </div>
-              <div class="compact-actions" aria-label="${escapeHtml(t(language, 'classes.list.admin_aria', { name: classRecord.name }))}">
-                <a class="btn btn-light" href="/classes/${classRecord.public_id}/edit">${escapeHtml(t(language, 'action.edit'))}</a>
+            <div class="compact-actions">
+              <a class="btn btn-light" href="/sessions?class_id=${classRecord.public_id}">${businessTerm(language, 'session', 'plural')}</a>
+              ${renderActionMenu(t(language, 'classes.list.admin_aria', { name: classRecord.name }), `
+                <a class="dropdown-item" href="/classes/${classRecord.public_id}">${businessTerm(language, 'student', 'plural')}</a>
+                <a class="dropdown-item" href="/sessions?class_id=${classRecord.public_id}">${businessTerm(language, 'session', 'plural')}</a>
+                <a class="dropdown-item" href="/classes/${classRecord.public_id}/edit">${escapeHtml(t(language, 'action.edit'))}</a>
+                <div class="dropdown-divider"></div>
                 <form method="post" action="/classes/${classRecord.public_id}/delete" data-confirm="${escapeHtml(t(language, 'classes.confirm.delete', { class: getTerm(language, 'class') }))}">
-                  <button class="btn btn-outline-danger" type="submit">${escapeHtml(t(language, 'action.delete'))}</button>
-                </form>
-              </div>
+                  <button class="dropdown-item text-danger" type="submit">${escapeHtml(t(language, 'action.delete'))}</button>
+                </form>`)}
             </div>
-          </article>`).join('')}</div>`;
+          </article>`).join('')}</div></section>`;
 
     response.send(renderPage(getTerm(language, 'class', 'plural'), `
       <header class="page-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-3">
@@ -392,30 +385,26 @@ router.get('/:id', async (request, response) => {
     const assignedStudents = assignedResult.rows.length === 0
       ? `<p class="empty-state">${escapeHtml(t(language, 'classes.roster.empty', { membership: getTerm(language, 'membership') }))}</p>`
       : `<section data-filterable-list>
-          <div class="search">
-            <label for="class-roster-search">${escapeHtml(t(language, 'classes.roster.search_assigned', { memberships: getTerm(language, 'membership', 'plural') }))}</label>
-            <div class="search-controls">
-              <input class="form-control" id="class-roster-search" name="class_roster_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'students.directory.search_placeholder'))}" aria-controls="class-roster-list" data-list-search>
-            </div>
-          </div>
+          ${renderCollectionTools({ language, id: 'class-roster-list', placeholder: t(language, 'students.directory.search_placeholder'), count: assignedResult.rows.length })}
           <p class="empty-state" role="status" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="class-roster-list" data-list-results>${assignedResult.rows.map((student) => `
-          <article class="list-group-item compact-row compact-row-status student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase())}">
+          <article class="list-group-item compact-row compact-row-status collection-row student-row" data-list-row data-search="${escapeHtml(`${student.first_name} ${student.last_name} ${student.email} ${student.student_code}`.toLocaleLowerCase())}">
             <div class="compact-identity student-identity">
-              <p class="compact-title">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</p>
+              <p class="compact-title"><a href="/students/${student.public_id}/edit">${escapeHtml(student.first_name)} ${escapeHtml(student.last_name)}</a></p>
               <p class="compact-meta">${escapeHtml(student.email)} · <span class="student-code" translate="no">${escapeHtml(student.student_code)}</span></p>
             </div>
             <div class="compact-status">
               <span class="badge status-badge status-${student.membership_active ? 'active' : 'inactive'}">${escapeHtml(t(language, 'classes.roster.membership_status', { membership: getTerm(language, 'membership'), status: t(language, `status.${student.membership_active ? 'active' : 'inactive'}`) }))}</span>
             </div>
             <div class="compact-actions" aria-label="${escapeHtml(t(language, 'students.directory.actions_for', { name: `${student.first_name} ${student.last_name}` }))}">
-              <a class="btn btn-light" href="/students/${student.public_id}/edit">${escapeHtml(t(language, 'classes.roster.edit_record'))}</a>
+              ${renderActionMenu(t(language, 'students.directory.actions_for', { name: `${student.first_name} ${student.last_name}` }), `
+              <a class="dropdown-item" href="/students/${student.public_id}/edit">${escapeHtml(t(language, 'classes.roster.edit_record'))}</a>
               <form method="post" action="/classes/${classRecord.public_id}/students/${student.public_id}/${student.membership_active ? 'deactivate' : 'reactivate'}">
-                <button class="btn btn-outline-secondary" type="submit">${escapeHtml(t(language, student.membership_active ? 'action.deactivate' : 'action.reactivate'))}</button>
+                <button class="dropdown-item" type="submit">${escapeHtml(t(language, student.membership_active ? 'action.deactivate' : 'action.reactivate'))}</button>
               </form>
               ${classRecord.membership_locked ? '' : `<form method="post" action="/classes/${classRecord.public_id}/students/${student.public_id}/remove" data-confirm="${escapeHtml(t(language, 'classes.roster.confirm_remove', { student: getTerm(language, 'student'), class: getTerm(language, 'class') }))}">
-                <button class="btn btn-outline-danger" type="submit">${escapeHtml(t(language, 'action.remove'))}</button>
-              </form>`}
+                <button class="dropdown-item text-danger" type="submit">${escapeHtml(t(language, 'action.remove'))}</button>
+              </form>`}`)}
             </div>
           </article>`).join('')}</div>
         </section>`;

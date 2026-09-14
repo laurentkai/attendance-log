@@ -31,7 +31,7 @@ const {
   resolveSessionReportLanguage,
   t,
 } = require('./i18n');
-const { businessTerm, escapeHtml, renderMessagePage, renderPage } = require('./ui');
+const { businessTerm, escapeHtml, renderIcon, renderMetricStrip, renderCollectionTools, renderMessagePage, renderPage } = require('./ui');
 
 const router = express.Router();
 
@@ -47,7 +47,7 @@ function canViewPii(request) {
 function renderPrivacyNotice(request) {
   return canViewPii(request)
     ? ''
-    : `<p class="alert alert-info py-2" role="status">${escapeHtml(t(request.uiLanguage, 'reporting.privacy_hidden'))}</p>`;
+    : `<div class="privacy-mode" role="status">${renderIcon('shield')}<p><strong>${escapeHtml(t(request.uiLanguage, 'workspace.private_mode'))}</strong><span>${escapeHtml(t(request.uiLanguage, 'reporting.privacy_hidden'))}</span></p></div>`;
 }
 
 function renderPiiRequiredPage(language) {
@@ -87,21 +87,24 @@ function renderReportingNavigation(active, language) {
     ['students', '/reporting/students', getTerm(language, 'student', 'plural')],
   ];
   return `<nav class="nav nav-pills context-tabs" aria-label="${escapeHtml(t(language, 'reporting.navigation'))}">
-    ${links.map(([key, href, label]) => `<a class="nav-link${active === key ? ' active' : ''}" href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
+    ${links.map(([key, href, label]) => `<a class="nav-link${active === key ? ' active' : ''}" href="${href}"${active === key ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`).join('')}
   </nav>`;
 }
 
 function renderSummary(summary, language) {
-  return `<dl class="report-summary" aria-label="${escapeHtml(t(language, 'reporting.summary'))}">
-    <div><dt>${escapeHtml(t(language, 'reporting.closed_sessions', { sessions: businessTerm(language, 'session', 'plural') }))}</dt><dd>${summary.closedSessionCount}</dd></div>
-    <div><dt>${escapeHtml(t(language, 'reporting.attendance_count', { attendance: businessTerm(language, 'attendance', 'plural') }))}</dt><dd>${summary.opportunities}</dd></div>
-    <div><dt>${escapeHtml(t(language, 'reporting.present_count'))}</dt><dd>${summary.present}</dd></div>
-    <div><dt>${escapeHtml(t(language, 'reporting.absent_count'))}</dt><dd>${summary.absent}</dd></div>
-    <div><dt>${escapeHtml(t(language, 'reporting.attendance_rate', { attendance: businessTerm(language, 'attendance') }))}</dt><dd>${formatRate(summary.attendanceRate)}</dd></div>
-    ${summary.punctualityApplicable ? `<div><dt>${escapeHtml(t(language, 'reporting.on_time'))}</dt><dd>${summary.onTime}</dd></div>
-    <div><dt>${escapeHtml(t(language, 'reporting.late'))}</dt><dd>${summary.late}</dd></div>
-    <div><dt>${escapeHtml(t(language, 'reporting.punctuality_rate'))}</dt><dd>${formatRate(summary.punctualityRate)}</dd></div>` : ''}
-  </dl>`;
+  const items = [
+    [t(language, 'reporting.closed_sessions', { sessions: getTerm(language, 'session', 'plural') }), summary.closedSessionCount],
+    [t(language, 'reporting.attendance_count', { attendance: getTerm(language, 'attendance', 'plural') }), summary.opportunities],
+    [t(language, 'reporting.present_count'), summary.present],
+    [t(language, 'reporting.absent_count'), summary.absent],
+    [t(language, 'reporting.attendance_rate', { attendance: getTerm(language, 'attendance') }), formatRate(summary.attendanceRate)],
+  ];
+  if (summary.punctualityApplicable) items.push(
+    [t(language, 'reporting.on_time'), summary.onTime],
+    [t(language, 'reporting.late'), summary.late],
+    [t(language, 'reporting.punctuality_rate'), formatRate(summary.punctualityRate)],
+  );
+  return renderMetricStrip(items, t(language, 'reporting.summary'), summary.punctualityApplicable ? 'report-summary--punctual' : '');
 }
 
 function renderReportHeader({ eyebrow = '', title, description = '', action = '' }) {
@@ -153,6 +156,24 @@ router.get('/', async (request, response) => {
   try {
     const language = request.uiLanguage;
     const classes = await getClassesForFilters();
+    const filters = getGlobalFilters(request.query, language);
+    if (filters.error) {
+      const page = renderMessagePage(t(language, 'reporting.invalid_filters'), filters.error, 400, language);
+      return response.status(page.status).send(page.html);
+    }
+    if (filters.classId && !classes.some((course) => course.public_id === filters.classId)) {
+      const page = renderBusinessNotFoundPage('class', language);
+      return response.status(page.status).send(page.html);
+    }
+    // The preview is the same global business report as /export, including its
+    // output language and privacy-aware dataset, independent of viewer language.
+    const outputLanguage = resolveGlobalReportLanguage({ defaultLanguage: request.internationalization.defaultLanguage });
+    const privacyContext = await createReportingPrivacyContext(canViewPii(request), outputLanguage, request.terminology);
+    const report = await getGlobalReport(filters, privacyContext);
+    const exportQuery = new URLSearchParams();
+    if (filters.classId) exportQuery.set('class_id', filters.classId);
+    if (filters.dateFrom) exportQuery.set('date_from', filters.dateFrom);
+    if (filters.dateTo) exportQuery.set('date_to', filters.dateTo);
     response.send(renderPage(t(language, 'shell.reporting'), `
       ${renderReportHeader({
         title: t(language, 'shell.reporting'),
@@ -160,7 +181,40 @@ router.get('/', async (request, response) => {
       })}
       ${renderReportingNavigation('overview', language)}
       ${renderPrivacyNotice(request)}
-      <section class="page-section" aria-labelledby="reporting-access-title">
+      <div class="reporting-overview">
+      <section class="page-section reporting-selection" aria-labelledby="global-export-title">
+        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
+          <div>
+            <h2 id="global-export-title">${escapeHtml(t(language, 'workspace.selection'))}</h2>
+            <p class="section-description">${escapeHtml(t(language, 'workspace.preview_help'))}</p>
+          </div>
+        </div>
+        <form class="app-form report-filter-form" method="get" action="/reporting">
+          <div class="form-field">
+            <label for="report-class">${businessTerm(language, 'class')}</label>
+            <select class="form-select" id="report-class" name="class_id">
+              <option value="">${escapeHtml(t(language, 'reporting.no_filter'))}</option>
+              ${classes.map((course) => `<option value="${course.public_id}"${filters.classId === course.public_id ? ' selected' : ''}>${escapeHtml(course.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="report-date-from">${escapeHtml(t(language, 'reporting.from'))}</label>
+            <input class="form-control" id="report-date-from" name="date_from" type="date" value="${escapeHtml(filters.dateFrom || '')}">
+          </div>
+          <div class="form-field">
+            <label for="report-date-to">${escapeHtml(t(language, 'reporting.to'))}</label>
+            <input class="form-control" id="report-date-to" name="date_to" type="date" value="${escapeHtml(filters.dateTo || '')}">
+          </div>
+          <button class="btn btn-outline-secondary" type="submit">${escapeHtml(t(language, 'workspace.preview'))}</button>
+        </form>
+        <div class="report-preview" lang="${outputLanguage}" data-report-preview>
+          <div class="report-preview-heading"><h2>${escapeHtml(t(outputLanguage, 'workspace.report_preview'))}</h2></div>
+          ${renderSummary(report.summary, outputLanguage)}
+          ${report.summary.closedSessionCount === 0 ? `<p class="empty-state">${escapeHtml(t(outputLanguage, 'reporting.no_history'))}</p>` : ''}
+        </div>
+        <div class="form-actions report-export-actions"><a class="btn btn-primary" href="/reporting/export?${escapeHtml(exportQuery.toString())}">${renderIcon('download')}${escapeHtml(t(language, 'reporting.export_excel'))}</a>${exportQuery.size ? `<a class="btn btn-light" href="/reporting">${escapeHtml(t(language, 'action.reset'))}</a>` : ''}</div>
+      </section>
+      <section class="page-section reporting-browse" aria-labelledby="reporting-access-title">
         <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2"><div><h2 id="reporting-access-title">${escapeHtml(t(language, 'reporting.browse'))}</h2></div></div>
         <div class="list-group compact-list">
           <a class="list-group-item compact-row report-navigation-row" href="/reporting/courses">
@@ -174,32 +228,7 @@ router.get('/', async (request, response) => {
           </a>
         </div>
       </section>
-      <section class="page-section" aria-labelledby="global-export-title">
-        <div class="section-header d-flex flex-column flex-sm-row align-items-sm-start justify-content-between gap-2">
-          <div>
-            <h2 id="global-export-title">${escapeHtml(t(language, 'reporting.global_export', { attendance: businessTerm(language, 'attendance', 'plural') }))}</h2>
-            <p class="section-description">${escapeHtml(t(language, 'reporting.global_export_help', { sessions: businessTerm(language, 'session', 'plural') }))}</p>
-          </div>
-        </div>
-        <form class="card card-body app-form report-filter-form" method="get" action="/reporting/export">
-          <div class="form-field">
-            <label for="report-class">${businessTerm(language, 'class')}</label>
-            <select class="form-select" id="report-class" name="class_id">
-              <option value="">${escapeHtml(t(language, 'reporting.no_filter'))}</option>
-              ${classes.map((course) => `<option value="${course.public_id}">${escapeHtml(course.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="form-field">
-            <label for="report-date-from">${escapeHtml(t(language, 'reporting.from'))}</label>
-            <input class="form-control" id="report-date-from" name="date_from" type="date">
-          </div>
-          <div class="form-field">
-            <label for="report-date-to">${escapeHtml(t(language, 'reporting.to'))}</label>
-            <input class="form-control" id="report-date-to" name="date_to" type="date">
-          </div>
-          <button class="btn btn-primary" type="submit">${escapeHtml(t(language, 'reporting.export_attendance', { attendance: businessTerm(language, 'attendance', 'plural') }))}</button>
-        </form>
-      </section>`, { language }));
+      </div>`, { language }));
   } catch (error) {
     console.error('Unable to load reporting:', error);
     const page = renderMessagePage(t(request.uiLanguage, 'reporting.error.unavailable'), t(request.uiLanguage, 'reporting.error.load'), 500, request.uiLanguage);
@@ -214,14 +243,11 @@ router.get('/courses', async (request, response) => {
     const content = courses.length === 0
       ? `<p class="empty-state">${escapeHtml(t(language, 'reporting.no_class_data', { classes: businessTerm(language, 'class', 'plural') }))}</p>`
       : `<section data-filterable-list>
-          <div class="search">
-            <label for="report-course-search">${escapeHtml(t(language, 'reporting.search_class', { class: businessTerm(language, 'class') }))}</label>
-            <div class="search-controls"><input class="form-control" id="report-course-search" name="course_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'reporting.search_name_placeholder'))}" data-list-search aria-controls="report-course-list"></div>
-          </div>
+          ${renderCollectionTools({ language, id: 'report-course-list', count: courses.length, placeholder: t(language, 'reporting.search_name_placeholder') })}
           <p class="empty-state" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="report-course-list" data-list-results>${courses.map((course) => `
             <article class="list-group-item compact-row compact-row-status report-row" data-list-row data-search="${escapeHtml(course.name.toLocaleLowerCase())}">
-              <div class="compact-identity"><p class="compact-title">${escapeHtml(course.name)}</p><p class="compact-meta">${escapeHtml(t(language, 'reporting.summary_closed', { sessions: businessTerm(language, 'session', 'plural'), count: course.closedSessionCount, attendance: businessTerm(language, 'attendance', 'plural'), opportunities: course.opportunities }))}</p></div>
+              <div class="compact-identity"><p class="compact-title"><a href="/reporting/courses/${course.public_id}">${escapeHtml(course.name)}</a></p><p class="compact-meta">${escapeHtml(t(language, 'reporting.summary_closed', { sessions: businessTerm(language, 'session', 'plural'), count: course.closedSessionCount, attendance: businessTerm(language, 'attendance', 'plural'), opportunities: course.opportunities }))}</p></div>
               <div class="compact-status"><strong class="report-rate">${formatRate(course.attendanceRate)}</strong><span class="compact-meta">${escapeHtml(t(language, 'reporting.count_present_absent', { present: course.present, absent: course.absent }))}</span></div>
               <div class="compact-actions"><a class="btn btn-outline-secondary" href="/reporting/courses/${course.public_id}">${escapeHtml(t(language, 'reporting.view_report'))}</a></div>
             </article>`).join('')}</div>
@@ -338,13 +364,13 @@ router.get('/sessions', async (request, response) => {
     const content = sessions.length === 0
       ? `<p class="empty-state">${escapeHtml(t(language, 'reporting.no_closed_sessions', { session: businessTerm(language, 'session') }))}</p>`
       : `<section data-filterable-list>
-          <div class="search"><label for="report-session-search">${escapeHtml(t(language, 'reporting.search_session', { session: businessTerm(language, 'session') }))}</label><div class="search-controls"><input class="form-control" id="report-session-search" name="session_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, 'reporting.search_session_placeholder', { class: businessTerm(language, 'class'), instructor: businessTerm(language, 'instructor') }))}" data-list-search aria-controls="report-session-list"></div></div>
+          ${renderCollectionTools({ language, id: 'report-session-list', count: sessions.length, placeholder: t(language, 'reporting.search_session_placeholder', { class: getTerm(language, 'class'), instructor: getTerm(language, 'instructor') }) })}
           <p class="empty-state" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="report-session-list" data-list-results>${sessions.map((session) => `
-            <article class="list-group-item compact-row compact-row-status session-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase())}">
-              <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p><p class="compact-title">${escapeHtml(session.title)}</p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
+            <article class="list-group-item compact-row compact-row-status session-row collection-row report-row" data-list-row data-search="${escapeHtml(`${session.title} ${session.class_name} ${session.instructor}`.toLocaleLowerCase())}">
+              <div class="compact-identity session-identity"><p class="compact-meta session-date">${escapeHtml(formatDateForDisplay(session.date))}</p><p class="compact-title"><a href="/sessions/${session.public_id}">${escapeHtml(session.title)}</a></p><p class="compact-meta">${escapeHtml(session.class_name)} · ${escapeHtml(session.instructor)}</p></div>
               <div class="compact-status"><span class="badge status-badge status-closed">${escapeHtml(t(language, 'reporting.state_closed'))}</span><strong class="report-rate">${formatRate(session.attendanceRate)}</strong><span class="compact-meta">${escapeHtml(t(language, 'reporting.session_counts', { present: session.present, total: session.opportunities }))}${session.punctualityApplicable ? ` · ${escapeHtml(t(language, 'reporting.punctual_counts', { onTime: session.onTime, late: session.late }))}` : ''}</span></div>
-              <div class="compact-actions compact-actions--split"><a class="btn btn-outline-secondary" href="/sessions/${session.public_id}">${escapeHtml(t(language, 'reporting.view_session', { session: getTerm(language, 'session') }))}</a><a class="btn btn-primary" href="/reporting/sessions/${session.public_id}/export">${escapeHtml(t(language, 'reporting.export_excel'))}</a></div>
+              <div class="compact-actions report-direct-actions"><a class="btn btn-light" href="/sessions/${session.public_id}">${escapeHtml(t(language, 'reporting.view_session', { session: getTerm(language, 'session') }))}</a><a class="btn btn-outline-secondary" href="/reporting/sessions/${session.public_id}/export">${renderIcon('download')}${escapeHtml(t(language, 'reporting.export_excel'))}</a></div>
             </article>`).join('')}</div>
         </section>`;
     response.send(renderPage(t(language, 'reporting.by_session', { session: getTerm(language, 'session') }), `
@@ -419,7 +445,7 @@ router.get('/students', async (request, response) => {
     const content = students.length === 0
       ? `<p class="empty-state">${escapeHtml(t(language, 'reporting.no_student_history', { students: businessTerm(language, 'student', 'plural') }))}</p>`
       : `<section data-filterable-list>
-          <div class="search"><label for="report-student-search">${escapeHtml(t(language, 'reporting.search_student', { student: businessTerm(language, 'student') }))}</label><div class="search-controls"><input class="form-control" id="report-student-search" name="student_filter" type="search" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t(language, identified ? 'reporting.search_identified' : 'reporting.search_private', identified ? {} : { class: getTerm(language, 'class') }))}" data-list-search aria-controls="report-student-list"></div></div>
+          ${renderCollectionTools({ language, id: 'report-student-list', count: students.length, placeholder: t(language, identified ? 'reporting.search_identified' : 'reporting.search_private', identified ? {} : { class: getTerm(language, 'class') }) })}
           <p class="empty-state" data-list-no-results hidden>${escapeHtml(t(language, 'common.no_results'))}</p>
           <div class="list-group compact-list" id="report-student-list" data-list-results>${students.map((student) => `
             <article class="list-group-item compact-row compact-row-status student-row report-row" data-list-row data-search="${escapeHtml((identified ? `${student.first_name} ${student.last_name} ${student.student_code}` : `${student.participant_label} ${student.class_name}`).toLocaleLowerCase())}">
