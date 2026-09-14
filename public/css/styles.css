@@ -710,8 +710,7 @@ select {
 }
 
 .status-badge {
-  max-width: 100%;
-  width: fit-content;
+  width: max-content;
   margin: 0;
   display: inline-flex;
   align-items: center;
@@ -723,7 +722,7 @@ select {
   font-weight: 650;
   line-height: 1.3;
   text-align: left;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 .status-open,
@@ -2519,7 +2518,7 @@ a:focus-visible,
   .settings-sidebar, .settings-content { width: 100%; padding: 0; margin: 0; }
   .settings-sidebar { padding-right: 1rem; }
   .settings-sidebar-title { display: block; }
-  .attendance-roster-header, .attendance-roster .student-row { grid-template-columns: minmax(9rem, 1fr) 5.5rem 6rem 6rem minmax(10rem, auto); gap: 0.5rem; }
+  .attendance-roster-header, .attendance-roster .student-row { grid-template-columns: minmax(9rem, 1fr) minmax(5.5rem, max-content) 6rem 6rem minmax(10rem, auto); gap: 0.5rem; }
   .compact-actions .btn { min-height: 2.125rem; font-size: 0.75rem; }
   .attendance-roster .compact-actions--split { gap: 0.25rem; }
 }
@@ -2533,7 +2532,7 @@ a:focus-visible,
   .settings-navigation .nav-link { min-height: 2.75rem; }
   .report-filter-form { grid-template-columns: 1fr 1fr; }
   .report-filter-form > :first-child { grid-column: 1 / -1; }
-  .attendance-roster .student-row { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
+  .attendance-roster .student-row { grid-template-columns: minmax(min-content, 0.8fr) minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
   .attendance-roster .student-identity { grid-column: 1 / -1; }
   .attendance-roster .attendance-arrival, .attendance-roster .attendance-punctuality { align-self: start; }
   .attendance-roster .student-row:not(:has(.status-present)) .attendance-arrival,

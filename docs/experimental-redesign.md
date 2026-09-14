@@ -386,3 +386,24 @@ opened register. Both design passes have since passed independent Claude review.
 This is the visual and interaction direction I would ship: clear, recognizable,
 compact and operational. The remaining work is release validation on real devices
 and infrastructure, not another redesign or an unresolved design compromise.
+
+### Follow-up — compact status sizing
+
+The French attendance badge exposed an intrinsic-width regression: `En attente`
+needs about 88.44px including padding, dot and gap, while the desktop register
+allocated 5.5rem (88px) and the 360px mobile register allocated about 83.42px.
+The shared badge's `white-space: normal` and `max-width: 100%` split the label,
+increasing its height from about 23.59px to 39.19px.
+
+Status badges now use max-content width and nowrap. The existing register tracks
+respect the status's intrinsic minimum on mobile and desktop. Names, descriptions,
+long contextual actions and dropdown items retain their existing wrapping rules.
+No translations, attendance logic or permissions change. The static stylesheet
+continues to refresh through the existing network-first PWA asset policy; the
+service-worker allowlist and cache version are unchanged.
+
+Run `node integration/redesign-status-controls.cjs` with the same isolated browser
+tooling and fixture described above. It checks real text fragments, chip height,
+clipping, column containment and page overflow across 17 routes in both languages
+at 360/390/430/768/992/1024/1440px, plus applicable status variants. It fails on the
+old stylesheet's two-line French badge. Review screenshots are temporary only.
